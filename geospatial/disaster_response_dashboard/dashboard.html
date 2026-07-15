@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<title>Disaster Response Dashboard — satellite data fusion</title>
+<link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
+<style>
+ html,body,#map{margin:0;height:100%;width:100%;background:#0a0a0a;
+   font-family:-apple-system,Segoe UI,sans-serif}
+ #title{position:absolute;left:18px;top:16px;z-index:2;color:#E8FF59;font-weight:700;
+   font-size:16px;text-shadow:0 1px 6px #000}
+ #sub{color:#9a9a9a;font-size:11px;font-weight:400;margin-top:2px;max-width:560px}
+ #attr{position:absolute;right:10px;top:10px;z-index:2;color:#666;font-size:10px}
+ /* boot overlay — shown while local Python assembles the data payload */
+ #boot{position:absolute;inset:0;z-index:20;background:#0a0a0a;display:flex;align-items:center;justify-content:center}
+ #bootcard{width:min(420px,84vw);background:#121212;border:1px solid #2b2b2b;border-radius:12px;padding:22px 24px}
+ #boottitle{color:#E8FF59;font-weight:700;font-size:15px;margin-bottom:8px}
+ #bootmsg{color:#aaa;font-size:12px;margin-bottom:12px;min-height:15px}
+ #bootbarwrap{height:6px;border-radius:4px;background:#242424;overflow:hidden}
+ #bootbar{height:100%;width:3%;border-radius:4px;background:#E8FF59;transition:width .3s}
+ #booterr{color:#ff7a7a;font-size:11px;margin-top:10px;white-space:pre-wrap;display:none}
+ /* One simple Layers panel — all toggles live here so the map isn't overwhelming. */
+ #layers{position:absolute;left:18px;top:62px;z-index:2;background:rgba(15,15,15,.9);
+   border:1px solid #2b2b2b;border-radius:10px;padding:9px 10px;display:flex;flex-direction:column;gap:6px}
+ #layers .lh{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:1px}
+ .ly{display:flex;align-items:center;gap:8px;border:0;background:none;cursor:pointer;
+   color:#666;font-size:12px;font-weight:600;padding:1px 0;text-align:left}
+ .ly .dot{width:11px;height:11px;border-radius:3px;border:1px solid #444;background:transparent}
+ .ly.on{color:#eee}
+ .ly.on .dot{border-color:transparent}
+ .ly.fp.on .dot{background:#E8FF59}
+ .ly.img.on .dot{background:#7CFFB2}
+ .ly.cloud.on .dot{background:#e8edf2}
+ .ly.shadow.on .dot{background:#3c6eff}
+ .ly.storm.on .dot{background:#ff3ce0}
+ .ly.bld.on .dot{background:#7FB0FF}
+ .ly.dmg.on .dot{background:#ff5b5b}
+ .ly.air.on .dot{background:#5ac8ff}
+ .ly.ship.on .dot{background:#36e0c8}
+ .ly.terr.on .dot{background:#caa472}
+ .ly.sat.on .dot{background:#8fd6a0}
+ /* ✈ air-traffic legend (shows when the air layer is on) */
+ #airleg{position:absolute;right:12px;top:64px;z-index:2;display:none;flex-direction:column;gap:5px;
+   background:rgba(15,15,15,.86);border:1px solid #2b2b2b;border-radius:8px;padding:8px 10px;max-width:188px}
+ #airleg.show{display:flex}
+ #airleg .alh{color:#9ad;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+ #airleg .ramp{height:8px;border-radius:3px;background:linear-gradient(90deg,#3b82f6,#22d3ee,#a3e635,#facc15)}
+ #airleg .rl{display:flex;justify-content:space-between;color:#999;font-size:9px}
+ #airleg .row{display:flex;align-items:center;gap:6px;color:#bbb;font-size:10px}
+ #airleg .hun{width:16px;border-top:3px solid #ff7a00;display:inline-block}
+ #airleg .mode{color:#7fdcff;font-size:10px;font-weight:600}
+ #zhint{color:#E8FF59;font-size:10px;font-weight:600;margin-top:2px;opacity:0;transition:opacity .2s}
+ #zhint.show{opacity:1}
+ /* sub-filters: per-sensor chips + cloud-cover slider, grouped under footprints */
+ #filters{border-top:1px solid #2b2b2b;margin-top:4px;padding-top:7px;display:flex;flex-direction:column;gap:6px}
+ #filters .fh{color:#888;font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+ #sensors{display:flex;flex-wrap:wrap;gap:5px;max-width:200px}
+ .schip{border:1px solid #444;background:transparent;color:#666;cursor:pointer;
+   border-radius:6px;padding:2px 7px;font-size:10px;font-weight:600;white-space:nowrap}
+ .schip.on{border-color:#E8FF59;color:#E8FF59;background:rgba(232,255,89,.1)}
+ #cloudrow{display:flex;align-items:center;gap:7px;font-size:10px;color:#888;font-weight:600}
+ #cloudslider{flex:1;accent-color:#E8FF59;height:3px}
+ #cloudval{color:#E8FF59;font-variant-numeric:tabular-nums;min-width:30px;text-align:right}
+ #leg{position:absolute;right:12px;top:34px;z-index:2;display:none;gap:7px;
+   background:rgba(15,15,15,.82);border:1px solid #2b2b2b;border-radius:8px;padding:6px 9px}
+ #leg.show{display:flex}
+ #leg div{display:flex;align-items:center;gap:4px;color:#bbb;font-size:10px}
+ #leg i{width:10px;height:10px;border-radius:2px;display:inline-block}
+ /* multi-lane swimlane HUD on one shared daily axis. */
+ #panel{position:absolute;left:14px;right:14px;bottom:14px;z-index:2;background:rgba(12,12,12,.93);
+   border:1px solid #2b2b2b;border-radius:12px;padding:9px 12px 6px;color:#eee;backdrop-filter:blur(8px)}
+ .readout{display:flex;gap:9px;align-items:center;margin-bottom:6px;font-size:11px;flex-wrap:wrap}
+ #play{background:#E8FF59;border:0;border-radius:6px;padding:5px 11px;font-weight:700;cursor:pointer;font-size:12px}
+ .step{background:#1b1b1b;border:1px solid #2f2f2f;color:#ccc;border-radius:6px;width:24px;height:26px;cursor:pointer;font-size:13px;padding:0;line-height:1}
+ .step:hover{border-color:#E8FF59;color:#E8FF59}
+ .chip{background:#1b1b1b;border:1px solid #2f2f2f;border-radius:6px;padding:3px 8px;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .chip b{color:#E8FF59}
+ .chip.r b{color:#ff7a7a}
+ .chip.s b{color:#ff8ae6}
+ #curDate{font-weight:700;font-size:14px;color:#E8FF59;font-variant-numeric:tabular-nums;min-width:92px}
+ .toggle{margin-left:auto;display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:#ccc;
+   background:#1c1c1c;border:1px solid #3a3a3a;border-radius:6px;padding:5px 11px;user-select:none}
+ .toggle:hover{border-color:#E8FF59;color:#E8FF59}
+ .toggle .sw{width:26px;height:14px;border-radius:999px;background:#444;position:relative;transition:background .15s}
+ .toggle .sw::after{content:'';position:absolute;top:1px;left:1px;width:12px;height:12px;border-radius:50%;background:#eee;transition:transform .15s}
+ .toggle.on .sw{background:#E8FF59}
+ .toggle.on .sw::after{transform:translateX(12px)}
+ #lanes{width:100%;display:block;cursor:crosshair}
+ .tip{position:absolute;z-index:5;pointer-events:none;background:#161616;border:1px solid #3a3a3a;border-radius:8px;
+   padding:7px 9px;font-size:11px;color:#eee;box-shadow:0 6px 24px #000a;display:none;min-width:150px}
+ .tip .td{color:#E8FF59;font-weight:700;margin-bottom:4px}
+ .tip .tr{display:flex;justify-content:space-between;gap:14px;padding:1px 0}
+ .tip .tr span{color:#888}
+ .maplibregl-popup-content{background:#161616;border:1px solid #333;border-radius:10px;
+   padding:12px 14px;color:#eee;font-size:12px;box-shadow:0 6px 24px #000a}
+ .maplibregl-popup-tip{display:none}
+ .pop .ph{color:#E8FF59;font-weight:700;font-size:13px;margin-bottom:8px}
+ .pop .pr{display:flex;justify-content:space-between;gap:20px;padding:2px 0}
+ .pop .pr span{color:#888}
+ .pop .pr b{font-weight:600;font-variant-numeric:tabular-nums}
+ #areas{margin-top:10px;border-top:1px solid #2b2b2b;padding-top:8px}
+ #areas .fh{color:#ff9f6e;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+ .fh .hint{color:#777;font-weight:400;font-size:10px;text-transform:none;letter-spacing:0}
+ .aoibtn{display:block;width:100%;text-align:left;background:#222;border:1px solid #3a3a3a;color:#cfe;
+   border-radius:7px;padding:6px 10px;margin:3px 0;font-weight:600;cursor:pointer;font-size:12px}
+ .aoibtn:hover{border-color:#39d98a}
+ #resetview{display:block;width:100%;margin-top:7px;background:#1a1a1a;border:1px solid #3a3a3a;
+   color:#bbb;border-radius:7px;padding:6px 10px;font-weight:600;cursor:pointer;font-size:11px}
+ #resetview:hover{border-color:#E8FF59;color:#E8FF59}
+ .aoibtn.on{background:#173527;border-color:#39d98a;color:#bff5d5}
+ #tspanel{position:absolute;right:14px;top:120px;z-index:5;background:#0c0c0cee;border:1px solid #2b2b2b;
+   border-radius:10px;padding:10px 12px;color:#ddd;font-size:11px;display:none;max-height:62vh;overflow:auto}
+ .tsh{color:#E8FF59;font-weight:700;margin-bottom:7px;font-size:12px}
+ .tsrow{display:flex;gap:9px;align-items:flex-end}
+ .tcol{display:flex;flex-direction:column;align-items:center;cursor:default}
+ .tstack{width:34px;display:flex;flex-direction:column;justify-content:flex-end;border-bottom:1px solid #444}
+ .tlab{color:#aaa;margin-top:3px;font-variant-numeric:tabular-nums}
+ .tssub{color:#888;margin-top:7px}
+</style></head>
+<body>
+<div id="title">Hurricane Melissa Oct 2025<div id="sub">Timeline: top bars = images captured/day · bottom bars = storm intensity (by category) · scrub to move the 🌀 marker · zoom in for GPU cloud masks · <span style="color:#E8FF59;font-weight:700" id="buildtag">fused-render port</span></div></div>
+<div id="attr">Imagery © Maxar Open Data (Vantor) · storm track: NOAA IBTrACS · cloud masks: OmniCloudMask · Buildings © Overture Maps</div>
+<div id="map"></div>
+<div id="layers">
+ <div class="lh">Layers</div>
+ <button class="ly fp on" data-grp="fp"><span class="dot"></span>Image footprints</button>
+ <button class="ly img" data-grp="img"><span class="dot"></span>🛰 Imagery</button>
+ <button class="ly cloud on" data-grp="cloud"><span class="dot"></span>Clouds</button>
+ <button class="ly shadow" data-grp="shadow"><span class="dot"></span>Shadows</button>
+ <button class="ly storm on" data-grp="storm"><span class="dot"></span>🌀 Hurricane track</button>
+ <button class="ly air" data-grp="air" title="Flight tracks for the scrubbed day (orange = NOAA hurricane hunter). Use 'Coverage (all days)' in the ✈ legend to see the full data envelope."><span class="dot"></span>✈ Air traffic</button>
+ <button class="ly ship on" data-grp="ship"><span class="dot"></span>⚓ Ship traffic</button>
+ <button class="ly bld" data-grp="bld"><span class="dot"></span>🏚 Buildings (Overture)</button>
+ <button class="ly dmg" data-grp="dmg"><span class="dot"></span>🏚 Damage (GPU vs Overture)</button>
+ <button class="ly terr on" data-grp="terrain" title="Real elevation relief (Terrarium DEM). Tilt with right-drag."><span class="dot"></span>⛰ 3D terrain</button>
+ <button class="ly sat" data-grp="sat" title="Esri World Imagery satellite basemap (instead of the dark map)"><span class="dot"></span>🛰 Satellite base</button>
+ <div id="zhint">⤢ zoom in for cloud masks</div>
+ <div id="filters">
+   <div class="fh">Satellites</div>
+   <div id="sensors"></div>
+   <div id="cloudrow">Max cloud %<input id="cloudslider" type="range" min="0" max="100" value="100"/><span id="cloudval">100%</span></div>
+ </div>
+ <div id="areas">
+   <div class="fh">🏚 Damage areas <span class="hint">(click to fly + see timeseries)</span></div>
+   <div id="aois"></div>
+   <button id="resetview" title="Back to the full overview + clear the selected area">↺ Reset view</button>
+ </div>
+</div>
+<div id="tspanel"></div>
+<div id="leg">
+ <div><i style="background:#3cd6c4"></i>TS</div><div><i style="background:#f2f04d"></i>1</div>
+ <div><i style="background:#ffd11a"></i>2</div><div><i style="background:#ff9933"></i>3</div>
+ <div><i style="background:#ff4d4d"></i>4</div><div><i style="background:#ff3ce0"></i>5</div>
+</div>
+<div id="airleg">
+ <div class="alh">✈ Air traffic</div>
+ <div class="mode" id="airmode">—</div>
+ <div id="airenv" class="toggle" style="margin-left:0;font-size:11px" title="Show every flight from all 26 days at once — the full coverage envelope. Off = just the scrubbed day's flights."><span class="sw"></span>Coverage (all days)</div>
+ <div class="alh" style="color:#888">Altitude</div>
+ <div class="ramp"></div>
+ <div class="rl"><span>0</span><span>15k</span><span>30k</span><span>45k ft</span></div>
+ <div class="row"><span class="hun"></span>NOAA hurricane hunter (N42RF)</div>
+</div>
+<div class="tip" id="tip"></div>
+<div id="panel">
+ <div class="readout">
+   <button id="play">▶ Play</button>
+   <button id="prev" class="step" title="Previous day (←)">‹</button>
+   <span id="curDate">—</span>
+   <button id="next" class="step" title="Next day (→)">›</button>
+   <span class="chip">🛰 <b id="rImg">—</b> img</span>
+   <span class="chip">◔ res <b id="rRes">—</b></span>
+   <span class="chip">☁ <b id="rCloud">—</b></span>
+   <span class="chip">🚢 <b id="rShip">—</b></span>
+   <span class="chip">✈ <b id="rAir">—</b></span>
+   <span class="chip r">🏚 <b id="rDmg">—</b> dmg</span>
+   <span class="chip s">🌀 <b id="rStorm">—</b></span>
+   <div id="advanced" class="toggle on" title="Show the detail lanes (damage · ships · aircraft · cloud)"><span class="sw"></span>Advanced</div>
+ </div>
+ <svg id="lanes"></svg>
+</div>
+<div id="boot"><div id="bootcard">
+ <div id="boottitle">Disaster Response Dashboard</div>
+ <div id="bootmsg">Starting local Python…</div>
+ <div id="bootbarwrap"><div id="bootbar"></div></div>
+ <div id="booterr"></div>
+</div></div>
+<script>
+// ── static config (these were module constants inlined by the globe_html UDF;
+//    all public-token / public-bucket URLs — they work unchanged from any origin) ──
+const EVENT_NAME='Hurricane-Melissa-Oct-2025';
+const CLOUDS_URL="https://unstable.udf.ai/fsh_7GUsoGCqaBj7QS9MxBSc5R/run/tiles/{z}/{x}/{y}?dtype_out_vector=mvt&_v=1";
+const CLOUD_MINZOOM=7;
+const BUILDINGS_URL="https://unstable.udf.ai/fsh_23RaoncuwmmgrXnZWkiiWo/run/tiles/{z}/{x}/{y}?dtype_out_vector=mvt&_v=1";
+const BUILDINGS_MINZOOM=14;
+const IMAGERY_URL="https://udf.ai/fsh_5E8nhaQYLvKRmxyxXwDuH0/run/tiles/{z}/{x}/{y}?dtype_out_raster=png&date={date}&_v=2";
+const IMAGERY_MINZOOM=2;
+const SHIP_TRACKS_URL="pmtiles://https://fused-asset.s3.amazonaws.com/demos/vantor_open_data/vantor_event_layers/ais_tracks.pmtiles";
+const AIR_TILE_URL="pmtiles://https://fused-asset.s3.amazonaws.com/demos/vantor_open_data/vantor_event_layers/air_tracks_melissa.pmtiles?v=2";
+const AIR_TILE_MINZOOM=3;
+
+// ── boot: poll local Python until the payload is assembled (globe_data.py is
+//    resumable — each 30s-bounded call continues where the previous one stopped) ──
+async function loadData(){
+  const msg=document.getElementById('bootmsg'), bar=document.getElementById('bootbar');
+  for(let i=0;i<60;i++){
+    const r=await fused.runPython('./disaster_data.py',{event_name:EVENT_NAME});
+    if(r.ready){ bar.style.width='100%'; return r; }
+    msg.textContent=`Fetching ${r.stage} — ${r.done} / ${r.total}`;
+    bar.style.width=(r.total?Math.max(3,Math.round(100*r.done/r.total)):3)+'%';
+  }
+  throw new Error('data did not finish loading after 60 polls');
+}
+loadData().then(D=>{ document.getElementById('boot').style.display='none'; initGlobe(D); })
+ .catch(err=>{
+   const e=document.getElementById('booterr');
+   e.style.display='block'; e.textContent=(err.type?err.type+': ':'')+err.message;
+   document.getElementById('bootmsg').textContent='Failed to load data.';
+   throw err;  // also surface the red traceback overlay
+ });
+
+function initGlobe(D){
+const DATA=D.fc, PYDAYS=D.days, CENTER=D.center, AOIS=D.aois;
+const TRACK=D.track, TRACKLINE=D.track_line;
+const DENS={dates:[],pts:[]};
+document.getElementById('buildtag').textContent='build '+D.build;
+// Packed density → GeoJSON FeatureCollection (kept for parity; empty in this port).
+const DENS_FC={type:'FeatureCollection',features:(DENS.pts||[]).map(p=>(
+ {type:'Feature',geometry:{type:'Point',coordinates:[p[1],p[2]]},
+  properties:{date:DENS.dates[p[0]],n:p[3]}}))};
+// Air layer zoom split kept for parity with the source.
+const AIR_ZOOM=5.2;
+
+// ══ URL-synced state (fused.params) — params are the state; controls write params;
+//    onChange applies diffs. Refresh/bookmark reproduces the exact view. ══
+const LAYER_GRPS=['fp','img','cloud','shadow','storm','air','ship','bld','dmg','terrain','sat'];
+const DEFAULT_LAYERS='fp,cloud,storm,ship,terrain';
+const grpBtn={}; document.querySelectorAll('.ly').forEach(b=>grpBtn[b.dataset.grp]=b);
+function grpOn(g){ return grpBtn[g].classList.contains('on'); }
+function layersParam(){ const s=fused.params.get('layers');
+  return new Set((s==null?DEFAULT_LAYERS:s).split(',').filter(g=>LAYER_GRPS.includes(g))); }
+function writeLayers(next){ fused.params.set('layers', LAYER_GRPS.filter(g=>next.has(g)).join(',')); }
+function currentLayerSet(){ return new Set(LAYER_GRPS.filter(grpOn)); }
+
+// Resolve initial state FROM THE URL (defaults only when a param is absent).
+const _want0=layersParam();
+LAYER_GRPS.forEach(g=>grpBtn[g].classList.toggle('on',_want0.has(g)));
+let terrainOn=_want0.has('terrain');
+let showAir=_want0.has('air');
+let showAirCov=(fused.params.get('aircov')||'0')==='1';
+let cloudMax=Math.max(0,Math.min(100,parseInt(fused.params.get('cloud')||'100',10)||0));
+let advanced=(fused.params.get('adv')||'1')!=='0';
+let curAoi='';
+let mapReady=false;
+
+// Imagery raster tiles for a given date — the date is baked into the URL query.
+function urlForDate(d){ return IMAGERY_URL.replace('{date}', d); }
+function imageryOn(){ return grpOn('img'); }
+// Saffir-Simpson colour ramp.
+function catColor(s){ if(s==null)return '#7a8aa0';
+ if(s>=5)return '#ff3ce0'; if(s>=4)return '#ff4d4d'; if(s>=3)return '#ff9933';
+ if(s>=2)return '#ffd11a'; if(s>=1)return '#f2f04d'; if(s>=0)return '#3cd6c4'; return '#7a8aa0';}
+function catLabel(s){ if(s==null)return '—'; if(s>=1)return 'Cat '+Math.round(s);
+ if(s>=0)return 'Tropical Storm'; return 'Depression';}
+const TRACK_PTS={type:'FeatureCollection',features:TRACK.map((p,i)=>(
+ {type:'Feature',geometry:{type:'Point',coordinates:[p.lon,p.lat]},
+  properties:{color:catColor(p.sshs),i:i}}))};
+
+// Register the pmtiles:// protocol so MapLibre can read the static AIS/air archives off S3.
+maplibregl.addProtocol('pmtiles', new pmtiles.Protocol().tile);
+const map=new maplibregl.Map({container:'map',center:CENTER,zoom:4.2,maxPitch:80,
+ style:{version:8,projection:{type:'globe'},
+  sources:{carto:{type:'raster',tileSize:256,
+   tiles:['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+   attribution:'© CARTO © OpenStreetMap'},
+  dem:{type:'raster-dem',tileSize:256,maxzoom:14,encoding:'terrarium',
+   tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+   attribution:'Terrain © Mapzen/AWS Open Data'},
+  sat:{type:'raster',tileSize:256,maxzoom:19,
+   tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+   attribution:'Imagery © Esri, Maxar, Earthstar Geographics'}},
+  layers:[{id:'bg',type:'background',paint:{'background-color':'#0a0a0a'}},
+          {id:'carto',type:'raster',source:'carto'}]}});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'bottom-right');
+const TERRAIN_EXAG=1.8;
+// ===== multi-lane swimlane HUD on a LINEAR DAILY axis (Oct 20 → last imagery) =====
+// Per-day distinct counts (precomputed; the dip→recovery around landfall is the story):
+const AIR={"2025-10-21":444,"2025-10-22":432,"2025-10-23":476,"2025-10-24":364,"2025-10-25":355,"2025-10-26":266,"2025-10-27":203,"2025-10-28":219,"2025-10-29":90,"2025-10-30":362,"2025-10-31":395,"2025-11-01":442,"2025-11-02":565,"2025-11-03":619,"2025-11-04":629,"2025-11-05":602,"2025-11-06":669,"2025-11-07":676,"2025-11-08":705,"2025-11-09":679};
+const SHIP={"2025-10-18":339,"2025-10-19":349,"2025-10-20":341,"2025-10-21":352,"2025-10-22":317,"2025-10-23":316,"2025-10-24":300,"2025-10-25":269,"2025-10-26":238,"2025-10-27":240,"2025-10-28":248,"2025-10-29":289,"2025-10-30":365,"2025-10-31":373,"2025-11-01":346,"2025-11-02":329,"2025-11-03":353,"2025-11-04":359,"2025-11-05":374,"2025-11-06":374,"2025-11-07":366,"2025-11-08":332,"2025-11-09":341,"2025-11-10":339,"2025-11-11":353,"2025-11-12":352};
+const SC={"WorldView-3":"#E8FF59","WorldView-2":"#5ad1ff","WorldView-1":"#b58cff","GeoEye-1":"#ff9b54"};
+const LANDFALL="2025-10-28", EVENT_START="2025-10-20", DAYMS=86400000;
+const toDate=s=>new Date(s+"T00:00:00Z");
+const addDays=(s,k)=>new Date(toDate(s).getTime()+k*DAYMS).toISOString().slice(0,10);
+const spanDays=(a,b)=>Math.round((toDate(b)-toDate(a))/DAYMS);
+const fmtK=n=>n==null?"—":(n>=1000?(n/1000).toFixed(n>=10000?0:1)+"k":(""+n));
+const fmtDate=s=>toDate(s).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit',timeZone:'UTC'});
+const fmtShort=s=>toDate(s).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});
+// imagery count / sensor-mix / cloud% / best-res per day — computed client-side.
+const _imgBy={};
+DATA.features.forEach(f=>{const p=f.properties,dt=p.date; if(!dt)return;
+  const e=_imgBy[dt]||(_imgBy[dt]={n:0,sensors:{},cs:0,cn:0,res:null});
+  e.n++; if(p.sensor)e.sensors[p.sensor]=(e.sensors[p.sensor]||0)+1;
+  if(p.clouds_pct!=null){e.cs+=+p.clouds_pct;e.cn++;}
+  if(p.res_cm!=null)e.res=e.res==null?+p.res_cm:Math.min(e.res,+p.res_cm);});
+// damage summed across the monitored AOIs
+const _dmgBy={};
+AOIS.forEach(a=>(a.series||[]).forEach(s=>{const e=_dmgBy[s.date]||(_dmgBy[s.date]={intact:0,damaged:0,destroyed:0});
+  e.intact+=s.intact||0; e.damaged+=s.damaged||0; e.destroyed+=s.destroyed||0;}));
+const _trkBy={}; PYDAYS.forEach(d=>_trkBy[d.date]=d);
+const _lastDate=PYDAYS.length?PYDAYS[PYDAYS.length-1].date:"2025-11-09";
+const DAYS=[];
+for(let k=0;k<=spanDays(EVENT_START,_lastDate);k++){ const dd=addDays(EVENT_START,k);
+  const ia=_imgBy[dd]||{n:0,sensors:{},cs:0,cn:0,res:null}, tk=_trkBy[dd]||{};
+  DAYS.push({date:dd, n:ia.n, sensors:ia.sensors, clouds:ia.cn?Math.round(ia.cs/ia.cn):null, res:ia.res,
+    air:(dd in AIR)?AIR[dd]:null, ship:(dd in SHIP)?SHIP[dd]:null, dmg:_dmgBy[dd]||null,
+    wind:tk.wind!=null?tk.wind:null, sshs:tk.sshs!=null?tk.sshs:null}); }
+const N=DAYS.length, maxImages=Math.max(...DAYS.map(d=>d.n),1);
+// lane geometry + renderer
+const lanesSvg=document.getElementById('lanes'), tipEl=document.getElementById('tip');
+const LABELW=66,RPAD=8,ROWGAP=6,AXISH=16; let LW=900;
+const LANES=[
+  {key:'img',  label:'🛰 Imagery', h:18, type:'stack',    detail:false},
+  {key:'dmg',  label:'🏚 Damage',  h:26, type:'dmgstack', detail:true},
+  {key:'ship', label:'🚢 Ships',   h:24, type:'area', color:'#36e0c8', detail:true},
+  {key:'air',  label:'✈ Aircraft',h:24, type:'area', color:'#5ac8ff', detail:true},
+  {key:'cloud',label:'☁ Cloud',   h:16, type:'heat',     detail:true},
+];
+const visLanes=()=>advanced?LANES:LANES.filter(l=>!l.detail);
+function totalH(){return visLanes().reduce((a,l)=>a+l.h+ROWGAP,0)+AXISH;}
+function xOf(i){return LABELW+(i+0.5)/N*(LW-LABELW-RPAD);}
+function bw(){return Math.max(0.8,(LW-LABELW-RPAD)/N-1.5);}
+function sEl(tag,attrs,kids){const e=document.createElementNS("http://www.w3.org/2000/svg",tag);
+  for(const k in attrs)e.setAttribute(k,attrs[k]);(kids||[]).forEach(c=>e.appendChild(c));return e;}
+function tn(s){return document.createTextNode(s);}
+function areaPath(arr,mx,y0,h,color){
+  const pts=arr.map((v,i)=>v==null?null:{x:xOf(i),y:y0+h-(v/mx*h)}).filter(Boolean); if(pts.length<2)return;
+  let d=`M ${pts[0].x} ${pts[0].y}`; for(let i=1;i<pts.length;i++)d+=` L ${pts[i].x} ${pts[i].y}`;
+  lanesSvg.appendChild(sEl('path',{d:`${d} L ${pts[pts.length-1].x} ${y0+h} L ${pts[0].x} ${y0+h} Z`,fill:color,opacity:.16}));
+  lanesSvg.appendChild(sEl('path',{d,fill:'none',stroke:color,"stroke-width":1.5}));}
+function drawLane(L,y0){const w=bw();
+  if(L.type==='stack'){ DAYS.forEach((r,i)=>{ if(!r.n)return; let yy=y0+L.h; const hh=r.n/maxImages*L.h;
+      SENSORS.forEach(s=>{const c=r.sensors[s]||0; if(!c)return; const sh=c/r.n*hh;
+        lanesSvg.appendChild(sEl('rect',{x:xOf(i)-w/2,y:yy-sh,width:w,height:sh,fill:SC[s]||'#888',opacity:i===CUR?1:.7,rx:.8})); yy-=sh;}); }); }
+  else if(L.type==='heat'){ DAYS.forEach((r,i)=>{ if(r.clouds==null)return; const op=0.18+0.8*(r.clouds/100);
+      lanesSvg.appendChild(sEl('rect',{x:xOf(i)-w/2,y:y0,width:w,height:L.h,fill:'#7fb6ff',opacity:i===CUR?Math.min(1,op+.2):op,rx:1})); }); }
+  else if(L.type==='area'){ const arr=DAYS.map(r=>r[L.key]), mx=Math.max(...arr.filter(v=>v!=null),1);
+      areaPath(arr,mx,y0,L.h,L.color);
+      DAYS.forEach((r,i)=>{ if(r[L.key]!=null) lanesSvg.appendChild(sEl('circle',{cx:xOf(i),cy:y0+L.h-(r[L.key]/mx*L.h),r:i===CUR?2.6:1.5,fill:L.color})); }); }
+  else if(L.type==='dmgstack'){ const keys=[["intact","#39d98a"],["damaged","#ff9933"],["destroyed","#ff3b3b"]];
+      const mx=Math.max(...DAYS.map(r=>r.dmg?r.dmg.intact+r.dmg.damaged+r.dmg.destroyed:0),1);
+      DAYS.forEach((r,i)=>{ if(!r.dmg)return; let yy=y0+L.h;
+        keys.forEach(([k,col])=>{const v=r.dmg[k]||0,sh=v/mx*L.h; lanesSvg.appendChild(sEl('rect',{x:xOf(i)-w/2,y:yy-sh,width:w,height:sh,fill:col,opacity:i===CUR?1:.78,rx:.5})); yy-=sh;}); }); }
+}
+function draw(){ LW=lanesSvg.clientWidth||(document.getElementById('panel').clientWidth-24);
+  const TH=totalH(); lanesSvg.setAttribute('height',TH); lanesSvg.setAttribute('viewBox',`0 0 ${LW} ${TH}`); lanesSvg.innerHTML='';
+  let y=0;
+  visLanes().forEach(L=>{ lanesSvg.appendChild(sEl('text',{x:0,y:y+L.h/2+4,fill:'#bbb',"font-size":10},[tn(L.label)]));
+    lanesSvg.appendChild(sEl('line',{x1:LABELW,y1:y+L.h,x2:LW-RPAD,y2:y+L.h,stroke:'#222',"stroke-width":1}));
+    drawLane(L,y); y+=L.h+ROWGAP; });
+  DAYS.forEach((r,i)=>{ if(i%2&&i!==N-1)return;
+    lanesSvg.appendChild(sEl('text',{x:xOf(i),y:TH-3,"text-anchor":'middle',fill:'#666',"font-size":7.5},[tn(fmtShort(r.date))])); });
+  const lf=DAYS.findIndex(r=>r.date===LANDFALL);
+  if(lf>=0){ const x=xOf(lf); lanesSvg.appendChild(sEl('line',{x1:x,y1:0,x2:x,y2:TH-AXISH,stroke:'#ff5a5a',"stroke-width":1,"stroke-dasharray":"3 2",opacity:.8}));
+    lanesSvg.appendChild(sEl('text',{x:x,y:TH-12,"text-anchor":'middle',fill:'#ff7a7a',"font-size":7.5},[tn('▲ landfall')])); }
+  const px=xOf(CUR); lanesSvg.appendChild(sEl('line',{x1:px,y1:-2,x2:px,y2:TH-AXISH,stroke:'#fff',"stroke-width":1.5}));
+  lanesSvg.appendChild(sEl('circle',{cx:px,cy:0,r:3,fill:'#fff'})); }
+function setChip(id,v){const e=document.getElementById(id); if(e)e.textContent=v;}
+function showTip(i,ev){ const r=DAYS[i]; let s=`<div class="td">${fmtDate(r.date)}</div>`;
+  s+=`<div class="tr"><span>🛰 Images</span><b>${r.n}</b></div>`;
+  if(r.clouds!=null)s+=`<div class="tr"><span>☁ Cloud</span><b>${r.clouds}%</b></div>`;
+  if(r.ship!=null)s+=`<div class="tr"><span>🚢 Ships</span><b>${fmtK(r.ship)}</b></div>`;
+  if(r.air!=null)s+=`<div class="tr"><span>✈ Aircraft</span><b>${r.air}</b></div>`;
+  if(r.dmg)s+=`<div class="tr"><span>🏚 Dmg+destr</span><b>${fmtK(r.dmg.damaged+r.dmg.destroyed)}</b></div>`;
+  if(r.sshs!=null)s+=`<div class="tr"><span>🌀 Storm</span><b>${catLabel(r.sshs)}</b></div>`;
+  tipEl.innerHTML=s; tipEl.style.display='block'; tipEl.style.left=(ev.clientX+14)+'px'; tipEl.style.top=(ev.clientY-10)+'px'; }
+// Default open date: the storm's SECOND track day (see source rationale) — unless the
+// URL carries ?date=… (refresh-proof state wins).
+let CUR=Math.max(0, DAYS.findIndex(d=>TRACK.length && d.date>=TRACK[0].date));
+CUR=Math.min(DAYS.length-1, CUR+1);
+{ const d0=fused.params.get('date');
+  if(d0){ const i0=DAYS.findIndex(x=>x.date===d0); if(i0>=0) CUR=i0; } }
+// Footprint visibility = date AND enabled-sensors AND cloud% threshold, composed in one place.
+const SENSORS=[...new Set(DATA.features.map(f=>f.properties.sensor).filter(Boolean))].sort();
+const sensorOn={};
+{ const soff0=new Set((fused.params.get('soff')||'').split(',').filter(Boolean));
+  SENSORS.forEach(s=>sensorOn[s]=!soff0.has(s)); }
+function applyFpFilter(){
+ const d=DAYS[CUR].date;
+ const enabled=SENSORS.filter(s=>sensorOn[s]);
+ const f=['all',
+   ['==',['get','date'],d],
+   ['<=',['coalesce',['get','clouds_pct'],0],cloudMax],
+   ['in',['get','sensor'],['literal',enabled]]];
+ ['fp-fill','fp-line'].forEach(l=>{ if(map.getLayer(l))map.setFilter(l,f); });
+}
+// 64-gon approximating a circle of radius r_nm around (lon,lat) — the gale-force wind field.
+function windCircle(lon,lat,r_nm){ if(!r_nm)return null;
+ const rLat=r_nm/60.0, rLon=rLat/Math.max(0.2,Math.cos(lat*Math.PI/180)), pts=[];
+ for(let k=0;k<=64;k++){const a=k/64*2*Math.PI; pts.push([lon+rLon*Math.cos(a),lat+rLat*Math.sin(a)]);}
+ return {type:'Feature',geometry:{type:'Polygon',coordinates:[pts]},properties:{}};}
+// Storm position as of the selected date = last fix on/before that date.
+function stormAt(date){ let pick=null; for(const p of TRACK){ if(p.date<=date) pick=p; } return pick; }
+// applyDate: performs the date change. setDate: writes the URL param (single source of truth).
+function applyDate(i){
+ i=Math.max(0,Math.min(DAYS.length-1,i)); CUR=i;
+ const day=DAYS[i], d=day.date;
+ applyFpFilter();
+ ['cloud-fill','shadow-fill'].forEach(l=>{ if(map.getLayer(l))
+   map.setFilter(l,['all',['==',['get','kind'],l==='cloud-fill'?'cloud':'shadow'],['==',['get','date'],d]]); });
+ if(map.getLayer('air-line')) map.setFilter('air-line',['==',['get','date'],d]);
+ if(map.getLayer('air-hunter')) map.setFilter('air-hunter',['all',['==',['get','date'],d],['==',['get','hunter'],1]]);
+ if(map.getLayer('air-dens')) map.setFilter('air-dens',['==',['get','date'],d]);
+ if(map.getLayer('ship-trk')) map.setFilter('ship-trk',['==',['get','date'],d]);
+ const isrc=map.getSource('imagery');
+ if(isrc && imageryOn()){ if(isrc.setTiles) isrc.setTiles([urlForDate(d)]);
+   else { isrc.tiles=[urlForDate(d)]; if(map.style.sourceCaches&&map.style.sourceCaches.imagery){
+     map.style.sourceCaches.imagery.clearTiles(); map.style.sourceCaches.imagery.update(map.transform);} } }
+ const sp=stormAt(d);
+ if(map.getSource('storm-pos')) map.getSource('storm-pos').setData(sp
+   ? {type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Point',coordinates:[sp.lon,sp.lat]},properties:{color:catColor(sp.sshs)}}]}
+   : {type:'FeatureCollection',features:[]});
+ if(map.getSource('storm-wind')){ const wc=sp?windCircle(sp.lon,sp.lat,sp.r34):null;
+   map.getSource('storm-wind').setData(wc||{type:'FeatureCollection',features:[]}); }
+ const lastTrk=TRACK.length?TRACK[TRACK.length-1].date:d;
+ setChip('rImg',day.n||0);
+ setChip('rRes',day.res!=null?day.res+'cm':'—');
+ setChip('rCloud',day.clouds!=null?day.clouds+'%':'—');
+ setChip('rShip',day.ship!=null?fmtK(day.ship):'—');
+ setChip('rAir',day.air!=null?day.air:'—');
+ setChip('rDmg',day.dmg?fmtK(day.dmg.damaged+day.dmg.destroyed):'—');
+ setChip('rStorm', sp?(d>lastTrk?'dissipated':catLabel(sp.sshs)+(sp.wind?' · '+Math.round(sp.wind)+'kt':'')):'—');
+ const cd=document.getElementById('curDate'); if(cd)cd.textContent=fmtDate(d);
+ draw();
+}
+function setDate(i){ i=Math.max(0,Math.min(DAYS.length-1,i));
+ fused.params.set('date', DAYS[i].date); }
+// scrub anywhere on the lanes · ‹/› buttons · ←/→ arrow keys (1 day)
+function idxFromX(cx){const rc=lanesSvg.getBoundingClientRect();
+ return Math.round((cx-rc.left-LABELW)/(rc.width-LABELW-RPAD)*N-0.5);}
+let drag=false;
+lanesSvg.addEventListener('mousedown',e=>{drag=true;setDate(idxFromX(e.clientX));});
+window.addEventListener('mouseup',()=>drag=false);
+lanesSvg.addEventListener('mousemove',e=>{ if(drag){setDate(idxFromX(e.clientX));return;}
+ const i=idxFromX(e.clientX); if(i>=0&&i<N)showTip(i,e); });
+lanesSvg.addEventListener('mouseleave',()=>tipEl.style.display='none');
+document.getElementById('prev').onclick=()=>setDate(CUR-1);
+document.getElementById('next').onclick=()=>setDate(CUR+1);
+window.addEventListener('keydown',e=>{ if(e.key==='ArrowLeft'){setDate(CUR-1);e.preventDefault();}
+ else if(e.key==='ArrowRight'){setDate(CUR+1);e.preventDefault();} });
+const advBtn=document.getElementById('advanced');
+advBtn.classList.toggle('on',advanced);
+advBtn.onclick=()=>fused.params.set('adv', advanced?'0':'1');
+const airEnvBtn=document.getElementById('airenv');
+airEnvBtn.classList.toggle('on',showAirCov);
+airEnvBtn.onclick=()=>fused.params.set('aircov', showAirCov?'0':'1');
+window.addEventListener('resize',draw);
+function fmt(v,suf){return (v===null||v===undefined||v==='')?'—':(v+(suf||''));}
+function updateZHint(){const h=document.getElementById('zhint');
+ const cloudWants=map.getZoom()<CLOUD_MINZOOM && grpOn('cloud');
+ const imgWants=map.getZoom()<IMAGERY_MINZOOM && imageryOn();
+ h.textContent = imgWants ? '⤢ zoom in for imagery' : '⤢ zoom in for cloud masks';
+ h.classList.toggle('show', cloudWants || imgWants);}
+function vis(id,on){ if(map.getLayer(id)) map.setLayoutProperty(id,'visibility',on?'visible':'none'); }
+function syncAir(){ vis('air-line',showAir); vis('air-hunter',showAir); vis('air-dens',false);
+ vis('air-cov',showAir&&showAirCov); }
+function updateAirLeg(){ const el=document.getElementById('airleg'); if(!el)return;
+ el.classList.toggle('show',showAir);
+ const m=document.getElementById('airmode'); if(m) m.textContent='Flight paths · colour = altitude'; }
+// One toggle applier for all layer groups (used by init + param changes; never writes params).
+const GROUPS={fp:['fp-all','fp-fill','fp-line'],img:['imagery'],cloud:['cloud-fill'],shadow:['shadow-fill'],
+ storm:['track-line','track-pts','storm-halo','storm-ring','storm-pos','wind-fill','wind-line'],bld:['overture-bld','overture-bld-line'],
+ dmg:['dmg-fill','dmg-line'],ship:['ship-trk'],sat:['sat']};
+function performToggle(g,on){
+ grpBtn[g].classList.toggle('on',on);
+ (GROUPS[g]||[]).forEach(l=>{ if(map.getLayer(l)) map.setLayoutProperty(l,'visibility',on?'visible':'none'); });
+ if(g==='storm') document.getElementById('leg').classList.toggle('show',on);
+ if(g==='air'){ showAir=on; if(mapReady){syncAir(); updateAirLeg();} }
+ if(g==='terrain'){ terrainOn=on; if(mapReady) map.setTerrain(on?{source:'dem',exaggeration:TERRAIN_EXAG}:null); }
+ if(g==='cloud') updateZHint();
+ if(g==='img'){ const isrc=map.getSource('imagery');
+   if(on && isrc && isrc.setTiles) isrc.setTiles([urlForDate(DAYS[CUR].date)]);
+   updateZHint(); }
+}
+// Layer buttons: write the URL param only; applyFromParams applies the diff.
+document.querySelectorAll('.ly').forEach(btn=>btn.addEventListener('click',()=>{
+ const next=currentLayerSet(); const g=btn.dataset.grp;
+ next.has(g)?next.delete(g):next.add(g);
+ writeLayers(next);
+}));
+const vz=g=>grpOn(g)?'visible':'none';
+map.on('load',()=>{
+ map.addLayer({id:'sat',type:'raster',source:'sat',layout:{visibility:vz('sat')},paint:{'raster-opacity':1}});
+ // Footprints.
+ map.addSource('fp',{type:'geojson',data:DATA});
+ map.addLayer({id:'fp-all',type:'line',source:'fp',layout:{visibility:vz('fp')},paint:{'line-color':'#3c3c3c','line-width':0.6}});
+ map.addLayer({id:'fp-fill',type:'fill',source:'fp',layout:{visibility:vz('fp')},paint:{'fill-color':'#E8FF59','fill-opacity':0.16}});
+ map.addLayer({id:'fp-line',type:'line',source:'fp',layout:{visibility:vz('fp')},paint:{'line-color':'#E8FF59','line-width':1.5}});
+ // Actual `visual` COG mosaic for the selected date (tiles follow the timeline).
+ map.addSource('imagery',{type:'raster',tileSize:256,minzoom:IMAGERY_MINZOOM,maxzoom:22,
+   tiles:[urlForDate(DAYS[CUR].date)]});
+ map.addLayer({id:'imagery',type:'raster',source:'imagery',minzoom:IMAGERY_MINZOOM,
+   layout:{visibility:vz('img')},paint:{'raster-opacity':1,'raster-fade-duration':150}});
+ // Overture buildings — EXTRUDED 3D (fill-extrusion) by real height, zoom-gated z14+.
+ const BLD_MINZOOM=14;
+ const BLD_HEIGHT=['max',4,['coalesce',['get','height'],['*',['coalesce',['get','num_floors'],2],3.2],6]];
+ map.addSource('overture',{type:'vector',minzoom:BLD_MINZOOM,maxzoom:15,
+   tiles:['https://www.fused.io/server/v1/realtime-shared/UDF_Overture_Maps_Example/run/tiles/{z}/{x}/{y}?dtype_out_vector=mvt']});
+ map.addLayer({id:'overture-bld',type:'fill-extrusion',source:'overture','source-layer':'udf',minzoom:BLD_MINZOOM,
+   layout:{visibility:vz('bld')},paint:{'fill-extrusion-color':'#7FB0FF','fill-extrusion-opacity':0.85,
+     'fill-extrusion-height':BLD_HEIGHT,'fill-extrusion-base':0}});
+ map.addLayer({id:'overture-bld-line',type:'line',source:'overture','source-layer':'udf',minzoom:BLD_MINZOOM,
+   layout:{visibility:vz('bld')},paint:{'line-color':'#9ec5ff','line-width':0.6,'line-opacity':0.5}});
+ // GPU damage: SAM2 footprints, faint status fill + bold status outline.
+ const DMG_COLOR=['match',['get','status'],'intact','#39d98a','damaged','#ff9933','destroyed','#ff3b3b','#8893a5'];
+ map.addSource('buildings',{type:'vector',tiles:[BUILDINGS_URL],minzoom:BUILDINGS_MINZOOM,maxzoom:22});
+ map.addLayer({id:'dmg-fill',type:'fill',source:'buildings','source-layer':'udf',minzoom:BUILDINGS_MINZOOM,
+   layout:{visibility:vz('dmg')},paint:{'fill-color':DMG_COLOR,'fill-opacity':0.18}});
+ map.addLayer({id:'dmg-line',type:'line',source:'buildings','source-layer':'udf',minzoom:BUILDINGS_MINZOOM,
+   layout:{visibility:vz('dmg')},paint:{'line-color':DMG_COLOR,'line-opacity':0.95,
+     'line-width':['interpolate',['linear'],['zoom'],14,1,17,2.4]}});
+ // Cloud + shadow MVT (past zoom threshold).
+ map.addSource('clouds',{type:'vector',tiles:[CLOUDS_URL],minzoom:CLOUD_MINZOOM,maxzoom:22});
+ map.addLayer({id:'shadow-fill',type:'fill',source:'clouds','source-layer':'udf',minzoom:CLOUD_MINZOOM,
+   layout:{visibility:vz('shadow')},paint:{'fill-color':'#3c6eff','fill-opacity':0.4}});
+ map.addLayer({id:'cloud-fill',type:'fill',source:'clouds','source-layer':'udf',minzoom:CLOUD_MINZOOM,
+   layout:{visibility:vz('cloud')},paint:{'fill-color':'#e8edf2','fill-opacity':0.5}});
+ // --- Event-context: air traffic (ADS-B) + ship traffic (AIS), date-filtered ----
+ map.addSource('airdens',{type:'geojson',data:DENS_FC});
+ map.addLayer({id:'air-dens',type:'circle',source:'airdens',filter:['==',['get','date'],''],
+   layout:{visibility:'none'},
+   paint:{'circle-radius':['interpolate',['linear'],['get','n'],1,2,10,5,40,9,120,13],
+          'circle-color':['interpolate',['linear'],['get','n'],1,'#1e3a8a',10,'#3b82f6',40,'#22d3ee',120,'#fde047',220,'#f97316'],
+          'circle-opacity':0.7,'circle-blur':0.15}});
+ map.addSource('air',{type:'vector',url:AIR_TILE_URL});  // pmtiles://
+ map.addLayer({id:'air-cov',type:'line',source:'air','source-layer':'air',minzoom:AIR_TILE_MINZOOM,
+   layout:{visibility:'none','line-cap':'round','line-join':'round'},
+   paint:{'line-color':'#5ac8ff','line-opacity':0.14,
+          'line-width':['interpolate',['linear'],['zoom'],3,0.35,6,0.65,9,1.1]}});
+ map.addLayer({id:'air-line',type:'line',source:'air','source-layer':'air',minzoom:AIR_TILE_MINZOOM,
+   filter:['==',['get','date'],''],
+   layout:{visibility:'none','line-cap':'round','line-join':'round'},
+   paint:{'line-color':['interpolate',['linear'],['get','alt'],0,'#3b82f6',15000,'#22d3ee',30000,'#a3e635',45000,'#facc15'],
+          'line-width':['case',['==',['get','hunter'],1],2.4,1.3],
+          'line-opacity':['case',['==',['get','hunter'],1],1.0,0.72]}});
+ map.addLayer({id:'air-hunter',type:'line',source:'air','source-layer':'air',minzoom:AIR_TILE_MINZOOM,
+   filter:['all',['==',['get','date'],''],['==',['get','hunter'],1]],layout:{visibility:'none'},
+   paint:{'line-color':'#ff7a00','line-width':3.0,'line-opacity':1.0}});
+ // ship vessel TRAJECTORIES from static PMTiles; filtered to the scrubbed day.
+ map.addSource('ships',{type:'vector',url:SHIP_TRACKS_URL});  // pmtiles://
+ map.addLayer({id:'ship-trk',type:'line',source:'ships','source-layer':'ships',
+   filter:['==',['get','date'],''],layout:{visibility:vz('ship'),'line-cap':'round','line-join':'round'},
+   paint:{'line-color':'#36e0c8','line-opacity':0.5,
+          'line-width':['interpolate',['linear'],['zoom'],3,0.5,7,0.9,10,1.8]}});
+ map.on('mouseenter','ship-trk',()=>map.getCanvas().style.cursor='pointer');
+ map.on('mouseleave','ship-trk',()=>map.getCanvas().style.cursor='');
+ map.on('click','ship-trk',(e)=>{const p=e.features[0].properties;
+   new maplibregl.Popup({closeButton:true,maxWidth:'240px'}).setLngLat(e.lngLat).setHTML(
+     `<div class="pop"><div class="ph">${p.name||'(unnamed vessel)'}</div>`+
+     `<div class="pr"><span>Type</span><b>${fmt(p.kind)}</b></div>`+
+     `<div class="pr"><span>Flag</span><b>${fmt(p.flag)}</b></div></div>`).addTo(map);});
+ map.on('mouseenter','air-line',()=>map.getCanvas().style.cursor='pointer');
+ map.on('mouseleave','air-line',()=>map.getCanvas().style.cursor='');
+ map.on('click','air-line',(e)=>{const p=e.features[0].properties;
+   new maplibregl.Popup({closeButton:true,maxWidth:'240px'}).setLngLat(e.lngLat).setHTML(
+     `<div class="pop"><div class="ph">${p.callsign||'(unknown)'} ${fmt(p.type)}</div>`+
+     `<div class="pr"><span>Max altitude</span><b>${fmt(p.alt,' ft')}</b></div>`+
+     (p.hunter?`<div class="pr"><span>NOAA hurricane hunter</span><b>N42RF</b></div>`:'')+`</div>`).addTo(map);});
+ // Hurricane track: full path + fixes coloured by category + moving storm marker.
+ map.addSource('track-line',{type:'geojson',data:TRACKLINE});
+ map.addLayer({id:'track-line',type:'line',source:'track-line',layout:{visibility:vz('storm')},
+   paint:{'line-color':'#cfd6e6','line-width':2,'line-opacity':0.7}});
+ map.addSource('track-pts',{type:'geojson',data:TRACK_PTS});
+ map.addLayer({id:'track-pts',type:'circle',source:'track-pts',layout:{visibility:vz('storm')},
+   paint:{'circle-radius':3.2,'circle-color':['get','color'],'circle-stroke-width':0.5,'circle-stroke-color':'#0a0a0a'}});
+ map.addSource('storm-wind',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+ map.addLayer({id:'wind-fill',type:'fill',source:'storm-wind',layout:{visibility:vz('storm')},
+   paint:{'fill-color':'#E8FF59','fill-opacity':0.14}});
+ map.addLayer({id:'wind-line',type:'line',source:'storm-wind',layout:{visibility:vz('storm')},
+   paint:{'line-color':'#ffe14d','line-width':1.8,'line-opacity':0.9,'line-dasharray':[2,2]}});
+ map.addSource('storm-pos',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+ map.addLayer({id:'storm-halo',type:'circle',source:'storm-pos',layout:{visibility:vz('storm')},
+   paint:{'circle-radius':['interpolate',['linear'],['zoom'],4,30,8,18,12,13],
+          'circle-color':['get','color'],'circle-opacity':0.42}});
+ map.addLayer({id:'storm-ring',type:'circle',source:'storm-pos',layout:{visibility:vz('storm')},
+   paint:{'circle-radius':['interpolate',['linear'],['zoom'],4,16,8,11,12,9],
+          'circle-color':'rgba(0,0,0,0)','circle-stroke-width':2,'circle-stroke-color':'#fff','circle-stroke-opacity':0.9}});
+ map.addLayer({id:'storm-pos',type:'circle',source:'storm-pos',layout:{visibility:vz('storm')},
+   paint:{'circle-radius':['interpolate',['linear'],['zoom'],4,11,8,8,12,6],
+          'circle-color':['get','color'],'circle-stroke-width':2.5,'circle-stroke-color':'#fff'}});
+ if(terrainOn) map.setTerrain({source:'dem',exaggeration:TERRAIN_EXAG});
+ mapReady=true;
+ applyDate(CUR);
+ updateZHint(); map.on('zoom',updateZHint);
+ syncAir(); map.on('zoom',syncAir); map.on('zoom',updateAirLeg);
+ updateAirLeg();
+ document.getElementById('leg').classList.toggle('show',grpOn('storm'));
+ map.on('click','fp-fill',(e)=>{const p=e.features[0].properties;
+  new maplibregl.Popup({closeButton:true,maxWidth:'300px'}).setLngLat(e.lngLat).setHTML(
+   `<div class="pop"><div class="ph">${fmt(p.sensor)}</div>`+
+   `<div class="pr"><span>Captured</span><b>${fmt(p.datetime)}</b></div>`+
+   `<div class="pr"><span>Resolution</span><b>${fmt(p.res_cm,' cm/px')}</b></div>`+
+   `<div class="pr"><span>Off-nadir</span><b>${fmt(p.off_nadir,'°')}</b></div>`+
+   `<div class="pr"><span>Cloud cover</span><b>${fmt(p.clouds_pct,'%')}</b></div>`+
+   `<div class="pr"><span>Acquisition</span><b>${fmt(p.acq_id)}</b></div></div>`).addTo(map);});
+ map.on('mouseenter','fp-fill',()=>map.getCanvas().style.cursor='pointer');
+ map.on('mouseleave','fp-fill',()=>map.getCanvas().style.cursor='');
+ map.on('click','dmg-fill',(e)=>{const p=e.features[0].properties;
+  new maplibregl.Popup({closeButton:true,maxWidth:'280px'}).setLngLat(e.lngLat).setHTML(
+   `<div class="pop"><div class="ph">Building — ${fmt(p.status)}</div>`+
+   `<div class="pr"><span>SAM2 ∩ Overture IoU</span><b>${fmt(p.iou)}</b></div>`+
+   `<div class="pr"><span>SAM2 confidence</span><b>${fmt(p.score)}</b></div>`+
+   `<div class="pr"><span>Shape shown</span><b>${p.src==='sam2'?'SAM2 detected':'Overture (no result)'}</b></div>`+
+   `<div class="pr"><span>Captured</span><b>${fmt(p.date)}</b></div></div>`).addTo(map);});
+ map.on('mouseenter','dmg-fill',()=>map.getCanvas().style.cursor='pointer');
+ map.on('mouseleave','dmg-fill',()=>map.getCanvas().style.cursor='');
+ // Restore a bookmarked AOI selection (fly + timeseries panel).
+ const aid=fused.params.get('aoi')||'';
+ if(aid) selectAOI(aid,true);
+});
+// Per-sensor toggle chips — write the `soff` (sensors OFF) param.
+const sensorsEl=document.getElementById('sensors');
+SENSORS.forEach(s=>{
+ const c=document.createElement('button'); c.className='schip'+(sensorOn[s]?' on':''); c.textContent=s; c.dataset.sensor=s;
+ c.addEventListener('click',()=>{
+   const soff=SENSORS.filter(x=>(x===s)?sensorOn[x]:!sensorOn[x]);  // toggled view
+   fused.params.set('soff', soff.join(','));
+ });
+ sensorsEl.appendChild(c);
+});
+// Max-cloud-% slider → `cloud` param.
+const cloudSlider=document.getElementById('cloudslider'), cloudVal=document.getElementById('cloudval');
+cloudSlider.value=cloudMax; cloudVal.textContent=cloudMax+'%';
+cloudSlider.addEventListener('input',()=>fused.params.set('cloud', String(cloudSlider.value)));
+let timer=null;
+document.getElementById('play').addEventListener('click',function(){
+ if(timer){clearInterval(timer);timer=null;this.textContent='▶ Play';return;}
+ this.textContent='⏸ Pause'; timer=setInterval(()=>setDate((CUR+1)%DAYS.length),600);
+});
+applyDate(CUR);  // draw the HUD immediately (chips + lanes), before the map finishes loading
+// --- AOI picker: fly to a damage area + show its building timeseries ----------
+function renderTS(a){
+ const el=document.getElementById('tspanel');
+ if(!a||!a.series||!a.series.length){el.style.display='none';return;}
+ el.style.display='block';
+ const H=92, maxn=Math.max(1,...a.series.map(d=>d.n)), f=H/maxn;
+ const cols=a.series.map(d=>
+   `<div class="tcol" title="${d.date} · ${d.n} buildings · ${d.damaged} damaged · ${d.destroyed} destroyed · off-nadir ${d.off}° · cloud ${d.cloud}%">`+
+     `<div class="tstack" style="height:${H}px">`+
+       `<div style="height:${d.destroyed*f}px;background:#ff3b3b"></div>`+
+       `<div style="height:${d.damaged*f}px;background:#ff9933"></div>`+
+       `<div style="height:${d.intact*f}px;background:#39d98a"></div>`+
+     `</div><div class="tlab">${d.date.slice(5)}</div></div>`).join('');
+ el.innerHTML=`<div class="tsh">${a.label} — buildings over time</div>`+
+   `<div class="tsrow">${cols}</div>`+
+   `<div class="tssub">green intact · orange damaged · red destroyed · hover a bar</div>`;
+}
+// Two-phase fly (top-down then tilt) — see source rationale re: terrain mis-landing.
+function flyToAOI(a){
+  const hadTerrain=terrainOn;
+  if(hadTerrain && mapReady) map.setTerrain(null);
+  map.flyTo({center:[a.lon,a.lat],zoom:a.zoom,pitch:25,bearing:0,duration:1700,essential:true});
+  map.once('moveend',()=>{ if(hadTerrain && terrainOn) map.setTerrain({source:'dem',exaggeration:TERRAIN_EXAG}); });
+}
+function selectAOI(id, fly){
+  curAoi=id;
+  const a=AOIS.find(x=>x.id===id)||null;
+  document.querySelectorAll('.aoibtn').forEach(x=>x.classList.toggle('on', !!a && x.dataset.aoi===id));
+  renderTS(a);
+  if(a && fly && mapReady) flyToAOI(a);
+}
+function resetView(){
+  map.stop();
+  map.flyTo({center:CENTER,zoom:4.2,pitch:0,bearing:0,duration:1400,essential:true});
+  const next=currentLayerSet(); next.delete('dmg'); writeLayers(next);
+  fused.params.set('aoi','');
+}
+const _rv=document.getElementById('resetview'); if(_rv) _rv.onclick=resetView;
+(function(){
+ const host=document.getElementById('aois');
+ if(!AOIS.length){ host.innerHTML='<div class="tssub">no AOIs yet — run building_timeseries_trigger</div>'; return; }
+ AOIS.forEach((a,i)=>{
+   const b=document.createElement('button'); b.className='aoibtn'; b.textContent='📍 '+a.label; b.dataset.aoi=a.id;
+   b.addEventListener('click',()=>{
+     const next=currentLayerSet(); next.add('dmg'); writeLayers(next);   // damage layer on
+     fused.params.set('aoi', a.id);                                      // selection + fly via param
+   });
+   host.appendChild(b);
+ });
+})();
+// ── params → view (the single re-render path; every control above only wrote params) ──
+function applyFromParams(){
+  const d=fused.params.get('date');
+  if(d){ const i=DAYS.findIndex(x=>x.date===d); if(i>=0 && i!==CUR) applyDate(i); }
+  const want=layersParam();
+  LAYER_GRPS.forEach(g=>{ if(grpOn(g)!==want.has(g)) performToggle(g,want.has(g)); });
+  const cm=Math.max(0,Math.min(100,parseInt(fused.params.get('cloud')||'100',10)||0));
+  if(cm!==cloudMax){ cloudMax=cm; cloudSlider.value=cm; cloudVal.textContent=cm+'%'; applyFpFilter(); }
+  const soff=new Set((fused.params.get('soff')||'').split(',').filter(Boolean));
+  let sch=false;
+  SENSORS.forEach(s=>{ const on=!soff.has(s); if(sensorOn[s]!==on){ sensorOn[s]=on; sch=true;
+    const c=sensorsEl.querySelector(`[data-sensor="${CSS.escape(s)}"]`); if(c)c.classList.toggle('on',on); }});
+  if(sch) applyFpFilter();
+  const adv=(fused.params.get('adv')||'1')!=='0';
+  if(adv!==advanced){ advanced=adv; advBtn.classList.toggle('on',adv); draw(); }
+  const cov=(fused.params.get('aircov')||'0')==='1';
+  if(cov!==showAirCov){ showAirCov=cov; airEnvBtn.classList.toggle('on',cov); if(mapReady)syncAir(); }
+  const aid=fused.params.get('aoi')||'';
+  if(aid!==curAoi) selectAOI(aid,true);
+}
+fused.params.onChange(applyFromParams);
+}
+</script></body></html>
