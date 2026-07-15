@@ -6,7 +6,7 @@ CPU and memory meters plus a sortable, killable process table — all driven by
 `ps`, `sysctl` and `vm_stat` on the local machine. No dependencies beyond the
 standard library.
 
-<!-- Screenshot pending (live local-tool page needs a manual capture). -->
+![pytop](../../assets/pytop.png)
 
 ## What it demonstrates
 

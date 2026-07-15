@@ -7,7 +7,7 @@ Every write saves a full-state Parquet snapshot, so you get version history for
 free. The name refers to the UI styling — there is **no** Notion API and no
 token to configure.
 
-<!-- Screenshot pending (live local-tool page needs a manual capture). -->
+![notion_db](../../assets/notion_db.png)
 
 ## What it demonstrates
 

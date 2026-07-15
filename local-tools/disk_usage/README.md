@@ -6,7 +6,7 @@ Scan any directory, see where the space actually goes as a zoomable treemap,
 preview files, and move junk to the Trash — with protected-path guards so you
 can't nuke something important. Standard library only.
 
-<!-- Screenshot pending (live local-tool page needs a manual capture). -->
+![disk_usage](../../assets/disk_usage.png)
 
 ## What it demonstrates
 
