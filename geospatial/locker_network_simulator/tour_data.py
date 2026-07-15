@@ -28,12 +28,3 @@ def main(seed: int = 7) -> dict:
     parcels = C.make_parcels(seed)
     print(f"address pool={len(pool)} shops={len(shops)} parcels={len(parcels)}")
     return {"ready": True, "pool": len(pool), "shops": len(shops), "parcels": len(parcels)}
-
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass

@@ -407,12 +407,3 @@ def main(event_name: str = "Hurricane-Melissa-Oct-2025") -> dict:
           f"{len(payload['track'])} track fixes, {len(payload['days'])} days, "
           f"{len(payload['aois'])} AOIs")
     return payload
-
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass

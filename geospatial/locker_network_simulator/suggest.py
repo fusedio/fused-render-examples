@@ -69,12 +69,3 @@ def main(
             for s in picked
         ]
     }
-
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass

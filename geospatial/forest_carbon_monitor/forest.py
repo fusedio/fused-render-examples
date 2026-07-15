@@ -265,11 +265,3 @@ def main(
         "threshold": threshold,
         "kpis": _kpis(park, series, stats["extent_2000_ha"], int(year_start), int(year_end)),
     }
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass

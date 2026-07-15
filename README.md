@@ -32,7 +32,6 @@ key, noted in their README).
 |---|---|
 | [buildings_to_hexagons](geospatial/buildings_to_hexagons/) | Interactive explainer: every building on Earth as H3 hexes |
 | [cog_range_viewer](geospatial/cog_range_viewer/) | Stream a huge COG with HTTP range requests, no download |
-| [maxar_open_data_explorer](geospatial/maxar_open_data_explorer/) | Browse 55+ disaster events and stream the visual COGs |
 | [overture_census_isochrone](geospatial/overture_census_isochrone/) | Isochrone + Overture POIs + Census income on H3 hexes |
 | [zonal_stats_hex](geospatial/zonal_stats_hex/) | Who lives at what elevation — Census × DEM, joined in DuckDB |
 | [store_site_selection](geospatial/store_site_selection/) | "Where should I open a cafe?" weighted tract scoring |
@@ -62,9 +61,10 @@ example_name/
   .env.example         only if it needs an API key
 ```
 
-The Python files are plain UDFs: imports live inside the function body, an
-`@fused.udf`-registered `main()` is the entry point, and any pip dependencies
-are declared in a [PEP 723](https://peps.python.org/pep-0723/) header. Data that
+Each Python file just defines a module-level `main(...)` function — that's the
+entry point Fused Render calls, with the view's parameters passed as keyword
+arguments. Imports live inside the function body, and any pip dependencies are
+declared in a [PEP 723](https://peps.python.org/pep-0723/) header. Data that
 takes a while to fetch is cached to disk on first run.
 
 ## Notes
@@ -72,5 +72,3 @@ takes a while to fetch is cached to disk on first run.
 - These examples are for exploration and learning. Data sources are public
   (OpenStreetMap, Overture, US Census, Copernicus, Global Forest Watch, Maxar
   Open Data, NOAA); scenarios in the logistics/response demos are illustrative.
-- Screenshots for a few WebGL map views and the local-tools pages are still being
-  captured — the READMEs describe each in full meanwhile.

@@ -286,11 +286,3 @@ def main(city: str = "austin", radius_km: float = RADIUS_KM, step: str = "view")
         "cities": {k: v[0] for k, v in CITIES.items()},
         "tracts": tracts, "cafes": cafes,
     }
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass

@@ -93,13 +93,6 @@ def main(action: str = "ensure", self_path: str = ""):
     return {"error": f"daemon did not start — see {log}"}
 
 
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass
-
-
 # ================================================================ daemon
 def _serve():
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

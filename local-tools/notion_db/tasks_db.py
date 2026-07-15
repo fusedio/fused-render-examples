@@ -36,12 +36,3 @@ def main(action: str, table: str = "", payload: str = "{}") -> dict:
         return {"rows": lake.snapshot_at(table, p["filename"])}
 
     raise ValueError(f"unknown action: {action!r}")
-
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass

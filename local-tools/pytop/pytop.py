@@ -102,12 +102,3 @@ def main(action: str = "stats", pid: str = "", force: str = "0") -> dict:
         killed = sum(1 for r in results if r.get("ok"))
         return {"ok": killed > 0, "killed": killed, "total": len(results), "results": results}
     return {"system": get_system(), "processes": get_processes()}
-
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except ImportError:
-    pass

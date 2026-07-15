@@ -301,12 +301,3 @@ def main(
     out["ms"] = round((time.monotonic() - t0) * 1000)
     out["python"] = platform.python_version()
     return out
-
-
-# The fused-render runner (app >= Jul 2026) only invokes @fused.udf-registered
-# entrypoints; a bare main() silently returns null. Register main via the shim.
-try:
-    import fused as _fused
-    _udf_main = _fused.udf(main)
-except Exception:
-    pass
