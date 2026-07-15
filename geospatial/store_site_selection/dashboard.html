@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Where should I open a cafe?</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c2330; --border: #2a3444;
+    --text: #dbe4f0; --dim: #8b98ab; --accent: #4cc9a7; --accent2: #f2c14e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 14px; padding: 10px 16px 8px;
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  #layout { flex: 1; display: flex; min-height: 0; }
+  #sidebar {
+    width: 372px; min-width: 372px; overflow-y: auto; padding: 12px;
+    border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px;
+  }
+  #mapwrap { flex: 1; position: relative; min-width: 0; }
+  #map { position: absolute; inset: 0; background: #0a0d12; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .card h2 {
+    margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--dim); font-weight: 600;
+  }
+  select {
+    width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px;
+  }
+  .wrow { display: grid; grid-template-columns: 110px 1fr 34px; align-items: center; gap: 8px; margin: 6px 0; }
+  .wrow label { color: var(--dim); }
+  .wrow output { text-align: right; font-variant-numeric: tabular-nums; color: var(--accent); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 4px 6px; text-align: right; white-space: nowrap; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; border-bottom: 1px solid var(--border); }
+  td:first-child, th:first-child { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--panel2); }
+  tbody tr.sel { background: #23405a; }
+  .bar { display: inline-block; height: 8px; border-radius: 2px; background: var(--accent); vertical-align: middle; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  #detail .kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; margin-bottom: 6px; }
+  #detail .kv div:nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; }
+  #detail .kv .k { color: var(--dim); }
+  #detail ul { margin: 4px 0 0; padding-left: 16px; color: var(--dim); }
+  #detail ul b { color: var(--text); font-weight: 600; }
+  .legend {
+    position: absolute; right: 12px; bottom: 12px; z-index: 800;
+    background: rgba(14,17,22,.88); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; font-size: 11px; color: var(--dim);
+  }
+  .legend .ramp { height: 8px; width: 160px; border-radius: 3px; margin: 4px 0;
+    background: linear-gradient(90deg,#2b1d4f,#20597e,#1e9e89,#7fd069,#f9e855); }
+  .legend .ends { display: flex; justify-content: space-between; gap: 18px; }
+  #status {
+    position: absolute; inset: 0; z-index: 900; display: flex; align-items: center;
+    justify-content: center; background: rgba(14,17,22,.75); font-size: 14px; color: var(--dim);
+  }
+  .toggle { display: flex; align-items: center; gap: 6px; color: var(--dim); margin-top: 8px; }
+  .cafedot { border-radius: 50%; }
+  .leaflet-container { font: inherit; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>☕ Where should I open a cafe?</h1>
+  <span class="sub">Census-tract opportunity score = weighted demand (population + income, ACS) minus competition (Overture Places cafes). Drag the weights — re-ranking is instant, all client-side.</span>
+</header>
+<div id="layout">
+  <div id="sidebar">
+    <div class="card">
+      <h2>City</h2>
+      <select id="city"></select>
+      <div class="toggle"><input type="checkbox" id="showcafes"><label for="showcafes">Show competitor cafes (<span id="ncafes">–</span>)</label></div>
+    </div>
+    <div class="card">
+      <h2>Scoring weights</h2>
+      <div class="wrow"><label>Population</label><input id="w_pop" type="range" min="0" max="100" step="5"><output id="o_pop"></output></div>
+      <div class="wrow"><label>Income</label><input id="w_inc" type="range" min="0" max="100" step="5"><output id="o_inc"></output></div>
+      <div class="wrow"><label>Competition&nbsp;−</label><input id="w_comp" type="range" min="0" max="100" step="5"><output id="o_comp"></output></div>
+    </div>
+    <div class="card" id="detail-card">
+      <h2>Selected tract</h2>
+      <div id="detail"><span style="color:var(--dim)">Click a tract on the map or a row below.</span></div>
+    </div>
+    <div class="card">
+      <h2 style="display:flex;justify-content:space-between;align-items:center">Top 10 candidate tracts
+        <button id="csv">Download CSV</button></h2>
+      <table>
+        <thead><tr><th>Tract</th><th>Score</th><th></th><th>Pop</th><th>Income</th><th>Cafes</th></tr></thead>
+        <tbody id="top10"></tbody>
+      </table>
+    </div>
+  </div>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div class="legend"><b style="color:var(--text)">Opportunity score</b><div class="ramp"></div>
+      <div class="ends"><span>saturated / low demand</span><span>open here</span></div></div>
+    <div id="status">Loading…</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const P = fused.params;
+const DEF = { city: "austin", w_pop: "60", w_inc: "40", w_comp: "50", cafes: "0" };
+const p = k => P.get(k) || DEF[k];
+
+// ---------- map ----------
+const map = L.map("map", { zoomControl: true }).setView([30.28, -97.74], 11);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+  { attribution: "© OpenStreetMap © CARTO", subdomains: "abcd", maxZoom: 19 }).addTo(map);
+let tractLayer = null, cafeLayer = L.layerGroup(), layersByGeoid = {};
+
+// viridis-ish ramp
+const STOPS = [[0,[43,29,79]],[.33,[32,89,126]],[.55,[30,158,137]],[.8,[127,208,105]],[1,[249,232,85]]];
+function ramp(v) {
+  v = Math.max(0, Math.min(1, v));
+  for (let i = 1; i < STOPS.length; i++) {
+    if (v <= STOPS[i][0]) {
+      const [t0, c0] = STOPS[i-1], [t1, c1] = STOPS[i], f = (v - t0) / (t1 - t0);
+      return `rgb(${c0.map((c,j)=>Math.round(c+f*(c1[j]-c))).join(",")})`;
+    }
+  }
+}
+const fmtI = n => n == null ? "–" : Math.round(n).toLocaleString();
+const fmt$ = n => n == null ? "–" : "$" + Math.round(n).toLocaleString();
+
+// ---------- data + client-side scoring ----------
+let DATA = null;            // last payload from Python
+let scored = [];            // tracts with .score, sorted desc
+let reqId = 0;
+
+function minmax(vals) {
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  return v => hi > lo ? (v - lo) / (hi - lo) : 0;
+}
+
+function rescore() {
+  if (!DATA) return;
+  const wp = +p("w_pop"), wi = +p("w_inc"), wc = +p("w_comp");
+  const ts = DATA.tracts;
+  const nPop = minmax(ts.map(t => t.population));
+  const incs = ts.filter(t => t.median_income != null).map(t => t.median_income);
+  const medInc = incs.sort((a,b)=>a-b)[Math.floor(incs.length/2)] || 0;
+  const nInc = minmax(ts.map(t => t.median_income ?? medInc));
+  const nComp = minmax(ts.map(t => t.comp_count / (Math.PI * DATA.radius_km ** 2)));
+  const dsum = (wp + wi) || 1;
+  let raw = ts.map(t => (wp * nPop(t.population) + wi * nInc(t.median_income ?? medInc)) / dsum
+                        - (wc / 100) * nComp(t.comp_count / (Math.PI * DATA.radius_km ** 2)));
+  const nScore = minmax(raw);
+  ts.forEach((t, i) => t.score = nScore(raw[i]));
+  scored = [...ts].sort((a, b) => b.score - a.score);
+  scored.forEach((t, i) => t.rank = i + 1);
+  paint();
+}
+
+function paint() {
+  const sel = P.get("sel");
+  if (tractLayer) tractLayer.eachLayer(l => {
+    const t = l.feature._t;
+    l.setStyle({ fillColor: ramp(t.score), fillOpacity: .62,
+                 color: t.geoid === sel ? "#ffffff" : "#0e1116",
+                 weight: t.geoid === sel ? 2.5 : 0.7 });
+    if (t.geoid === sel) l.bringToFront();
+  });
+  renderTable(); renderDetail();
+}
+
+function renderTable() {
+  $("top10").innerHTML = scored.slice(0, 10).map(t => `
+    <tr data-g="${t.geoid}" class="${t.geoid === P.get("sel") ? "sel" : ""}">
+      <td>#${t.rank} ·…${t.geoid.slice(-6)}</td>
+      <td>${(t.score*100).toFixed(0)}</td>
+      <td style="width:44px"><span class="bar" style="width:${Math.max(2, t.score*40)}px"></span></td>
+      <td>${fmtI(t.population)}</td>
+      <td>${t.median_income == null ? "–" : "$" + (t.median_income/1000).toFixed(0) + "k"}</td>
+      <td>${t.comp_count}</td>
+    </tr>`).join("");
+  for (const tr of $("top10").querySelectorAll("tr"))
+    tr.onclick = () => { P.set("sel", tr.dataset.g); flyTo(tr.dataset.g); };
+}
+
+function renderDetail() {
+  const t = scored.find(t => t.geoid === P.get("sel"));
+  if (!t) { $("detail").innerHTML = '<span style="color:var(--dim)">Click a tract on the map or a row below.</span>'; return; }
+  $("detail").innerHTML = `
+    <div class="kv">
+      <div class="k">Tract</div><div>${t.geoid}</div>
+      <div class="k">Rank / score</div><div>#${t.rank} · ${(t.score*100).toFixed(1)}</div>
+      <div class="k">Population</div><div>${fmtI(t.population)}</div>
+      <div class="k">Median income</div><div>${fmt$(t.median_income)}</div>
+      <div class="k">Cafes ≤ ${DATA.radius_km} km</div><div>${t.comp_count}</div>
+      <div class="k">Nearest cafe</div><div>${t.nearest_km ?? "–"} km</div>
+      <div class="k">Area</div><div>${t.area_km2.toFixed(1)} km²</div>
+    </div>
+    <b style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">Nearest competitors</b>
+    <ul>${t.nearest.map(n => `<li><b>${n.brand}</b> — ${n.km} km</li>`).join("") || "<li>none nearby</li>"}</ul>`;
+}
+
+function flyTo(geoid) {
+  const l = layersByGeoid[geoid];
+  if (l) map.flyToBounds(l.getBounds(), { maxZoom: 13, duration: .8 });
+}
+
+// ---------- load a city (one Python call, disk-cached server-side) ----------
+async function loadCity(city) {
+  const id = ++reqId;
+  $("status").style.display = "flex";
+  $("status").textContent = `Loading ${city}… (first load per city pulls Overture + Census, ~60 s; warm loads ~2 s)`;
+  let d;
+  try {
+    // Cold cities are fetched by a detached backend process: poll step="warm"
+    // until ready (instant when the disk cache already has the city).
+    const t0 = Date.now();
+    for (;;) {
+      const w = await fused.runPython("./site_data.py", { city, step: "warm" });
+      if (id !== reqId) return;
+      if (!w || w.ready !== false) break;
+      $("status").textContent =
+        `Fetching ${city} data (Census tracts + Overture places, ${Math.round((Date.now() - t0) / 1000)}s)…`;
+      await new Promise(r => setTimeout(r, 2000));
+      if (id !== reqId) return;
+    }
+    d = await fused.runPython("./site_data.py", { city });
+  }
+  catch (e) { $("status").textContent = `${e.type || "Error"}: ${e.message}`; throw e; }
+  if (id !== reqId) return;                    // stale response
+  DATA = d;
+  $("ncafes").textContent = d.cafes.length;
+  // city dropdown
+  $("city").innerHTML = Object.entries(d.cities)
+    .map(([k, v]) => `<option value="${k}" ${k===d.city?"selected":""}>${v}</option>`).join("");
+  // tract polygons
+  if (tractLayer) tractLayer.remove();
+  layersByGeoid = {};
+  tractLayer = L.geoJSON(d.tracts.map(t => ({ type: "Feature", geometry: t.geometry, _t: t })), {
+    style: { weight: .7, color: "#0e1116", fillOpacity: .62, fillColor: "#333" },
+    onEachFeature: (f, l) => {
+      layersByGeoid[f._t.geoid] = l;
+      l.on("click", () => P.set("sel", f._t.geoid));
+      l.bindTooltip(() => `<b>${f._t.geoid}</b><br>score ${(f._t.score*100).toFixed(0)} · pop ${fmtI(f._t.population)} · ${f._t.comp_count} cafes`, { sticky: true });
+    },
+  }).addTo(map);
+  map.fitBounds(tractLayer.getBounds());
+  // cafes
+  cafeLayer.clearLayers();
+  for (const c of d.cafes)
+    cafeLayer.addLayer(L.circleMarker([c.lat, c.lon], {
+      radius: 3, weight: 1, color: "#f2c14e", fillColor: "#f2c14e", fillOpacity: .7,
+    }).bindTooltip(`${c.name}`));
+  $("status").style.display = "none";
+  rescore();
+}
+
+// ---------- CSV download ----------
+$("csv").onclick = () => {
+  const head = "rank,geoid,score,population,median_income,cafes_in_radius,nearest_km,lat,lon";
+  const rows = scored.map(t => [t.rank, t.geoid, (t.score*100).toFixed(2), t.population,
+    t.median_income ?? "", t.comp_count, t.nearest_km ?? "", t.lat, t.lon].join(","));
+  const blob = new Blob([head + "\n" + rows.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `cafe_site_scores_${DATA.city}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+};
+
+// ---------- wiring: params are the state ----------
+for (const k of ["w_pop", "w_inc", "w_comp"])
+  $(k).addEventListener("input", () => P.set(k, String($(k).value)));
+$("city").addEventListener("change", () => { P.set("sel", ""); P.set("city", $("city").value); });
+$("showcafes").addEventListener("change", () => P.set("cafes", $("showcafes").checked ? "1" : "0"));
+
+let curCity = null;
+function draw() {
+  // reflect params INTO controls
+  for (const [k, o] of [["w_pop","o_pop"],["w_inc","o_inc"],["w_comp","o_comp"]]) {
+    $(k).value = p(k); $(o).textContent = p(k);
+  }
+  $("showcafes").checked = p("cafes") === "1";
+  if (p("cafes") === "1") cafeLayer.addTo(map); else cafeLayer.remove();
+  if (p("city") !== curCity) { curCity = p("city"); loadCity(curCity); }
+  else rescore();
+}
+P.onChange(draw);
+draw();
+</script>
+</body>
+</html>

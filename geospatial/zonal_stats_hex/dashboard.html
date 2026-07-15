@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Who lives at what elevation?</title>
+<script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
+<style>
+  :root {
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #232322;
+    --border: #33332f;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8a897f;
+    --series-1: #3987e5;   /* categorical slot 1, dark mode */
+    --critical: #d03b3b;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--surface-0); color: var(--text-primary);
+    font-family: var(--font); font-size: 13px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* ---------- header / controls ---------- */
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 18px; border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+  }
+  header h1 { font-size: 15px; font-weight: 600; margin-right: 8px; }
+  header .sub { color: var(--text-muted); font-size: 12px; }
+  .ctl { display: flex; align-items: center; gap: 7px; }
+  .ctl label { color: var(--text-secondary); font-size: 12px; }
+  select {
+    background: var(--surface-2); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 8px; font: inherit; font-size: 12.5px;
+  }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button {
+    background: var(--surface-2); color: var(--text-secondary); border: none;
+    padding: 5px 11px; font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: #24354c; color: var(--text-primary); }
+  #csvBtn {
+    margin-left: auto; background: var(--surface-2); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px;
+    font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  #csvBtn:hover, .seg button:hover { color: var(--text-primary); }
+
+  /* ---------- layout ---------- */
+  main { flex: 1; display: flex; min-height: 0; }
+  #mapWrap { flex: 1; position: relative; min-width: 0; }
+  #map { position: absolute; inset: 0; }
+  aside {
+    width: 360px; flex: none; overflow-y: auto;
+    border-left: 1px solid var(--border); background: var(--surface-1);
+    padding: 14px; display: flex; flex-direction: column; gap: 14px;
+  }
+
+  /* ---------- KPI tiles ---------- */
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tile {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .tile .label { color: var(--text-secondary); font-size: 11.5px; margin-bottom: 4px; }
+  .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .note { color: var(--text-muted); font-size: 11px; margin-top: 3px; }
+  .tile.flood { grid-column: 1 / -1; }
+  .tile.flood .value { font-size: 30px; color: var(--text-primary); }
+  .tile.flood .flag { display: inline-flex; align-items: center; gap: 6px; margin-top: 5px;
+    color: var(--text-secondary); font-size: 11.5px; }
+  .tile.flood .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--critical); }
+
+  /* ---------- chart ---------- */
+  .card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .card h2 { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
+  .bandrow { display: grid; grid-template-columns: 92px 1fr 62px; align-items: center;
+    gap: 8px; padding: 3px 0; cursor: default; border-radius: 4px; }
+  .bandrow:hover { background: #2b2b29; }
+  .bandrow .bl { color: var(--text-secondary); font-size: 11.5px; text-align: right; }
+  .bandrow .track { height: 16px; position: relative; }
+  .bandrow .bar { position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 0; }
+  .bandrow .bar.flood { background: var(--critical); }
+  .bandrow .bv { color: var(--text-primary); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- legend ---------- */
+  #legend { display: flex; flex-direction: column; gap: 6px; }
+  #legend .ramp { display: flex; height: 10px; border-radius: 3px; overflow: hidden; }
+  #legend .ramp div { flex: 1; }
+  #legend .ends { display: flex; justify-content: space-between;
+    color: var(--text-muted); font-size: 10.5px; }
+  #legend .cat { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11.5px; }
+  #legend .sw { width: 10px; height: 10px; border-radius: 2px; }
+
+  /* ---------- map tooltip / status ---------- */
+  #status {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(18,18,17,.72); z-index: 10; flex-direction: column; gap: 10px;
+    color: var(--text-secondary); font-size: 13px; text-align: center; padding: 20px;
+  }
+  #status.hide { display: none; }
+  .spin { width: 22px; height: 22px; border: 2px solid var(--border);
+    border-top-color: var(--series-1); border-radius: 50%; animation: sp 0.8s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .attrib { position: absolute; right: 6px; bottom: 4px; z-index: 5;
+    color: var(--text-muted); font-size: 10px; background: rgba(18,18,17,.6);
+    padding: 1px 6px; border-radius: 4px; }
+  .attrib a { color: var(--text-muted); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Who lives at what elevation?</h1>
+    <div class="sub">2020 Census × Copernicus DEM 90 m, joined on H3 hexes</div>
+  </div>
+  <div class="ctl"><label for="region">Region</label><select id="region"></select></div>
+  <div class="ctl"><label>Hex size</label>
+    <div class="seg" id="resSeg">
+      <button data-v="6">H6</button><button data-v="7">H7</button><button data-v="8">H8</button>
+    </div>
+  </div>
+  <div class="ctl"><label>Color by</label>
+    <div class="seg" id="modeSeg">
+      <button data-v="pop">Population</button><button data-v="elev">Elevation</button><button data-v="flood">Flood exposure</button>
+    </div>
+  </div>
+  <button id="csvBtn">Download CSV</button>
+</header>
+
+<main>
+  <div id="mapWrap">
+    <div id="map"></div>
+    <div id="status"><div class="spin"></div><div id="statusMsg">Loading…</div></div>
+    <div class="attrib">Hexes: US Census 2020 (source.coop) + Copernicus DEM (ESA) · Basemap © <a href="https://carto.com/attributions" target="_blank">CARTO</a>, © OpenStreetMap</div>
+  </div>
+  <aside>
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <h2 id="bandTitle">Population by elevation band</h2>
+      <div id="bands"></div>
+    </div>
+    <div class="card">
+      <h2>Map legend</h2>
+      <div id="legend"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const FLOOD_M = 10;
+
+/* ---------------- palette (dataviz reference, dark mode) ---------------- */
+// Sequential blue ramp (population) — reference palette steps, reversed for
+// the dark surface: near-zero recedes into darkness, high values glow light.
+const BLUE_RAMP = ["#0d366b","#104281","#184f95","#1c5cab","#256abf","#2a78d6",
+                   "#3987e5","#5598e7","#6da7ec","#86b6ef","#9ec5f4","#b7d3f6"];
+// Sequential single-hue orange ramp for elevation (second sequential context),
+// dark(low) -> light(high) for the same reason.
+const ORANGE_RAMP = ["#632a08","#7c350c","#964212","#b0511b","#c96225","#df7738",
+                     "#ea9257","#f0ad7c","#f6c7a4","#fbe0cd"];
+const CRITICAL = "#d03b3b";
+const MUTED_HEX = "#3a4350";   // recessive fill for non-exposed hexes in flood mode
+
+function hexToRgb(h){ h=h.replace("#",""); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+function rampColor(ramp, t){ t=Math.max(0,Math.min(0.999,t)); return hexToRgb(ramp[Math.floor(t*ramp.length)]); }
+
+/* ---------------- state (URL params are the state) ---------------- */
+function getState(){
+  return {
+    region: fused.params.get("region") || "nyc",
+    res: fused.params.get("res") || "7",
+    mode: fused.params.get("mode") || "pop",
+  };
+}
+
+let view = null;          // last payload from python
+let reqCounter = 0;
+let deckgl = null;
+
+/* ---------------- data loading (3-step: warm pop, warm elev, view) ------- */
+async function loadData(){
+  const st = getState();
+  const myReq = ++reqCounter;
+  showStatus("Loading region data…");
+  try {
+    // Warm-up calls hit the disk cache when already fetched (instant); on a
+    // cold region the backend fetches in a detached process — poll until ready.
+    const warm = async (step, label) => {
+      let r, t0 = Date.now();
+      for (;;) {
+        r = await fused.runPython("./zonal.py", { region: st.region, step });
+        if (myReq !== reqCounter) return false;
+        if (!r || r.ready !== false) return true;
+        setStatusMsg(`${label} (${Math.round((Date.now() - t0) / 1000)}s)…`);
+        await new Promise(res => setTimeout(res, 2000));
+        if (myReq !== reqCounter) return false;
+      }
+    };
+    if (!await warm("pop", "Loading census population hexes")) return;
+    if (!await warm("elev", "Loading Copernicus DEM hexes")) return;
+    setStatusMsg("Joining + aggregating…");
+    const v = await fused.runPython("./zonal.py",
+      { region: st.region, resolution: st.res, step: "view" });
+    if (myReq !== reqCounter) return;
+    view = v;
+    hideStatus();
+    renderAll(true);
+  } catch (err) {
+    if (myReq !== reqCounter) return;
+    setStatusMsg(err.type ? `${err.type}: ${err.message}` : String(err));
+    document.querySelector("#status .spin").style.display = "none";
+  }
+}
+
+function showStatus(msg){ $("status").classList.remove("hide");
+  document.querySelector("#status .spin").style.display = ""; setStatusMsg(msg); }
+function setStatusMsg(m){ $("statusMsg").textContent = m; }
+function hideStatus(){ $("status").classList.add("hide"); }
+
+/* ---------------- rendering ---------------- */
+function fmt(n){
+  if (n == null) return "—";
+  if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(2) + "M";
+  if (Math.abs(n) >= 1e4) return (n/1e3).toFixed(1) + "K";
+  return n.toLocaleString("en-US");
+}
+
+function renderAll(flyTo){
+  renderControls();
+  if (!view) return;
+  renderKpis();
+  renderBands();
+  renderLegend();
+  renderMap(flyTo);
+}
+
+function renderControls(){
+  const st = getState();
+  // region dropdown (options come from the payload; fallback until first load)
+  const sel = $("region");
+  const regions = view ? view.regions : [{id: st.region, name: st.region}];
+  if (sel.dataset.n !== String(regions.length)) {
+    sel.innerHTML = regions.map(r => `<option value="${r.id}">${r.name}</option>`).join("");
+    sel.dataset.n = String(regions.length);
+  }
+  sel.value = st.region;
+  for (const b of $("resSeg").children) b.classList.toggle("on", b.dataset.v === st.res);
+  for (const b of $("modeSeg").children) b.classList.toggle("on", b.dataset.v === st.mode);
+}
+
+function renderKpis(){
+  const k = view.kpis;
+  $("kpis").innerHTML = `
+    <div class="tile flood">
+      <div class="label">People living below ${FLOOD_M} m elevation</div>
+      <div class="value">${fmt(k.pop_below_10m)}</div>
+      <div class="flag"><span class="dot"></span>${k.pct_below_10m}% of ${view.region_name} — coastal-flood exposure proxy</div>
+    </div>
+    <div class="tile">
+      <div class="label">Total population</div>
+      <div class="value">${fmt(k.total_pop)}</div>
+      <div class="note">2020 Census, hexes in view</div>
+    </div>
+    <div class="tile">
+      <div class="label">Median elevation</div>
+      <div class="value">${k.median_elev_m == null ? "—" : k.median_elev_m + " m"}</div>
+      <div class="note">population-weighted</div>
+    </div>`;
+}
+
+function renderBands(){
+  const max = Math.max(1, ...view.bands.map(b => b.pop));
+  $("bandTitle").textContent = `Population by elevation band — ${view.region_name}`;
+  $("bands").innerHTML = view.bands.map(b => {
+    const w = Math.round(100 * b.pop / max);
+    const flood = b.hi !== null && b.hi <= FLOOD_M;
+    const title = `${b.label}: ${b.pop.toLocaleString("en-US")} people`;
+    return `<div class="bandrow" title="${title}">
+      <div class="bl">${b.label}</div>
+      <div class="track"><div class="bar${flood ? " flood" : ""}" style="width:${w}%"></div></div>
+      <div class="bv">${b.pop ? fmt(b.pop) : ""}</div>
+    </div>`;
+  }).join("");
+}
+
+function domain(){
+  // color-scale domains from current hexes
+  const pops = view.hexes.map(h => h[1]).filter(p => p > 0).sort((a,b)=>a-b);
+  const elevs = view.hexes.map(h => h[2]).sort((a,b)=>a-b);
+  const q = (arr,t) => arr.length ? arr[Math.min(arr.length-1, Math.floor(t*arr.length))] : 1;
+  return { popMax: q(pops, 0.98) || 1, eLo: Math.max(0, q(elevs, 0.02)), eHi: q(elevs, 0.98) || 1 };
+}
+
+function renderLegend(){
+  const st = getState(), d = domain(), L = $("legend");
+  const rampDiv = (ramp) => `<div class="ramp">${ramp.map(c=>`<div style="background:${c}"></div>`).join("")}</div>`;
+  if (st.mode === "pop") {
+    L.innerHTML = rampDiv(BLUE_RAMP) +
+      `<div class="ends"><span>0</span><span>${fmt(d.popMax)}+ people / hex (√ scale)</span></div>`;
+  } else if (st.mode === "elev") {
+    L.innerHTML = rampDiv(ORANGE_RAMP) +
+      `<div class="ends"><span>${Math.round(d.eLo)} m</span><span>${Math.round(d.eHi)}+ m</span></div>`;
+  } else {
+    L.innerHTML =
+      `<div class="cat"><span class="sw" style="background:${CRITICAL}"></span>Populated hex below ${FLOOD_M} m (flood-exposure zone)</div>
+       <div class="cat"><span class="sw" style="background:${MUTED_HEX}"></span>Hex at or above ${FLOOD_M} m</div>
+       <div class="ends"><span>Opacity scales with population</span></div>`;
+  }
+}
+
+function fillColor(h, st, d){
+  const [, pop, elev] = h;
+  if (st.mode === "pop") {
+    if (pop <= 0) return [50, 55, 62, 90];
+    const c = rampColor(BLUE_RAMP, Math.sqrt(pop / d.popMax));
+    return [c[0], c[1], c[2], 205];
+  }
+  if (st.mode === "elev") {
+    const c = rampColor(ORANGE_RAMP, (elev - d.eLo) / Math.max(1e-6, d.eHi - d.eLo));
+    return [c[0], c[1], c[2], 205];
+  }
+  // flood exposure
+  if (elev < FLOOD_M && pop > 0) {
+    const a = 120 + 135 * Math.sqrt(Math.min(1, pop / d.popMax));
+    const c = hexToRgb(CRITICAL);
+    return [c[0], c[1], c[2], Math.round(a)];
+  }
+  const m = hexToRgb(MUTED_HEX);
+  return [m[0], m[1], m[2], pop > 0 ? 110 : 60];
+}
+
+function renderMap(flyTo){
+  const st = getState(), d = domain();
+  const layers = [
+    new deck.TileLayer({
+      id: "basemap",
+      data: "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+      minZoom: 0, maxZoom: 19, tileSize: 256,
+      renderSubLayers: p => new deck.BitmapLayer(p, {
+        data: null, image: p.data,
+        bounds: [p.tile.boundingBox[0][0], p.tile.boundingBox[0][1],
+                 p.tile.boundingBox[1][0], p.tile.boundingBox[1][1]],
+      }),
+    }),
+    new deck.H3HexagonLayer({
+      id: "hexes",
+      data: view.hexes,
+      getHexagon: h => h[0],
+      getFillColor: h => fillColor(h, st, d),
+      filled: true, stroked: false, extruded: false,
+      opacity: 1, pickable: true,
+      updateTriggers: { getFillColor: [st.mode, view.region, view.resolution] },
+    }),
+  ];
+  const tooltip = ({object}) => object && {
+    html: `<div style="font-family:${getComputedStyle(document.body).fontFamily};font-size:12px">
+      <b>${object[1].toLocaleString("en-US")}</b> people<br>
+      elevation <b>${object[2]} m</b>${object[2] < FLOOD_M ? " · below flood threshold" : ""}</div>`,
+    style: { backgroundColor: "#232322", color: "#e8e7de", borderRadius: "6px",
+             border: "1px solid #33332f", padding: "6px 9px" },
+  };
+  if (!deckgl) {
+    deckgl = new deck.DeckGL({
+      container: "map",
+      initialViewState: { latitude: view.center[0], longitude: view.center[1], zoom: 8.6 },
+      controller: true, layers, getTooltip: tooltip,
+    });
+  } else {
+    deckgl.setProps({ layers, getTooltip: tooltip });
+    if (flyTo) deckgl.setProps({ initialViewState:
+      { latitude: view.center[0], longitude: view.center[1], zoom: 8.6,
+        transitionDuration: 700 } });
+  }
+}
+
+/* ---------------- CSV download (client-side, no python) ---------------- */
+$("csvBtn").addEventListener("click", () => {
+  if (!view) return;
+  const st = getState();
+  const rows = [["h3_index","resolution","population_2020","mean_elevation_m"]];
+  for (const [h, p, e] of view.hexes) rows.push([h, view.resolution, p, e]);
+  const csv = rows.map(r => r.join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"}));
+  a.download = `elevation_population_${st.region}_h${view.resolution}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ---------------- wiring: controls -> params -> onChange -> render ------- */
+$("region").addEventListener("change", e => fused.params.set("region", e.target.value));
+$("resSeg").addEventListener("click", e => {
+  if (e.target.dataset.v) fused.params.set("res", e.target.dataset.v);
+});
+$("modeSeg").addEventListener("click", e => {
+  if (e.target.dataset.v) fused.params.set("mode", e.target.dataset.v);
+});
+
+let last = getState();
+fused.params.onChange(() => {
+  const st = getState();
+  const needData = st.region !== last.region || st.res !== last.res;
+  last = st;
+  if (needData) loadData();       // view payload depends on region + res
+  else renderAll(false);          // mode change is client-side only
+});
+
+renderControls();
+loadData();
+</script>
+</body>
+</html>

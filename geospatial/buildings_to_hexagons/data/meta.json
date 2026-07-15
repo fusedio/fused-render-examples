@@ -1,0 +1,108 @@
+{
+  "_comment": "All numbers MEASURED, not invented. Sources + dates below.",
+  "measured_on": "2026-07-12",
+  "releases": {
+    "old": "2025-04-23-0",
+    "new": "2025-05-21-0"
+  },
+  "geometry": {
+    "_source": "aws s3 ls --summarize s3://us-west-2.opendata.source.coop/fused/overture/2025-05-21-0/theme=buildings/type=building/ (public mirror of the Overture release the hex overview was built from)",
+    "bytes": 315546301629,
+    "files": 491
+  },
+  "geometry_latest_official": {
+    "_source": "aws s3 ls --summarize s3://overturemaps-us-west-2/release/2026-06-17.0/theme=buildings/type=building/",
+    "bytes": 276320533806,
+    "files": 512
+  },
+  "overview_bytes": {
+    "_source": "fused files list s3://fused-users/fused/sina/overture_overview/2025-05-21-0/ \u2014 the actual world-scale hex files this explainer's world map is drawn from",
+    "3": 391477,
+    "4": 1363131,
+    "5": 6258449,
+    "6": 30152988,
+    "7": 129209608,
+    "8": 441023490,
+    "9": 1306357030,
+    "10": 3251602640,
+    "11": 8109818222
+  },
+  "overview_bytes_old": {
+    "_source": "fused files list s3://fused-users/fused/sina/overture_overview/2025-04-23-0/",
+    "3": 390285,
+    "4": 1360777,
+    "5": 6249746,
+    "6": 30114547,
+    "7": 129050696,
+    "8": 440431809,
+    "9": 1304435922,
+    "10": 3246031180,
+    "11": 7255915718
+  },
+  "world_totals": {
+    "_source": "sum of cnt over the hex3 overview file of each release (data/world_hex3_*.json)",
+    "2025-04-23-0": 2613778678,
+    "2025-05-21-0": 2622232542
+  },
+  "extracts": {
+    "ams": {
+      "bbox": [
+        4.88,
+        52.362,
+        4.902,
+        52.374
+      ],
+      "release": "2025-05-21-0",
+      "n": 5725,
+      "place": "canal ring, Amsterdam"
+    },
+    "assam_new": {
+      "bbox": [
+        95.44,
+        27.575,
+        95.475,
+        27.605
+      ],
+      "release": "2025-05-21-0",
+      "n": 2469,
+      "place": "near Duliajan, Assam, India"
+    },
+    "assam_old": {
+      "bbox": [
+        95.44,
+        27.575,
+        95.475,
+        27.605
+      ],
+      "release": "2025-04-23-0",
+      "n": 0,
+      "place": "near Duliajan, Assam, India"
+    },
+    "ams_old": {
+      "bbox": [
+        4.88,
+        52.362,
+        4.902,
+        52.374
+      ],
+      "release": "2025-04-23-0",
+      "n": 5722,
+      "place": "canal ring, Amsterdam (previous release, extracted 2026-07-15)"
+    },
+    "elev_fuji": {
+      "bbox": [
+        138.686256,
+        35.327171,
+        138.774147,
+        35.398846
+      ],
+      "source": "AWS Terrain Tiles (terrarium) z12, mean-downsampled x2, extracted 2026-07-15",
+      "nx": 128,
+      "ny": 128,
+      "px_m": 62.3,
+      "elev_min_m": 1376,
+      "elev_max_m": 3751,
+      "place": "Mount Fuji, Japan"
+    }
+  }
+}

@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Maxar Open Data explorer</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://unpkg.com/proj4@2.15.0/dist/proj4.js"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2b3442;
+    --txt:#dbe3ee; --dim:#8b98a9; --acc:#4a9eff; --acc2:#ffb454; --ok:#3fb950;
+  }
+  *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  #app{display:flex;height:100%}
+  #side{width:340px;min-width:340px;display:flex;flex-direction:column;background:var(--panel);
+    border-right:1px solid var(--line);z-index:5}
+  #side header{padding:12px 14px 8px}
+  #side h1{font-size:15px;margin:0 0 2px} #side h1 small{color:var(--dim);font-weight:400}
+  #side .sub{color:var(--dim);font-size:11.5px}
+  #search{margin:8px 14px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;color:var(--txt);width:calc(100% - 28px);outline:none}
+  #search:focus{border-color:var(--acc)}
+  #list{flex:1;overflow-y:auto;padding:0 8px 12px}
+  .ev{padding:8px 10px;margin:4px 2px;border-radius:7px;cursor:pointer;border:1px solid transparent}
+  .ev:hover{background:var(--panel2)}
+  .ev .t{font-weight:600} .ev .m{color:var(--dim);font-size:11.5px;margin-top:1px}
+  .back{display:inline-flex;align-items:center;gap:6px;color:var(--acc);cursor:pointer;
+    padding:8px 14px 2px;font-size:12px;user-select:none}
+  .datehdr{position:sticky;top:0;background:var(--panel);padding:7px 8px 4px;font-size:11px;
+    letter-spacing:.06em;color:var(--acc2);text-transform:uppercase;font-weight:700;z-index:1}
+  .acq{padding:7px 9px;margin:3px 2px;border-radius:7px;cursor:pointer;border:1px solid transparent;
+    display:flex;justify-content:space-between;gap:8px;align-items:center}
+  .acq:hover{background:var(--panel2)} .acq.sel{border-color:var(--acc);background:var(--panel2)}
+  .acq .t{font-weight:600;font-size:12px} .acq .m{color:var(--dim);font-size:11px}
+  .pv{flex:none;font-size:11px;padding:3px 9px;border-radius:20px;border:1px solid var(--line);
+    color:var(--dim);cursor:pointer;background:transparent;white-space:nowrap}
+  .pv:hover{border-color:var(--acc);color:var(--acc)}
+  .pv.on{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
+  .pv.loading{border-color:var(--acc2);color:var(--acc2)}
+  #map{flex:1;position:relative}
+  #topbar{position:absolute;top:10px;left:10px;right:10px;display:flex;gap:8px;z-index:4;
+    pointer-events:none;align-items:flex-start;flex-wrap:wrap}
+  .card{background:rgba(22,27,34,.92);backdrop-filter:blur(6px);border:1px solid var(--line);
+    border-radius:9px;padding:8px 12px;pointer-events:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:20px;padding:3px 10px;margin:2px 4px 2px 0}
+  .chip b{color:var(--acc)} .chip span.x{cursor:pointer;color:var(--dim)} .chip span.x:hover{color:#f66}
+  label.tog{display:inline-flex;align-items:center;gap:6px;margin-right:12px;cursor:pointer;
+    font-size:12px;color:var(--dim);user-select:none}
+  label.tog input{accent-color:var(--acc)}
+  input[type=range]{accent-color:var(--acc);vertical-align:middle}
+  #detail{position:absolute;bottom:12px;left:12px;max-width:340px;z-index:4;display:none}
+  #detail table{border-collapse:collapse;font-size:12px}
+  #detail td{padding:1px 8px 1px 0;color:var(--dim)} #detail td+td{color:var(--txt)}
+  #detail .t{font-weight:700;font-size:13px;margin-bottom:4px}
+  #prog{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:6;display:none;
+    text-align:center;min-width:280px}
+  #prog .bar{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-top:8px}
+  #prog .fill{height:100%;background:var(--acc);width:0%;transition:width .4s}
+  #toast{position:absolute;bottom:14px;right:14px;z-index:6;display:none;max-width:380px;font-size:12px}
+  .spin{display:inline-block;width:10px;height:10px;border:2px solid var(--dim);
+    border-top-color:var(--acc);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-1px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  ::-webkit-scrollbar{width:9px} ::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <header>
+      <h1>Maxar Open Data <small>explorer</small></h1>
+      <div class="sub" id="subtitle">Loading event catalog…</div>
+    </header>
+    <input id="search" placeholder="Filter events…" autocomplete="off">
+    <div id="list"></div>
+  </div>
+  <div id="map">
+    <div id="topbar">
+      <div class="card" id="controls">
+        <label class="tog"><input type="checkbox" id="bld"> Overture buildings</label>
+        <label class="tog"><input type="checkbox" id="base"> Satellite basemap</label>
+        <label class="tog">Imagery opacity
+          <input type="range" id="op" min="10" max="100" step="5" style="width:90px"></label>
+      </div>
+      <div class="card" id="previews" style="display:none"></div>
+    </div>
+    <div class="card" id="detail"></div>
+    <div class="card" id="prog"><div id="progtxt"></div><div class="bar"><div class="fill" id="progfill"></div></div></div>
+    <div class="card" id="toast"></div>
+  </div>
+</div>
+<script>
+"use strict";
+/* ============================================================ params/state */
+const P = fused.params;
+const $ = id => document.getElementById(id);
+const num = (v, d) => { const n = parseFloat(v); return isNaN(n) ? d : n; };
+
+let EVENTS = [];                 // event catalog rows
+let ACQS = [];                   // acquisitions of the open event
+let openEvent = null;            // event id whose acquisitions are listed
+const overlays = new Map();      // acq_id -> {tiles:[{id, srcId}], loading, gen}
+let mapReady = false;
+
+/* ============================================================ map */
+const DARK = "https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json";
+const map = new maplibregl.Map({
+  container: "map", style: DARK,
+  center: [num(P.get("lng"), 20), num(P.get("lat"), 10)], zoom: num(P.get("z"), 2),
+  attributionControl: {compact: true},
+});
+map.addControl(new maplibregl.NavigationControl({showCompass: false}), "top-right");
+
+function addBaseLayers() {
+  // Esri satellite under everything, toggled by visibility.
+  if (!map.getSource("esri")) map.addSource("esri", {type: "raster", tileSize: 256, maxzoom: 19,
+    tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+    attribution: "Esri World Imagery"});
+  if (!map.getLayer("esri")) map.addLayer({id: "esri", type: "raster", source: "esri",
+    layout: {visibility: "none"}}, firstSymbolId());
+
+  if (!map.getSource("events")) map.addSource("events", {type: "geojson", data: fc([])});
+  if (!map.getSource("fps")) map.addSource("fps", {type: "geojson", data: fc([])});
+
+  if (!map.getLayer("ev-fill")) map.addLayer({id: "ev-fill", type: "fill", source: "events",
+    paint: {"fill-color": "#4a9eff", "fill-opacity": 0.12}});
+  if (!map.getLayer("ev-line")) map.addLayer({id: "ev-line", type: "line", source: "events",
+    paint: {"line-color": "#4a9eff", "line-opacity": 0.5, "line-width": 1}});
+
+  if (!map.getLayer("fp-fill")) map.addLayer({id: "fp-fill", type: "fill", source: "fps",
+    paint: {"fill-color": ["case", ["boolean", ["feature-state", "sel"], false], "#ffb454", "#4a9eff"],
+            "fill-opacity": 0.10}});
+  if (!map.getLayer("fp-line")) map.addLayer({id: "fp-line", type: "line", source: "fps",
+    paint: {"line-color": ["case", ["boolean", ["feature-state", "sel"], false], "#ffb454", "#4a9eff"],
+            "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 2.5, 1.2],
+            "line-opacity": 0.85}});
+
+  // Overture buildings (Fused public MVT endpoint) — streams, z13+
+  if (!map.getSource("overture")) map.addSource("overture", {type: "vector", minzoom: 13, maxzoom: 15,
+    tiles: ["https://www.fused.io/server/v1/realtime-shared/UDF_Overture_Maps_Example/run/tiles/{z}/{x}/{y}?dtype_out_vector=mvt"]});
+  if (!map.getLayer("ovt-line")) map.addLayer({id: "ovt-line", type: "line", source: "overture",
+    "source-layer": "udf", minzoom: 13, layout: {visibility: "none"},
+    paint: {"line-color": "#00e5c0", "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.4, 16, 1.6],
+            "line-opacity": 0.9}});
+  if (!map.getLayer("ovt-fill")) map.addLayer({id: "ovt-fill", type: "fill", source: "overture",
+    "source-layer": "udf", minzoom: 13, layout: {visibility: "none"},
+    paint: {"fill-color": "#00e5c0", "fill-opacity": 0.06}}, "ovt-line");
+}
+function firstSymbolId() {
+  const ly = map.getStyle().layers || [];
+  const s = ly.find(l => l.type === "symbol");
+  return s && s.id;
+}
+const fc = feats => ({type: "FeatureCollection", features: feats});
+
+/* ============================================================ UTM -> lonlat */
+function utmDef(epsg) {
+  const z = epsg % 100, south = Math.floor(epsg / 100) === 327;
+  return `+proj=utm +zone=${z}${south ? " +south" : ""} +datum=WGS84 +units=m +no_defs`;
+}
+function toLL(epsg, x, y) { return proj4(utmDef(epsg), "EPSG:4326", [x, y]); }
+
+/* ============================================================ COG overlays */
+const tiffCache = new Map();   // url -> Promise<GeoTIFF>
+function getTiff(url) {
+  if (!tiffCache.has(url)) tiffCache.set(url, GeoTIFF.fromUrl(url, {allowFullFile: false}));
+  return tiffCache.get(url);
+}
+
+// Pick overview target size from current zoom: preview stays sharp as you zoom.
+function targetPx() {
+  const z = map.getZoom();
+  return z >= 15.5 ? 4096 : z >= 14 ? 2048 : z >= 12 ? 1024 : 512;
+}
+
+let decodeQueue = Promise.resolve();   // serialize decodes: keeps the tab responsive
+function enqueue(fn) { decodeQueue = decodeQueue.then(fn).catch(e => console.warn("decode:", e)); return decodeQueue; }
+
+async function renderTile(tile, px) {
+  const tif = await getTiff(tile.visual);
+  const n = await tif.getImageCount();
+  // COGs here interleave RGB overviews with 1-band mask IFDs — keep RGB only.
+  const levels = [];
+  for (let i = 0; i < n; i++) {
+    const im = await tif.getImage(i);
+    if (im.getSamplesPerPixel() >= 3) levels.push(im);
+  }
+  levels.sort((a, b) => a.getWidth() - b.getWidth());        // smallest first
+  let img = levels[levels.length - 1];                       // default: full res
+  for (const im of levels) { if (im.getWidth() >= px) { img = im; break; } }
+  const w = img.getWidth(), h = img.getHeight();
+  const scale = Math.min(1, px / Math.max(w, h));
+  const ow = Math.max(1, Math.round(w * scale)), oh = Math.max(1, Math.round(h * scale));
+  let data;
+  try {
+    data = await img.readRGB({width: ow, height: oh, interleave: true, enableAlpha: false});
+  } catch (e) {
+    // Maxar visual COGs are JPEG/YCbCr: the JPEG decoder already yields RGB but
+    // readRGB rejects the photometric tag — readRasters returns the RGB directly.
+    data = await img.readRasters({width: ow, height: oh, interleave: true});
+  }
+
+  const cv = document.createElement("canvas"); cv.width = ow; cv.height = oh;
+  const ctx = cv.getContext("2d"), id = ctx.createImageData(ow, oh), d = id.data;
+  for (let i = 0, j = 0; i < ow * oh; i++, j += 3) {
+    const r = data[j], g = data[j + 1], b = data[j + 2];
+    d[i * 4] = r; d[i * 4 + 1] = g; d[i * 4 + 2] = b;
+    d[i * 4 + 3] = (r || g || b) ? 255 : 0;                  // black collar -> transparent
+  }
+  ctx.putImageData(id, 0, 0);
+
+  // corners from the raster's own projected bbox (axis-aligned in UTM)
+  // Overview IFDs carry no geo tags — the full-res IFD (same extent) does.
+  const geoImg = await tif.getImage(0);
+  let bb, epsg = (geoImg.geoKeys && geoImg.geoKeys.ProjectedCSTypeGeoKey) || tile.epsg;
+  try { bb = geoImg.getBoundingBox(); }                       // [minx, miny, maxx, maxy] in UTM
+  catch (e) { bb = tile.proj_bbox; }                          // STAC proj:bbox fallback
+  const co = [toLL(epsg, bb[0], bb[3]), toLL(epsg, bb[2], bb[3]),
+              toLL(epsg, bb[2], bb[1]), toLL(epsg, bb[0], bb[1])];
+  return {url: cv.toDataURL("image/png"), coordinates: co, width: ow};
+}
+
+async function addOverlay(acq) {
+  const id = acq.acq_id;
+  if (overlays.has(id)) return;
+  const entry = {tiles: [], loading: true, gen: 0, event: openEvent};
+  overlays.set(id, entry);
+  renderPreviewChips(); renderAcqList();
+
+  let res;
+  try { res = await pollPython({action: "tiles", event: openEvent, acq: id},
+      r => setProgress(`Loading tiles for ${id} — ${r.done} / ${r.total}`, r.done / r.total)); }
+  catch (e) { overlays.delete(id); toast(`Tile listing failed: ${e.message}`); renderPreviewChips(); renderAcqList(); return; }
+  finally { hideProgress(); }
+  if (!overlays.has(id)) return;                              // removed while loading
+
+  const tiles = res.tiles.slice(0, 60);                       // sanity cap
+  if (res.tiles.length > tiles.length) toast(`${id}: showing first ${tiles.length} of ${res.tiles.length} tiles`);
+  entry.meta = tiles;
+  const px = targetPx();
+  const myGen = ++entry.gen;
+  for (const t of tiles) {
+    enqueue(async () => {
+      if (!overlays.has(id) || entry.gen !== myGen) return;
+      const r = await renderTile(t, px);
+      if (!overlays.has(id) || entry.gen !== myGen) return;
+      const srcId = `cog-${id}-${t.tile_id}`;
+      if (map.getSource(srcId)) { map.getSource(srcId).updateImage(r); }
+      else {
+        map.addSource(srcId, {type: "image", url: r.url, coordinates: r.coordinates});
+        map.addLayer({id: srcId, type: "raster", source: srcId,
+          paint: {"raster-opacity": num(P.get("op"), 100) / 100, "raster-fade-duration": 150}},
+          map.getLayer("fp-fill") ? "fp-fill" : undefined);
+        entry.tiles.push({id: t.tile_id, srcId, px: r.width});
+      }
+    });
+  }
+  enqueue(() => { entry.loading = false; renderPreviewChips(); renderAcqList(); });
+}
+
+function removeOverlay(id) {
+  const entry = overlays.get(id);
+  if (!entry) return;
+  overlays.delete(id);
+  for (const t of entry.tiles) { if (map.getLayer(t.srcId)) map.removeLayer(t.srcId); if (map.getSource(t.srcId)) map.removeSource(t.srcId); }
+  renderPreviewChips(); renderAcqList();
+}
+
+// Refine overlays when zooming in: re-render at a bigger overview level.
+let refineTimer = null;
+map.on("moveend", () => {
+  clearTimeout(refineTimer);
+  refineTimer = setTimeout(() => {
+    const px = targetPx();
+    const vb = map.getBounds();
+    overlays.forEach((entry, id) => {
+      if (!entry.meta) return;
+      for (const t of entry.meta) {
+        const done = entry.tiles.find(x => x.id === t.tile_id);
+        if (!done || done.px >= px * 0.9) continue;
+        const [w, s, e, n] = t.bbox;
+        if (e < vb.getWest() || w > vb.getEast() || n < vb.getSouth() || s > vb.getNorth()) continue;
+        enqueue(async () => {
+          if (!overlays.has(id) || !map.getSource(done.srcId)) return;
+          const r = await renderTile(t, px);
+          if (!overlays.has(id) || !map.getSource(done.srcId)) return;
+          map.getSource(done.srcId).updateImage(r);
+          done.px = r.width;
+        });
+      }
+    });
+  }, 350);
+});
+
+/* ============================================================ python bridge */
+async function pollPython(params, onProgress) {
+  for (let i = 0; i < 40; i++) {
+    const r = await fused.runPython("./catalog.py", params);
+    if (r.ready) return r;
+    onProgress && onProgress(r);
+    await new Promise(res => setTimeout(res, 400));
+  }
+  throw new Error("timed out waiting for catalog crawl");
+}
+function setProgress(txt, frac) {
+  $("prog").style.display = "block";
+  $("progtxt").innerHTML = `<span class="spin"></span>&nbsp; ${txt}`;
+  $("progfill").style.width = `${Math.round((frac || 0) * 100)}%`;
+}
+function hideProgress() { $("prog").style.display = "none"; }
+let toastTimer;
+function toast(msg) {
+  $("toast").textContent = msg; $("toast").style.display = "block";
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").style.display = "none", 5000);
+}
+
+/* ============================================================ sidebar */
+function bboxPoly(w, s, e, n, props) {
+  return {type: "Feature", properties: props || {},
+    geometry: {type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]]}};
+}
+function renderEventList() {
+  const q = (P.get("q") || "").toLowerCase();
+  const rows = EVENTS.filter(e => !q || e.title.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
+  $("subtitle").textContent = `${EVENTS.length} events · Maxar/Vantor Open Data STAC`;
+  $("list").innerHTML = rows.map(e => `
+    <div class="ev" data-id="${e.id}">
+      <div class="t">${e.title}</div>
+      <div class="m">${e.start || "?"}${e.end && e.end !== e.start ? " → " + e.end : ""} · ${e.n_acq} acquisitions</div>
+    </div>`).join("") || `<div class="m" style="padding:10px;color:var(--dim)">No matching events</div>`;
+  $("list").querySelectorAll(".ev").forEach(el =>
+    el.addEventListener("click", () => { P.set("event", el.dataset.id); P.set("sel", ""); }));
+  if (mapReady) map.getSource("events").setData(fc(rows.map(e => bboxPoly(...e.bbox, {id: e.id}))));
+  if (mapReady) map.getSource("fps").setData(fc([]));
+}
+function renderAcqList() {
+  const ev = EVENTS.find(e => e.id === openEvent) || {title: openEvent};
+  const sel = P.get("sel") || "";
+  let html = `<div class="back" id="backbtn">← All events</div>
+    <div style="padding:2px 14px 6px"><b>${ev.title}</b>
+    <div class="m" style="color:var(--dim);font-size:11.5px">${ACQS.length} acquisitions — click one to see its footprint, Preview streams the imagery</div></div>`;
+  let lastDate = null;
+  for (const a of ACQS) {
+    if (a.date !== lastDate) { html += `<div class="datehdr">${a.date}</div>`; lastDate = a.date; }
+    const st = overlays.get(a.acq_id);
+    const pvCls = st ? (st.loading ? "pv loading" : "pv on") : "pv";
+    const pvTxt = st ? (st.loading ? "loading…" : "shown") : "preview";
+    html += `<div class="acq ${a.acq_id === sel ? "sel" : ""}" data-id="${a.acq_id}">
+      <div><div class="t">${a.sensor}</div>
+      <div class="m">${a.res_cm ? a.res_cm + " cm · " : ""}${a.n_tiles} tile${a.n_tiles > 1 ? "s" : ""}${a.off_nadir != null ? " · " + a.off_nadir.toFixed(0) + "° off-nadir" : ""}</div></div>
+      <button class="${pvCls}" data-id="${a.acq_id}">${pvTxt}</button></div>`;
+  }
+  $("list").innerHTML = html;
+  $("backbtn").addEventListener("click", () => { P.set("event", ""); P.set("sel", ""); });
+  $("list").querySelectorAll(".acq").forEach(el =>
+    el.addEventListener("click", () => P.set("sel", el.dataset.id)));
+  $("list").querySelectorAll(".pv").forEach(el =>
+    el.addEventListener("click", ev2 => { ev2.stopPropagation(); togglePreviewParam(el.dataset.id); }));
+}
+function togglePreviewParam(id) {
+  const cur = (P.get("prev") || "").split(",").filter(Boolean);
+  const i = cur.indexOf(id);
+  if (i >= 0) cur.splice(i, 1); else cur.push(id);
+  P.set("prev", cur.join(","));
+}
+function renderPreviewChips() {
+  const prevIds = [...overlays.keys()];
+  if (mapReady && map.getLayer("fp-fill"))
+    map.setFilter("fp-fill", prevIds.length ? ["!", ["in", ["get", "acq_id"], ["literal", prevIds]]] : null);
+  const box = $("previews");
+  if (!overlays.size) { box.style.display = "none"; return; }
+  box.style.display = "block";
+  box.innerHTML = [...overlays.entries()].map(([id, e]) =>
+    `<span class="chip"><b>${id}</b>${e.loading ? ' <span class="spin"></span>' : ""}<span class="x" data-id="${id}">✕</span></span>`).join("") +
+    `<span class="chip" style="cursor:pointer" id="clearall">clear all</span>`;
+  box.querySelectorAll(".x").forEach(el => el.addEventListener("click", () => togglePreviewParam(el.dataset.id)));
+  const ca = $("clearall"); if (ca) ca.addEventListener("click", () => P.set("prev", ""));
+}
+function renderDetail() {
+  const sel = P.get("sel") || "";
+  const a = ACQS.find(x => x.acq_id === sel);
+  const el = $("detail");
+  if (!a) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  el.innerHTML = `<div class="t">${a.sensor} — ${a.date}</div><table>
+    <tr><td>Catalog ID</td><td>${a.acq_id}</td></tr>
+    <tr><td>Acquired</td><td>${a.datetime || "—"}</td></tr>
+    <tr><td>Resolution</td><td>${a.res_cm ? a.res_cm + " cm/px" : "—"}</td></tr>
+    <tr><td>Off-nadir</td><td>${a.off_nadir != null ? a.off_nadir + "°" : "—"}</td></tr>
+    <tr><td>Sun elevation</td><td>${a.sun_elev != null ? a.sun_elev + "°" : "—"}</td></tr>
+    <tr><td>ARD tiles</td><td>${a.n_tiles}</td></tr></table>`;
+}
+
+/* ============================================================ data loads */
+async function loadEvents() {
+  const r = await pollPython({action: "events"},
+    p => setProgress(`Reading event catalog — ${p.done} / ${p.total}`, p.done / p.total));
+  hideProgress();
+  EVENTS = r.events;
+  $("subtitle").textContent = `${EVENTS.length} events · Maxar/Vantor Open Data STAC`;
+}
+async function openEventId(id, fit) {
+  openEvent = id;
+  ACQS = [];
+  renderAcqList();
+  let r;
+  try { r = await pollPython({action: "footprints", event: id},
+      p => setProgress(`Fetching acquisition footprints — ${p.done} / ${p.total}`, p.done / p.total)); }
+  finally { hideProgress(); }
+  if (openEvent !== id) return;
+  ACQS = r.acquisitions;
+  renderAcqList();
+  map.getSource("events").setData(fc([]));
+  map.getSource("fps").setData(fc(ACQS.map((a, i) => bboxPoly(a.w, a.s, a.e, a.n, {acq_id: a.acq_id, i}))));
+  const ev = EVENTS.find(e => e.id === id);
+  if (ev && fit) map.fitBounds([[ev.bbox[0], ev.bbox[1]], [ev.bbox[2], ev.bbox[3]]], {padding: 60, duration: 800, maxZoom: 12});
+}
+
+/* ============================================================ apply-from-params (write-through diffing) */
+let applying = false, lastEvent = null;
+let firstApply = true;   // a deep link restores lat/lng/z — don't fly away from it
+async function applyFromParams() {
+  if (applying) { pendingApply = true; return; }
+  applying = true;
+  try {
+    // search
+    if ($("search").value !== (P.get("q") || "")) $("search").value = P.get("q") || "";
+    // toggles
+    const bld = P.get("bld") === "1", sat = P.get("base") === "sat";
+    $("bld").checked = bld; $("base").checked = sat;
+    $("op").value = String(num(P.get("op"), 100));
+    if (mapReady) {
+      map.setLayoutProperty("ovt-line", "visibility", bld ? "visible" : "none");
+      map.setLayoutProperty("ovt-fill", "visibility", bld ? "visible" : "none");
+      map.setLayoutProperty("esri", "visibility", sat ? "visible" : "none");
+      const op = num(P.get("op"), 100) / 100;
+      overlays.forEach(e => e.tiles.forEach(t => map.getLayer(t.srcId) &&
+        map.setPaintProperty(t.srcId, "raster-opacity", op)));
+      // don't tint previewed acquisitions with the footprint fill
+      const prevIds = [...overlays.keys()];
+      if (map.getLayer("fp-fill"))
+        map.setFilter("fp-fill", prevIds.length ? ["!", ["in", ["get", "acq_id"], ["literal", prevIds]]] : null);
+    }
+    // event open/close
+    const ev = P.get("event") || "";
+    if (ev !== lastEvent) {
+      lastEvent = ev;
+      // overlays from another event no longer make sense to toggle from the list; keep them shown.
+      const fit = !(firstApply && P.get("lat") != null);
+      if (ev) await openEventId(ev, fit); else { openEvent = null; ACQS = []; renderEventList(); }
+    } else if (!ev) renderEventList();
+    // selection highlight
+    if (mapReady && openEvent && ACQS.length) {
+      const sel = P.get("sel") || "";
+      ACQS.forEach((a, i) => map.setFeatureState({source: "fps", id: i}, {sel: a.acq_id === sel}));
+      renderAcqList();
+    }
+    renderDetail();
+    // previews
+    if (openEvent) {
+      const want = new Set((P.get("prev") || "").split(",").filter(Boolean));
+      [...overlays.keys()].forEach(id => { if (!want.has(id)) removeOverlay(id); });
+      for (const id of want) if (!overlays.has(id) && ACQS.find(a => a.acq_id === id)) addOverlay(ACQS.find(a => a.acq_id === id));
+    } else if (!P.get("prev")) {
+      [...overlays.keys()].forEach(removeOverlay);
+    }
+  } finally {
+    firstApply = false;
+    applying = false;
+    if (pendingApply) { pendingApply = false; applyFromParams(); }
+  }
+}
+let pendingApply = false;
+
+/* ============================================================ wiring */
+$("search").addEventListener("input", () => P.set("q", $("search").value));
+$("bld").addEventListener("change", () => P.set("bld", $("bld").checked ? "1" : "0"));
+$("base").addEventListener("change", () => P.set("base", $("base").checked ? "sat" : "dark"));
+$("op").addEventListener("input", () => P.set("op", $("op").value));
+
+map.on("click", "fp-fill", e => {
+  const f = e.features && e.features[0];
+  if (f) P.set("sel", f.properties.acq_id);
+});
+map.on("click", "ev-fill", e => {
+  const f = e.features && e.features[0];
+  if (f && !openEvent) P.set("event", f.properties.id);
+});
+map.on("mouseenter", "fp-fill", () => map.getCanvas().style.cursor = "pointer");
+map.on("mouseleave", "fp-fill", () => map.getCanvas().style.cursor = "");
+map.on("mouseenter", "ev-fill", () => map.getCanvas().style.cursor = "pointer");
+map.on("mouseleave", "ev-fill", () => map.getCanvas().style.cursor = "");
+
+let viewTimer;
+map.on("moveend", () => {
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(() => {
+    const c = map.getCenter();
+    P.set("lat", c.lat.toFixed(4)); P.set("lng", c.lng.toFixed(4)); P.set("z", map.getZoom().toFixed(2));
+  }, 250);
+});
+
+P.onChange(() => applyFromParams());
+
+map.on("load", async () => {
+  addBaseLayers();
+  // patch: give fps features ids
+  const src = map.getSource("fps");
+  const orig = src.setData.bind(src);
+  src.setData = d => { (d.features || []).forEach((f, i) => f.id = i); return orig(d); };
+  mapReady = true;
+  await loadEvents();
+  await applyFromParams();
+});
+</script>
+</body>
+</html>

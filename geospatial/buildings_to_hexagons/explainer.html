@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How do you map every building on Earth?</title>
+<style>
+  :root {
+    /* warm paper + ink; blue = the buildings (input), orange = the hexagons (output). */
+    --paper:#f6f2e9; --card:#fffdf8; --line:#e4dccb; --line2:#d6cdb8;
+    --ink:#28231a; --dim:#7b7260; --mut:#a89e8a;
+    --you:#2b6be4; --you-soft:#dbe6fb;
+    --srv:#d9642c; --srv-soft:#f9e3d3;
+    --good:#33875a; --bad:#b3402e;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         display:flex; flex-direction:column; align-items:center; }
+  .col { width:100%; max-width:800px; padding:22px 28px 26px; display:flex;
+         flex-direction:column; min-height:100vh; }
+
+  .prog { display:flex; align-items:center; gap:10px; color:var(--mut); font-size:12px; flex:0 0 auto; }
+  .dots { display:flex; gap:5px; flex:1; justify-content:center; }
+  .dots i { width:7px; height:7px; border-radius:50%; background:var(--line2); transition:background .2s, transform .2s; }
+  .dots i.on { background:var(--ink); transform:scale(1.25); }
+  .dots i.past { background:var(--mut); }
+  .prog .n { font-variant-numeric:tabular-nums; min-width:52px; }
+  .prog .n:last-child { text-align:right; }
+
+  .head { margin:16px 0 12px; min-height:112px; flex:0 0 auto; }
+  .kicker { font-size:12px; letter-spacing:1.6px; text-transform:uppercase; color:var(--srv);
+            font-weight:700; margin:0 0 6px; min-height:15px; }
+  h1 { font-family:Georgia,"Iowan Old Style","Times New Roman",serif; font-size:31px;
+       line-height:1.15; margin:0 0 8px; letter-spacing:-.2px; font-weight:600; }
+  .copy { color:#4d463a; font-size:15.5px; margin:0; max-width:640px; }
+  .copy b { color:var(--ink); }
+  .copy .you { color:var(--you); font-weight:600; }
+  .copy .srv { color:var(--srv); font-weight:600; }
+  code, .mono { font-family:"SF Mono",ui-monospace,Menlo,monospace; }
+
+  .stage { background:var(--card); border:1px solid var(--line); border-radius:18px;
+           height:472px; position:relative; overflow:hidden; flex:0 0 auto;
+           display:flex; align-items:center; justify-content:center;
+           box-shadow:0 2px 10px rgba(90,75,40,.06); }
+  .stage-in { display:flex; flex-direction:column; align-items:center; gap:12px; width:100%; padding:18px; }
+  .caption { color:var(--dim); font-size:13px; text-align:center; min-height:18px;
+             font-variant-numeric:tabular-nums; }
+  .caption b { color:var(--ink); }
+  .caption .y { color:var(--you); font-weight:600; }
+  .caption .o { color:var(--srv); font-weight:600; }
+  .caption .g { color:var(--good); font-weight:600; }
+  .caption .r { color:var(--bad); font-weight:600; }
+  .zoomhint { position:absolute; right:14px; top:12px; z-index:5; color:var(--mut); font-size:11px;
+              background:rgba(255,253,248,.85); border:1px solid var(--line); border-radius:7px; padding:4px 9px; }
+
+  .nav { display:flex; align-items:center; justify-content:space-between; margin-top:14px; flex:0 0 auto; }
+  .nav .hintkeys { color:var(--mut); font-size:12px; }
+  button.b { appearance:none; cursor:pointer; font:600 14px/1 -apple-system,BlinkMacSystemFont,sans-serif;
+             border-radius:10px; padding:11px 20px; border:1px solid var(--line2);
+             background:var(--card); color:var(--ink); transition:transform .1s, box-shadow .15s, opacity .15s; }
+  button.b:hover { box-shadow:0 2px 8px rgba(90,75,40,.12); }
+  button.b:active { transform:translateY(1px); }
+  button.b.primary { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  button.b[disabled] { opacity:.35; cursor:default; box-shadow:none; }
+  button.small { appearance:none; cursor:pointer; font:600 12.5px/1 -apple-system,sans-serif;
+                 border-radius:8px; padding:8px 14px; border:1px solid var(--line2);
+                 background:var(--card); color:var(--ink); }
+  button.small:hover { box-shadow:0 1px 6px rgba(90,75,40,.15); }
+  button.small.on { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+
+  canvas.map { border-radius:12px; border:1px solid var(--line2); background:#fbf8f0; display:block;
+               touch-action:none; }
+  canvas.map.grab { cursor:grab; } canvas.map.grab:active { cursor:grabbing; }
+
+  input[type=range] { accent-color:var(--srv); }
+  .legend { display:flex; gap:18px; color:var(--dim); font-size:12px; align-items:center; }
+  .legend i { width:9px; height:9px; border-radius:3px; display:inline-block; margin-right:6px; vertical-align:-1px; }
+  .fadein { animation:fade .45s ease both; }
+  @keyframes fade { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+  .foot { color:var(--mut); font-size:11.5px; text-align:center; margin-top:10px; }
+
+  .tbl { font:11.5px/1.7 "SF Mono",ui-monospace,Menlo,monospace; background:#fff;
+         border:1px solid var(--line2); border-radius:10px; padding:10px 14px; }
+  .tbl .hd { color:var(--mut); border-bottom:1px solid var(--line); }
+  .tbl .hex { color:var(--srv); }
+  .tbl .big { font-size:13px; }
+
+  .bar { height:16px; border-radius:5px; background:var(--you); min-width:2px; }
+  .bar.o { background:var(--srv); }
+  .barlbl { font-size:12px; color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<div class="col">
+  <div class="prog">
+    <span class="n" id="pn"></span>
+    <div class="dots" id="pdots"></div>
+    <span class="n" id="pt"></span>
+  </div>
+
+  <div class="head">
+    <p class="kicker" id="kicker"></p>
+    <h1 id="title"></h1>
+    <p class="copy" id="copy"></p>
+  </div>
+
+  <div class="stage" id="stage"></div>
+
+  <div class="nav">
+    <button class="b" id="back">← Back</button>
+    <span class="hintkeys">use ← → keys</span>
+    <button class="b primary" id="next">Next →</button>
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+function el(tag, cls, html){ const e = document.createElement(tag); if(cls) e.className = cls;
+  if(html != null) e.innerHTML = html; return e; }
+const fmt = n => Number(n).toLocaleString("en-US");
+const kb = b => b >= 1e9 ? (b/1e9).toFixed(1)+" GB"
+             : b >= 1e6 ? (b/1e6).toFixed(1)+" MB"
+             : b >= 1000 ? Math.round(b/1000)+" KB" : b+" B";
+const km2 = m2 => m2 >= 1e6 ? (m2/1e6).toFixed(2)+" km²" : fmt(Math.round(m2))+" m²";
+const DPR = window.devicePixelRatio || 1;
+
+/* ---------------- data + python plumbing (everything real) ---------------- */
+const HAS_FUSED = typeof window.fused !== "undefined" && !!window.fused.runPython;
+const P = HAS_FUSED && fused.params ? fused.params :
+  { _m:{}, get(k){ return this._m[k] ?? null; }, set(k,v){ this._m[k]=v; }, onChange(){} };
+
+const PAGE_DIR = (() => {                            // abs dir of this page on disk
+  const q = new URLSearchParams(location.search).get("path");
+  if (location.pathname === "/render" && q) return q.replace(/\/[^/]*$/, "");
+  if (location.pathname.startsWith("/view/")) return location.pathname.slice(5).replace(/\/[^/]*$/, "");
+  return "";
+})();
+const DATA_DIR = PAGE_DIR + "/data";
+
+const dataCache = new Map();
+async function loadData(name){                       // baked real extracts (see data/meta.json)
+  if (dataCache.has(name)) return dataCache.get(name);
+  const url = PAGE_DIR ? "/api/fs/raw?path=" + encodeURIComponent(DATA_DIR + "/" + name)
+                       : "data/" + name;
+  const p = fetch(url).then(r => { if (!r.ok) throw new Error(name + ": HTTP " + r.status); return r.json(); });
+  dataCache.set(name, p);
+  return p;
+}
+
+let pyChain = Promise.resolve();
+let lastPyVersion = null;
+const pyCache = new Map();
+function callPy(params, opts = {}){                  // live compute via local Python/DuckDB
+  const key = JSON.stringify(params);
+  if (!opts.fresh && pyCache.has(key)) return pyCache.get(key);
+  const run = pyChain.then(async () => {
+    if (!HAS_FUSED) throw new Error("no local Python (standalone preview)");
+    const r = await fused.runPython("./h3_ingest.py", { ...params, data_dir: DATA_DIR });
+    lastPyVersion = r.python;
+    return r;
+  });
+  pyChain = run.catch(() => {});
+  pyCache.set(key, run);
+  run.catch(() => pyCache.delete(key));
+  return run;
+}
+function pyFail(cap, e){ cap.innerHTML = "⚠︎ the local Python engine didn't answer — " + (e.message || e); }
+
+/* ---------------- geometry ---------------- */
+function projector(bbox, H){                          // lnglat -> px, aspect-true
+  const [x0, y0, x1, y1] = bbox;
+  const k = Math.cos((y0 + y1) / 2 * Math.PI / 180);
+  const W = Math.round(H * ((x1 - x0) * k) / (y1 - y0));
+  return { W, H,
+    x: lng => (lng - x0) / (x1 - x0) * W,
+    y: lat => (y1 - lat) / (y1 - y0) * H,
+    mPerPx: (y1 - y0) * 111320 / H };
+}
+function makeCanvas(W, H){
+  const c = el("canvas", "map");
+  c.width = W * DPR; c.height = H * DPR;
+  c.style.width = W + "px"; c.style.height = H + "px";
+  const g = c.getContext("2d");
+  g.scale(DPR, DPR);
+  return [c, g];
+}
+
+/* ---------------- retained-geometry rendering ----------------
+   The perf model is the one real map engines use: geometry is baked ONCE
+   into native Path2D objects (in base-projection pixels), and every frame
+   is just setTransform + fill/stroke — no per-vertex JavaScript. While the
+   user pans/zooms we don't even re-render: we blit the last crisp frame
+   with a delta transform (1 drawImage) and re-render crisp after ~90 ms
+   of quiet. */
+function ringsPath(list, pr){                        // list of {ring} or boundary arrays
+  const p = new Path2D();
+  for (const it of list){
+    const r = it.ring || it.boundary || it;
+    p.moveTo(pr.x(r[0][0]), pr.y(r[0][1]));
+    for (let i = 1; i < r.length; i++) p.lineTo(pr.x(r[i][0]), pr.y(r[i][1]));
+    p.closePath();
+  }
+  return p;
+}
+function withView(g, v, fn){
+  g.save();
+  g.setTransform(DPR * v.s, 0, 0, DPR * v.s, DPR * v.tx, DPR * v.ty);
+  fn();
+  g.restore();
+}
+function paintPath(g, v, p, o = {}){                 // screen-constant line widths
+  withView(g, v, () => {
+    if (o.fill && o.fill !== "none"){ g.fillStyle = o.fill; g.fill(p); }
+    if (o.stroke !== "none"){
+      g.strokeStyle = o.stroke || "#2b6be4";
+      g.lineWidth = (o.lw ?? 0.7) / v.s;
+      g.stroke(p);
+    }
+  });
+}
+/* per-cell filled hexes: cached Path2D array + shared stroke path */
+function cellPaths(cells, pr){
+  return { each: cells.map(cc => ringsPath([cc.boundary], pr)),
+           all: ringsPath(cells.map(cc => cc.boundary), pr), cells };
+}
+function paintCells(g, v, cp, o = {}){
+  withView(g, v, () => {
+    if (o.fillFor){
+      for (let i = 0; i < cp.each.length; i++){
+        const f = o.fillFor(cp.cells[i]);
+        if (f){ g.fillStyle = f; g.fill(cp.each[i]); }
+      }
+    }
+    g.strokeStyle = o.stroke || "#d9642c";
+    g.lineWidth = (o.lw ?? 1.2) / v.s;
+    g.stroke(cp.all);
+  });
+}
+
+/* pan/zoom with blit-while-interacting */
+function panzoom(c, redraw, o = {}){
+  const W = parseFloat(c.style.width), H = parseFloat(c.style.height);
+  const g = c.getContext("2d");
+  const v = { s: 1, tx: 0, ty: 0 };
+  const max = o.max ?? 9;
+  let snapC = null, snapV = null, idleT = 0, rendering = false;
+  function settle(){
+    v.s = clamp(v.s, 1, max);
+    v.tx = clamp(v.tx, W - W * v.s, 0);
+    v.ty = clamp(v.ty, H - H * v.s, 0);
+  }
+  async function render(){                            // crisp: full scene + snapshot
+    if (rendering) return; rendering = true;
+    try { await redraw(); } finally { rendering = false; }
+    if (!c.isConnected) return;
+    if (!snapC){ snapC = document.createElement("canvas"); snapC.width = c.width; snapC.height = c.height; }
+    const sg = snapC.getContext("2d");
+    sg.clearRect(0, 0, snapC.width, snapC.height);
+    sg.drawImage(c, 0, 0);
+    snapV = { ...v };
+  }
+  function blit(){                                    // cheap: 1 drawImage of the last crisp frame
+    if (!snapV){ render(); return; }
+    const k = v.s / snapV.s;
+    g.save();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, c.width, c.height);
+    g.setTransform(k, 0, 0, k, (v.tx - k * snapV.tx) * DPR, (v.ty - k * snapV.ty) * DPR);
+    g.drawImage(snapC, 0, 0);
+    g.restore();
+    clearTimeout(idleT); idleT = setTimeout(render, 90);
+  }
+  c.addEventListener("wheel", e => {
+    e.preventDefault();
+    const r = c.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const s0 = v.s;
+    v.s = clamp(s0 * Math.exp(-e.deltaY * 0.0016), 1, max);
+    v.tx = mx - (mx - v.tx) * (v.s / s0);
+    v.ty = my - (my - v.ty) * (v.s / s0);
+    settle(); blit();
+  }, { passive: false });
+  let drag = null;
+  c.addEventListener("pointerdown", e => {
+    drag = { x: e.clientX, y: e.clientY, tx: v.tx, ty: v.ty };
+    c.setPointerCapture(e.pointerId);
+  });
+  c.addEventListener("pointermove", e => {
+    if (!drag) return;
+    v.tx = drag.tx + (e.clientX - drag.x);
+    v.ty = drag.ty + (e.clientY - drag.y);
+    settle(); blit();
+  });
+  c.addEventListener("pointerup", () => { drag = null; });
+  c.classList.add("grab");
+  return { v, render };
+}
+/* projector seen through the view (for point work: dots, lens, hit tests) */
+const viewed = (pr, v) => ({
+  W: pr.W, H: pr.H,
+  x: lng => pr.x(lng) * v.s + v.tx,
+  y: lat => pr.y(lat) * v.s + v.ty,
+  mPerPx: pr.mPerPx,
+});
+function zoomhint(host, text){
+  host.style.position = "relative";
+  host.appendChild(el("div", "zoomhint", text || "scroll to zoom · drag to pan"));
+}
+
+/* world map (equirect, lat clipped to where buildings live) */
+const WLAT = [-56, 78];
+function worldProj(W){
+  const H = Math.round(W * (WLAT[1] - WLAT[0]) / 360 * 1.34);
+  return { W, H, x: lng => (lng + 180) / 360 * W,
+           y: lat => (WLAT[1] - lat) / (WLAT[1] - WLAT[0]) * H };
+}
+function drawWorld(g, pr, rows, o = {}){              // rows: [id,lat,lng,area,cnt,(p0)]
+  const max = o.max ?? 2600000;
+  const s = o.size ?? 2.4;
+  const cw = parseFloat(g.canvas.style.width), ch = parseFloat(g.canvas.style.height);
+  for (const r of rows){
+    const px = pr.x(r[2]), py = pr.y(r[1]);
+    if (px < -4 || px > cw + 4 || py < -4 || py > ch + 4) continue;
+    const t = Math.pow(Math.min(1, r[4] / max), 0.28);
+    g.fillStyle = o.colorFor ? o.colorFor(r, t) : `rgba(217,100,44,${0.12 + 0.88 * t})`;
+    g.fillRect(px - s / 2, py - s / 2, s, s);
+  }
+}
+/* world detail: hex3 rows normally, hex4 rows once zoomed past `cut` */
+function worldRows(v, release, cut = 2.6, onload){
+  const fine = "world_hex4_" + release + ".json", coarse = "world_hex3_" + release + ".json";
+  if (v.s >= cut){
+    if (dataCache.has(fine)) return loadData(fine);
+    loadData(fine).then(onload);                     // arrives later -> redraw
+  }
+  return loadData(coarse);
+}
+
+/* ================================================================ steps */
+const steps = [];
+const step = s => steps.push(s);
+const AMS_BBOX = [4.88, 52.362, 4.902, 52.374];
+
+/* ---- 0 · title ---------------------------------------------------- */
+step({
+  kicker: "a four-minute interactive story",
+  title: "How do you map every building on Earth?",
+  copy: "Every dot below is real: <b>2,622,232,542 buildings</b>, summarized so hard that your browser " +
+        "just drew all of them from a file smaller than one phone photo. This is the story of that trick — " +
+        "and of what it costs.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = worldProj(716);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const cap = el("div", "caption", "loading the planet…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const rel = "2025-05-21-0";
+      await loadData("world_hex3_" + rel + ".json");
+      let pz;
+      async function redraw(){
+        const v = pz.v;
+        const d = await worldRows(v, rel, 2.6, () => pz.render());
+        if (!c.isConnected) return;
+        g.clearRect(0, 0, pr.W, pr.H);
+        drawWorld(g, viewed(pr, v), d.rows, { size: (d.res === 4 ? 1.7 : 2.4) * Math.sqrt(v.s),
+                                              max: d.res === 4 ? 500000 : 2600000 });
+        cap.innerHTML = `the whole planet's buildings in <b>${fmt(d.n)}</b> hexagons — ` +
+          (d.res === 3 ? `one <b>0.4 MB</b> file` : `the next size down, a <b>1.4 MB</b> file`) +
+          ` · press <b>Start</b>`;
+      }
+      pz = panzoom(c, redraw, { max: 14 });
+      pz.render();
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 1 · the input ------------------------------------------------- */
+step({
+  kicker: "the input",
+  title: "Someone traced every building",
+  copy: "Overture Maps publishes a free, worldwide list of buildings — every month, a fresh <b>release</b>. " +
+        "Each building is a traced outline: a little connect-the-dots shape. " +
+        "Here is one patch of <span class='you'>Amsterdam</span> — zoom in until you see single doorsteps.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector(AMS_BBOX, 396);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const cap = el("div", "caption", "loading the traced outlines…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const d = await loadData("ams_2025-05-21-0.json");
+      const B = d.buildings;
+      const grown = new Path2D();                     // grows during the intro animation
+      let added = 0, pz;
+      function redraw(){
+        g.clearRect(0, 0, pr.W, pr.H);
+        paintPath(g, pz.v, grown, { fill:"rgba(43,107,228,.14)", stroke:"#2b6be4", lw:.7 });
+      }
+      pz = panzoom(c, redraw);
+      const t0 = performance.now();
+      (function anim(){
+        const target = Math.min(B.length, Math.round((performance.now() - t0) * 3.4) + 10);
+        if (target > added){
+          grown.addPath(ringsPath(B.slice(added, target), pr));
+          added = target;
+          pz.render();
+        }
+        cap.innerHTML = `<span class="y">${fmt(added)}</span> of <b>${fmt(B.length)}</b> real outlines` +
+          (added >= B.length ? ` · together: <b>${km2(953857)}</b> of roof` : "");
+        if (added < B.length && c.isConnected) requestAnimationFrame(anim);
+      })();
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 2 · the problem ----------------------------------------------- */
+step({
+  kicker: "the problem",
+  title: "There are 2.6 billion of them",
+  copy: "That Amsterdam patch was one millionth of the dataset. The full release is " +
+        "<b>491 files, 315 GB</b> of outlines. Numbers that big stop meaning anything — " +
+        "so here they are next to things you own.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    st.appendChild(inn);
+    let meta = null;
+    try { meta = await loadData("meta.json"); } catch(e){}
+    const gb = meta ? meta.geometry.bytes / 1e9 : 315.5;
+    const files = meta ? meta.geometry.files : 491;
+    const rows = [
+      ["one phone photo",              0.004,  "#9aa7bb"],
+      ["this Amsterdam patch (outlines)", 0.000513, "#2b6be4"],
+      ["a two-hour HD movie",          4,      "#9aa7bb"],
+      ["a whole laptop (256 GB)",      256,    "#9aa7bb"],
+      [`all building outlines — ${files} files`, gb, "#d9642c"],
+    ];
+    const wrap = el("div"); wrap.style.cssText = "display:flex; flex-direction:column; gap:14px; width:640px;";
+    const maxGb = Math.max(...rows.map(r => r[1]));
+    for (const [lbl, v, col] of rows){
+      const line = el("div"); line.style.cssText = "display:flex; align-items:center; gap:10px;";
+      const bar = el("div", "bar"); bar.style.background = col;
+      bar.style.width = "2px"; bar.style.transition = "width 1.6s cubic-bezier(.2,.7,.2,1)";
+      const lab = el("span", "barlbl", `${lbl} — <b>${v >= 100 ? v.toFixed(1) + " GB" : v >= 1 ? Math.round(v) + " GB" : kb(v * 1e9)}</b>`);
+      line.appendChild(bar); line.appendChild(lab); wrap.appendChild(line);
+      setTimeout(() => { bar.style.width = Math.max(0.4, v / maxGb * 340) + "px"; }, 60);
+    }
+    inn.appendChild(wrap);
+    inn.appendChild(el("div", "caption",
+      `sizes measured on the real files (${meta ? meta.measured_on : "2026-07-12"}) · at fast home internet ` +
+      `(100 Mb/s) the download alone runs <b>≈ 7 hours</b> — and then no map program will draw 2.6 billion shapes`));
+  }
+});
+
+/* ---- 3 · the question shift ----------------------------------------- */
+step({
+  kicker: "the idea",
+  title: "You rarely need every outline",
+  copy: "Nobody asks “show me outline #1,847,201,556”. The real questions sound like " +
+        "<b>“how much building is <i>here</i>?”</b> — this district, this coastline, this country. " +
+        "<b>Move your pointer over the city</b> and ask it yourself.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector(AMS_BBOX, 396);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const cap = el("div", "caption", "…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st, "hover to ask · scroll to zoom · drag to pan");
+    try {
+      const d = await loadData("ams_2025-05-21-0.json");
+      const B = d.buildings;
+      const base = ringsPath(B, pr);
+      const R = 60;                                    // lens radius, px
+      let mouse = null, pz;
+      function redraw(){
+        const v = pz.v, vp = viewed(pr, v);
+        g.clearRect(0, 0, pr.W, pr.H);
+        paintPath(g, v, base, { fill:"rgba(43,107,228,.08)", stroke:"rgba(43,107,228,.55)", lw:.6 });
+        if (!mouse){
+          cap.innerHTML = "move the pointer — the answer under it is summed live from the real outlines";
+          return;
+        }
+        const [mx, my] = mouse;
+        let area = 0;
+        const inside = B.filter(b => { const dx = vp.x(b.cx) - mx, dy = vp.y(b.cy) - my;
+          return dx * dx + dy * dy < R * R; });
+        for (const b of inside) area += b.area;
+        g.save(); g.beginPath(); g.arc(mx, my, R, 0, 7); g.clip();
+        paintPath(g, v, ringsPath(inside, pr), { fill:"rgba(217,100,44,.35)", stroke:"#d9642c", lw:.8 });
+        g.restore();
+        g.beginPath(); g.arc(mx, my, R, 0, 7); g.strokeStyle = "#28231a"; g.lineWidth = 1.4; g.stroke();
+        cap.innerHTML = `inside the circle (${Math.round(R * pr.mPerPx / v.s)} m across): ` +
+          `<span class="o">${km2(area)}</span> of building, <b>${fmt(inside.length)}</b> buildings — live`;
+      }
+      pz = panzoom(c, redraw);
+      c.addEventListener("pointermove", e => {
+        const r = c.getBoundingClientRect();
+        mouse = [e.clientX - r.left, e.clientY - r.top];
+        pz.render();
+      });
+      c.addEventListener("pointerleave", () => { mouse = null; pz.render(); });
+      pz.render();
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 4 · hexagons --------------------------------------------------- */
+step({
+  kicker: "the grid",
+  title: "Cut the world into hexagons",
+  copy: "Instead of a circle you drag around, fix the cells in advance: a honeycomb called <b>H3</b> " +
+        "that covers the entire planet. Every cell has an <b>address</b> — just like the map tiles " +
+        "of episode 1 — and cells are nearly the same size wherever you are on Earth.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector(AMS_BBOX, 396);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const cap = el("div", "caption", "asking local Python for the honeycomb…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const [d, r] = await Promise.all([
+        loadData("ams_2025-05-21-0.json"),
+        callPy({ action:"hexify", dataset:"ams", res:"9" }),
+      ]);
+      const base = ringsPath(d.buildings, pr);
+      const cells = r.cells.slice().sort((a, b) => b.area - a.area);
+      const grid = ringsPath(cells.map(cc => cc.boundary), pr);
+      const star = cells[Math.floor(cells.length / 3)];
+      const starP = ringsPath([star.boundary], pr);
+      let pz;
+      function redraw(){
+        g.clearRect(0, 0, pr.W, pr.H);
+        paintPath(g, pz.v, base, { fill:"rgba(43,107,228,.07)", stroke:"rgba(43,107,228,.45)", lw:.6 });
+        paintPath(g, pz.v, grid, { stroke:"rgba(217,100,44,.9)", lw:1.4 });
+        paintPath(g, pz.v, starP, { fill:"rgba(217,100,44,.18)", stroke:"none" });
+      }
+      pz = panzoom(c, redraw);
+      pz.render();
+      cap.innerHTML = `<span class="o">${r.n_cells} cells</span> cover the patch (size “res 9”, each ≈ 0.1 km²) · ` +
+                      `the shaded one is cell <b class="mono">${star.id}</b> — that string is a worldwide address`;
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 5 · three cells, three rows -------------------------------------- */
+step({
+  kicker: "the whole idea, in three cells",
+  title: "Each hexagon becomes one row",
+  copy: "Watch three neighboring cells get counted, one after another: every building whose " +
+        "<b>middle point</b> falls inside a cell adds its roof area to that cell's row. " +
+        "Three hexagons in, <b>three rows out</b> — that's the entire transformation.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector(AMS_BBOX, 300);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const tbl = el("div", "tbl big",
+      `<div class="hd">hex&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;area_m2&nbsp;&nbsp;&nbsp;cnt</div>`);
+    inn.appendChild(tbl);
+    const cap = el("div", "caption", "picking three cells…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const [d, asg, hx] = await Promise.all([
+        loadData("ams_2025-05-21-0.json"),
+        callPy({ action:"assign", dataset:"ams", res:"10", n:"6000" }),
+        callPy({ action:"hexify", dataset:"ams", res:"10" }),
+      ]);
+      const base = ringsPath(d.buildings, pr);
+      // a busy cell + its 2 nearest busy neighbours
+      const ctr = cell => {
+        const b = cell.boundary;
+        return [b.reduce((s, p) => s + pr.x(p[0]), 0) / b.length,
+                b.reduce((s, p) => s + pr.y(p[1]), 0) / b.length];
+      };
+      const busy = hx.cells.filter(x => x.cnt >= 15);
+      const first = busy.slice().sort((a, b) => b.cnt - a.cnt)[0];
+      const [fx, fy] = ctr(first);
+      const trio = busy.slice().sort((a, b) => {
+        const [ax, ay] = ctr(a), [bx, by] = ctr(b);
+        return ((ax-fx)**2 + (ay-fy)**2) - ((bx-fx)**2 + (by-fy)**2);
+      }).slice(0, 3);
+      // assignments come back in building order, so index i <-> d.buildings[i]
+      const memberOf = new Map(trio.map(t => [t.id, []]));
+      asg.assignments.forEach((a, i) => {
+        if (memberOf.has(a.cell)) memberOf.get(a.cell).push(d.buildings[i]);
+      });
+      const trioP = trio.map(t => ringsPath([t.boundary], pr));
+      const grown = new Path2D();
+      let active = -1, pz;
+      function redraw(){
+        g.clearRect(0, 0, pr.W, pr.H);
+        paintPath(g, pz.v, base, { fill:"rgba(120,112,95,.06)", stroke:"rgba(120,112,95,.35)", lw:.5 });
+        trio.forEach((t, i) => {
+          paintPath(g, pz.v, trioP[i], { fill: i <= active ? "rgba(217,100,44,.1)" : "rgba(217,100,44,.04)",
+                                         stroke:"#d9642c", lw: i === active ? 2.4 : 1.3 });
+        });
+        paintPath(g, pz.v, grown, { fill:"rgba(217,100,44,.45)", stroke:"#d9642c", lw:.9 });
+      }
+      pz = panzoom(c, redraw);
+      // fit the view to the three cells
+      const pts = trio.flatMap(t => t.boundary.map(p => [pr.x(p[0]), pr.y(p[1])]));
+      const x0 = Math.min(...pts.map(p => p[0])), x1 = Math.max(...pts.map(p => p[0]));
+      const y0 = Math.min(...pts.map(p => p[1])), y1 = Math.max(...pts.map(p => p[1]));
+      pz.v.s = clamp(Math.min(pr.W / (x1 - x0 + 40), pr.H / (y1 - y0 + 40)), 1, 8);
+      pz.v.tx = clamp(pr.W / 2 - (x0 + x1) / 2 * pz.v.s, pr.W - pr.W * pz.v.s, 0);
+      pz.v.ty = clamp(pr.H / 2 - (y0 + y1) / 2 * pz.v.s, pr.H - pr.H * pz.v.s, 0);
+      for (let i = 0; i < trio.length; i++){
+        const t = trio[i], members = memberOf.get(t.id) || [];
+        const rowEl = el("div", "", "");
+        tbl.appendChild(rowEl);
+        active = i;
+        const inc = Math.max(1, Math.round(members.length / 24));
+        for (let shown = 0; ; shown = Math.min(shown + inc, members.length)){
+          if (!c.isConnected) return;
+          grown.addPath(ringsPath(members.slice(Math.max(0, shown - inc), shown), pr));
+          const area = members.slice(0, shown).reduce((s, b) => s + b.area, 0);
+          pz.render();
+          rowEl.innerHTML = `<span class="hex">${t.id}</span>&nbsp;&nbsp;${String(Math.round(area)).padStart(7)}` +
+                            `&nbsp;&nbsp;&nbsp;${String(shown).padStart(3)}`;
+          cap.innerHTML = `cell ${i + 1} of 3: counting <span class="y">${shown}</span> middle points · ` +
+                          `<span class="o">${km2(area)}</span> so far`;
+          if (shown === members.length) break;
+          await sleep(40);
+        }
+        await sleep(260);
+      }
+      active = trio.length; pz.render();
+      cap.innerHTML = `three hexagons → <b>three rows</b>. ` +
+                      `Repeat for every cell on Earth and you have the whole dataset.`;
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 6 · the operation ---------------------------------------------- */
+step({
+  kicker: "the operation — live",
+  title: "Now pour the whole city",
+  copy: "The same rule, cell after cell: each building's area is added to the hexagon holding its " +
+        "<b>middle point</b>. Watch <span class='you'>5,725 outlines</span> drain into " +
+        "<span class='srv'>34 rows</span> — and the total survive to the square metre.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector(AMS_BBOX, 380);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const cap = el("div", "caption", "computing the assignment…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const [d, asg, hx] = await Promise.all([
+        loadData("ams_2025-05-21-0.json"),
+        callPy({ action:"assign", dataset:"ams", res:"9", n:"6000" }),
+        callPy({ action:"hexify", dataset:"ams", res:"9" }),
+      ]);
+      const base = ringsPath(d.buildings, pr);
+      const order = hx.cells.slice().sort((a, b) =>
+        pr.x(a.boundary[0][0]) - pr.x(b.boundary[0][0]));   // west -> east sweep
+      const cellP = order.map(cc => ringsPath([cc.boundary], pr));
+      const members = new Map();
+      asg.assignments.forEach(a => {
+        if (!members.has(a.cell)) members.set(a.cell, []);
+        members.get(a.cell).push(a);
+      });
+      const dots = new Path2D();                       // poured middle points
+      let k = 0, pz;
+      function redraw(){
+        g.clearRect(0, 0, pr.W, pr.H);
+        paintPath(g, pz.v, base, { fill:"rgba(43,107,228,.08)", stroke:"rgba(43,107,228,.5)", lw:.6 });
+        withView(g, pz.v, () => {
+          for (let i = 0; i < k; i++){
+            const cell = order[i];
+            g.fillStyle = "rgba(217,100,44," + (0.10 + 0.55 * Math.pow(cell.area / 60000, 0.7)) + ")";
+            g.fill(cellP[i]);
+            g.strokeStyle = "#d9642c"; g.lineWidth = 1.3 / pz.v.s; g.stroke(cellP[i]);
+          }
+          g.fillStyle = "#28231a"; g.fill(dots);
+        });
+      }
+      pz = panzoom(c, redraw);
+      let done = 0, doneArea = 0;
+      for (k = 1; k <= order.length; k++){
+        if (!c.isConnected) return;
+        const cell = order[k - 1];
+        for (const m of (members.get(cell.id) || []))
+          dots.rect(pr.x(m.cx) - 1, pr.y(m.cy) - 1, 2, 2);
+        done += cell.cnt; doneArea += cell.area;
+        pz.render();
+        cap.innerHTML = done >= hx.n_buildings
+          ? `<span class="y">${fmt(done)}</span> buildings poured into <span class="o">${hx.n_cells} rows</span> — ` +
+            `<span class="g">✓ total ${km2(hx.total_area_m2)}, exactly what we started with</span>`
+          : `<span class="y">${fmt(done)}</span> buildings poured · running total ` +
+            `<span class="o">${km2(doneArea)}</span>`;
+        await sleep(110);
+      }
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 7 · rollup ------------------------------------------------------ */
+step({
+  kicker: "the family trick",
+  title: "Seven small cells pour into one big one",
+  copy: "Hexagon sizes come in a family: every cell has a <b>parent</b> one size up, and seven children " +
+        "tile it almost exactly. The faint cells underneath are the <b>children</b> of the bold ones " +
+        "(only children containing buildings are kept). A coarser map is never recomputed: children " +
+        "hand their sums up, and <b>the total never changes</b>.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector(AMS_BBOX, 360);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    const btnrow = el("div"); btnrow.style.cssText = "display:flex; gap:8px;";
+    inn.appendChild(c); inn.appendChild(btnrow);
+    const cap = el("div", "caption", "computing three sizes of the same city…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const [d, r11, r10, r9, r8] = await Promise.all([
+        loadData("ams_2025-05-21-0.json"),
+        callPy({ action:"hexify", dataset:"ams", res:"11" }),
+        callPy({ action:"hexify", dataset:"ams", res:"10" }),
+        callPy({ action:"hexify", dataset:"ams", res:"9" }),
+        callPy({ action:"hexify", dataset:"ams", res:"8" }),
+      ]);
+      const base = ringsPath(d.buildings, pr);
+      const mkLvl = (r, children, lbl) => ({
+        lbl, r,
+        bold: cellPaths(r.cells, pr),
+        faint: ringsPath(children.cells.map(cc => cc.boundary), pr),
+        nKids: children.n_cells,
+      });
+      const lvls = [mkLvl(r10, r11, "res 10 — fine"), mkLvl(r9, r10, "res 9 — its parents"),
+                    mkLvl(r8, r9, "res 8 — grandparents")];
+      let cur = 0, pz;
+      function redraw(){
+        const L = lvls[cur];
+        g.clearRect(0, 0, pr.W, pr.H);
+        paintPath(g, pz.v, base, { fill:"rgba(43,107,228,.05)", stroke:"rgba(43,107,228,.3)", lw:.5 });
+        paintPath(g, pz.v, L.faint, { fill:"rgba(217,100,44,.05)", stroke:"rgba(217,100,44,.35)", lw:.7 });
+        const mx = Math.max(...L.r.cells.map(x => x.area));
+        paintCells(g, pz.v, L.bold, { stroke:"#c2551f", lw:2,
+          fillFor: cc => `rgba(217,100,44,${0.04 + 0.4 * Math.pow(cc.area / mx, 0.8)})` });
+      }
+      function show(i){
+        cur = i; pz.render();
+        const L = lvls[i];
+        cap.innerHTML = `<span class="o">${fmt(L.r.n_cells)} bold cells</span>, each covering ` +
+          `~${Math.round(L.nKids / L.r.n_cells)} faint children (${fmt(L.nKids)} of them) · total ` +
+          `<b>${km2(L.r.total_area_m2)}</b> — <span class="g">identical at every size</span>`;
+        btnrow.querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === i));
+      }
+      pz = panzoom(c, () => redraw());
+      lvls.forEach((L, i) => {
+        const b = el("button", "small", L.lbl);
+        b.addEventListener("click", () => show(i));
+        btnrow.appendChild(b);
+      });
+      show(0); await sleep(1500); if (c.isConnected) show(1);
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 8 · resolution slider ------------------------------------------ */
+step({
+  kicker: "live compute",
+  title: "Pick how sharp you need it",
+  copy: "Same buildings, one slider. The bold cells are your chosen size; the faint ones underneath are " +
+        "the <b>next finer size nesting inside them</b> — slide and watch each level cover ~7× the one " +
+        "below. Every position is <b>recomputed live</b> by the same DuckDB H3 functions the real pipeline runs.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector(AMS_BBOX, 356);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const ctl = el("div", "", `<span class="barlbl">coarse&nbsp;</span>` +
+      `<input id="resr" type="range" min="7" max="11" step="1" value="9" style="width:280px">` +
+      `<span class="barlbl">&nbsp;fine</span>`);
+    ctl.style.cssText = "display:flex; align-items:center;";
+    const cap = el("div", "caption", "…");
+    inn.appendChild(ctl); inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    const AVG = { 7:"5.2 km²", 8:"0.74 km²", 9:"0.11 km²", 10:"0.015 km²", 11:"0.002 km²" };
+    let d, base;
+    try { d = await loadData("ams_2025-05-21-0.json"); base = ringsPath(d.buildings, pr); }
+    catch(e){ pyFail(cap, e); return; }
+    let busy = false, queued = null, cur = null, pz;
+    function redraw(){
+      if (!cur) return;
+      g.clearRect(0, 0, pr.W, pr.H);
+      paintPath(g, pz.v, base, { fill:"rgba(43,107,228,.05)", stroke:"rgba(43,107,228,.3)", lw:.5 });
+      if (cur.faint) paintPath(g, pz.v, cur.faint, { stroke:"rgba(217,100,44,.3)", lw:.6 });
+      const mx = Math.max(...cur.r.cells.map(x => x.area));
+      paintCells(g, pz.v, cur.bold, { stroke:"#c2551f", lw: cur.r.res >= 11 ? 1.1 : 1.8,
+        fillFor: cc => `rgba(217,100,44,${0.05 + 0.55 * Math.pow(cc.area / mx, 0.8)})` });
+    }
+    pz = panzoom(c, redraw);
+    async function render(res){
+      if (busy){ queued = res; return; }
+      busy = true;
+      cap.innerHTML = `computing res ${res} (and its children)…`;
+      try {
+        const [r, fine] = await Promise.all([
+          callPy({ action:"hexify", dataset:"ams", res:String(res) }),
+          res < 12 ? callPy({ action:"hexify", dataset:"ams", res:String(res + 1) }) : null,
+        ]);
+        if (!c.isConnected) return;
+        cur = { r, bold: cellPaths(r.cells, pr),
+                faint: fine ? ringsPath(fine.cells.map(cc => cc.boundary), pr) : null };
+        pz.render();
+        cap.innerHTML = `res ${res}: <span class="o">${fmt(r.n_cells)} bold cells</span> (each ≈ ${AVG[res]})` +
+          (fine ? ` · ${fmt(fine.n_cells)} faint res-${res + 1} children underneath ` +
+                  `(~${Math.round(fine.n_cells / r.n_cells)} with buildings per parent)` : "") +
+          ` · <b>${r.ms} ms</b>`;
+      } catch(e){ pyFail(cap, e); }
+      busy = false;
+      if (queued != null){ const q = queued; queued = null; render(q); }
+    }
+    ctl.querySelector("#resr").addEventListener("input", e => render(+e.target.value));
+    render(9);
+  }
+});
+
+/* ---- 9 · the output -------------------------------------------------- */
+step({
+  kicker: "the output",
+  title: "What gets saved is a tiny table",
+  copy: "Per cell, three values: <b>address, built area, building count</b>. That's the entire file. " +
+        "Below, both versions of the same Amsterdam patch were <b>actually written and measured</b> " +
+        "just now — then the same ratio, measured on the real planet-wide files.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    inn.style.gap = "16px";
+    const cap = el("div", "caption", "writing both files for real…");
+    st.appendChild(inn);
+    try {
+      const [sz, hx, meta] = await Promise.all([
+        callPy({ action:"sizes", dataset:"ams", res:"9" }),
+        callPy({ action:"hexify", dataset:"ams", res:"9" }),
+        loadData("meta.json"),
+      ]);
+      const rows = hx.cells.slice().sort((a, b) => a.id < b.id ? -1 : 1).slice(0, 5);
+      const tbl = el("div", "tbl",
+        `<div class="hd">hex&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;area_m2&nbsp;&nbsp;cnt</div>` +
+        rows.map(r => `<div><span class="hex">${r.id}</span>&nbsp;&nbsp;${String(r.area).padStart(7)}` +
+                      `&nbsp;&nbsp;${String(r.cnt).padStart(3)}</div>`).join("") +
+        `<div style="color:var(--mut)">… ${hx.n_cells - rows.length} more rows</div>`);
+      inn.appendChild(tbl);
+
+      const mkbar = (lbl, bytes, maxB, cls) => {
+        const line = el("div"); line.style.cssText = "display:flex; align-items:center; gap:10px;";
+        const bar = el("div", "bar " + cls);
+        bar.style.width = Math.max(2, bytes / maxB * 300) + "px";
+        line.appendChild(bar);
+        line.appendChild(el("span", "barlbl", `${lbl} — <b>${kb(bytes)}</b>`));
+        return line;
+      };
+      const local = el("div"); local.style.cssText = "display:flex; flex-direction:column; gap:7px; width:620px;";
+      local.appendChild(mkbar("this patch as outlines (parquet)", sz.geometry_parquet_bytes, sz.geometry_parquet_bytes, ""));
+      local.appendChild(mkbar(`as a res-9 hex table (${sz.n_cells} rows)`, sz.hex_parquet_bytes, sz.geometry_parquet_bytes, "o"));
+      const wb = meta.geometry.bytes,
+            wh = Object.entries(meta.overview_bytes)
+                 .filter(([k]) => /^\d+$/.test(k)).reduce((a, [, v]) => a + v, 0);
+      local.appendChild(el("div", "", "<div style='height:4px'></div>"));
+      local.appendChild(mkbar("the whole planet as outlines", wb, wb, ""));
+      local.appendChild(mkbar("as hex tables, ALL sizes 3–11", wh, wb, "o"));
+      inn.appendChild(local);
+      inn.appendChild(cap);
+      cap.innerHTML = `patch: <b>×${Math.round(sz.geometry_parquet_bytes / sz.hex_parquet_bytes)}</b> smaller · ` +
+        `planet: <b>${kb(wb)} → ${kb(wh)}</b> (×${Math.round(wb / wh)}) · ` +
+        `the planet at res 7 is a single <b>${kb(meta.overview_bytes["7"])}</b> file`;
+    } catch(e){ inn.appendChild(cap); pyFail(cap, e); }
+  }
+});
+
+/* ---- 10 · filed by address -------------------------------------------- */
+step({
+  kicker: "why it opens instantly",
+  title: "The file is one long list, sorted by place",
+  copy: "The colored strip below <b>is the actual file</b>, laid out first row to last. Rows are saved " +
+        "sorted by hexagon address, and nearby places get nearby addresses — so each color is one region's " +
+        "stretch of the file. <b>Drag the window</b>: a viewer reads only the stretches that light up, " +
+        "and skips the rest of the file entirely.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = worldProj(660);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    c.classList.add("grab");
+    inn.appendChild(c);
+    const strip = el("div"); strip.style.cssText =
+      "display:flex; width:660px; height:14px; border-radius:4px; overflow:hidden; border:1px solid var(--line2);";
+    inn.appendChild(strip);
+    const cap = el("div", "caption", "…");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+    try {
+      const d = await loadData("world_hex3_2025-05-21-0.json");
+      const chunks = [...new Set(d.rows.map(r => r[5]))].sort();
+      const hue = new Map(chunks.map((p, i) => [p, (i * 137.5) % 360]));
+      const cells = new Map();                          // strip segments, in file order
+      for (const p of chunks) cells.set(p, el("i"));
+      const counts = new Map();
+      for (const r of d.rows) counts.set(r[5], (counts.get(r[5]) || 0) + 1);
+      for (const p of chunks){
+        const seg = cells.get(p);
+        seg.style.cssText = `flex:${counts.get(p)}; background:hsl(${hue.get(p)},52%,62%); opacity:.45; transition:opacity .15s;`;
+        strip.appendChild(seg);
+      }
+      let vw = { x: pr.x(6) - 60, y: pr.y(48) - 40, w: 120, h: 80 };
+      function paint(){
+        g.clearRect(0, 0, pr.W, pr.H);
+        const inWin = new Set();
+        for (const r of d.rows){
+          const x = pr.x(r[2]), y = pr.y(r[1]);
+          const inside = x > vw.x && x < vw.x + vw.w && y > vw.y && y < vw.y + vw.h;
+          if (inside) inWin.add(r[5]);
+          g.fillStyle = `hsla(${hue.get(r[5])},52%,${inside ? 42 : 62}%,${inside ? .95 : .4})`;
+          g.fillRect(x - 1.2, y - 1.2, 2.4, 2.4);
+        }
+        g.strokeStyle = "#28231a"; g.lineWidth = 1.6;
+        g.strokeRect(vw.x, vw.y, vw.w, vw.h);
+        for (const [p, seg] of cells) seg.style.opacity = inWin.has(p) ? "1" : "0.18";
+        let rows = 0; for (const r of d.rows) if (inWin.has(r[5])) rows++;
+        cap.innerHTML = `same color = same stretch of the file · your window touches ` +
+          `<b>${inWin.size}</b> of <b>${chunks.length}</b> stretches → a viewer reads ` +
+          `<span class="o">${fmt(rows)}</span> of ${fmt(d.n)} rows and skips ` +
+          `<b>${Math.round(100 - rows / d.n * 100)}%</b> of the file`;
+      }
+      paint();
+      let drag = null;
+      c.addEventListener("pointerdown", e => {
+        const r = c.getBoundingClientRect();
+        drag = { dx: e.clientX - r.left - vw.x, dy: e.clientY - r.top - vw.y };
+        c.setPointerCapture(e.pointerId);
+      });
+      c.addEventListener("pointermove", e => {
+        if (!drag) return;
+        const r = c.getBoundingClientRect();
+        vw.x = clamp(e.clientX - r.left - drag.dx, 0, pr.W - vw.w);
+        vw.y = clamp(e.clientY - r.top - drag.dy, 0, pr.H - vw.h);
+        paint();
+      });
+      c.addEventListener("pointerup", () => { drag = null; });
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 11 · honesty ----------------------------------------------------- */
+step({
+  kicker: "the fine print",
+  title: "What the hexagons can't tell you",
+  copy: "This is a summary, not the buildings. Inside a cell you know <b>how much</b> — never <b>which " +
+        "shapes</b> or where they sit. Good for “how much, where, changing how?” — " +
+        "the wrong tool for “does this exact footprint overlap that parcel?”.",
+  mount(st){
+    const inn = el("div", "stage-in fadein");
+    inn.style.gap = "12px";
+    const row = el("div"); row.style.cssText = "display:flex; gap:18px; align-items:stretch; justify-content:center; max-width:100%;";
+    const HEX = "M60 6 L107 33 L107 87 L60 114 L13 87 L13 33 Z";
+    // both layouts sum to exactly 1188 area units across 5 buildings
+    const layoutA = [[30,38,16,12],[62,30,20,14],[44,62,14,20],[72,66,18,12],[34,86,22,10]];
+    const layoutB = [[20,36,26,14],[64,30,14,18],[40,62,20,12],[74,58,12,16],[36,86,20,7]];
+    const mk = (lay, lbl) => {
+      const tot = lay.reduce((a, r) => a + r[2] * r[3], 0);
+      const box = el("div"); box.style.cssText =
+        "display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 10px;" +
+        "border:1px solid var(--line); border-radius:12px; background:#fff;";
+      box.innerHTML = `<svg width="104" height="104" viewBox="0 0 120 120">
+        <path d="${HEX}" fill="rgba(217,100,44,.12)" stroke="#d9642c" stroke-width="2"/>
+        ${lay.map(([x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"
+          fill="rgba(43,107,228,.35)" stroke="#2b6be4"/>`).join("")}</svg>
+        <div class="barlbl">${lbl}: <b>5 bld · ${tot} area</b></div>`;
+      return box;
+    };
+    const same = el("div"); same.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:8px;";
+    const pair = el("div"); pair.style.cssText = "display:flex; gap:10px; align-items:center;";
+    pair.appendChild(mk(layoutA, "place A"));
+    pair.appendChild(mk(layoutB, "place B"));
+    same.appendChild(pair);
+    same.appendChild(el("div", "tbl",
+      `<div class="hd">hex&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;area&nbsp;&nbsp;cnt</div>` +
+      `<div><span class="hex">89196953b4bffff</span>&nbsp;&nbsp;1188&nbsp;&nbsp;&nbsp;&nbsp;5</div>`));
+    same.appendChild(el("div", "barlbl", "two different places → the <b>same row</b>"));
+    row.appendChild(same);
+
+    const border = el("div"); border.style.cssText =
+      "display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px;" +
+      "border:1px solid var(--line); border-radius:12px; background:#fff; justify-content:center;";
+    border.innerHTML = `<svg width="180" height="122" viewBox="0 0 200 136">
+        <path d="M52 10 L96 35 L96 85 L52 110 L8 85 L8 35 Z" fill="rgba(217,100,44,.06)" stroke="#d9642c" stroke-width="1.6"/>
+        <path d="M140 10 L184 35 L184 85 L140 110 L96 85 L96 35 Z" fill="rgba(217,100,44,.2)" stroke="#d9642c" stroke-width="1.6"/>
+        <rect x="76" y="48" width="42" height="26" fill="rgba(43,107,228,.4)" stroke="#2b6be4" stroke-width="1.4"/>
+        <circle cx="97" cy="61" r="3.4" fill="#28231a"/>
+        <path d="M100 61 L128 61" stroke="#28231a" stroke-width="1.6" marker-end="url(#ar)"/>
+        <defs><marker id="ar" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+          <path d="M0 0 L7 3 L0 6 Z" fill="#28231a"/></marker></defs>
+        <text x="100" y="130" text-anchor="middle" font-size="11" fill="#7b7260">the middle point decides</text></svg>
+      <div class="barlbl" style="white-space:normal; max-width:200px; text-align:center;">a border building is <b>not split</b> —<br>the darker cell gets all of it</div>`;
+    row.appendChild(border);
+
+    inn.appendChild(row);
+    inn.appendChild(el("div", "caption",
+      "an illustration, not data — this blur is deliberate: it's the price of the ×24 shrink, " +
+      "and why the full outlines are still published alongside"));
+    st.appendChild(inn);
+  }
+});
+
+/* ---- 12 · world diff --------------------------------------------------- */
+step({
+  kicker: "the payoff — live",
+  title: "Compare two months of the whole planet",
+  copy: "Each release is the same tiny table, so <b>“what changed?” is a subtraction</b>. " +
+        "Your browser is subtracting the <b>April</b> and <b>May 2025</b> releases of the entire world " +
+        "right now — zoom into the circled hotspot in NE India.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = worldProj(716);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    inn.appendChild(c);
+    const leg = el("div", "legend",
+      `<span><i style="background:var(--good)"></i>more buildings</span>` +
+      `<span><i style="background:var(--bad)"></i>fewer</span>` +
+      `<span><i style="background:#c9c2ae"></i>unchanged</span>`);
+    inn.appendChild(leg);
+    const cap = el("div", "caption", "subtracting two planets…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const relA = "2025-04-23-0", relB = "2025-05-21-0";
+      function mergeRows(a, b){
+        const old = new Map(a.rows.map(r => [r[0], r[4]]));
+        const out = [];
+        const seen = new Set();
+        for (const r of b.rows){ seen.add(r[0]); out.push([r[1], r[2], r[4] - (old.get(r[0]) || 0)]); }
+        for (const r of a.rows) if (!seen.has(r[0])) out.push([r[1], r[2], -r[4]]);
+        return out;
+      }
+      const diffCache = new Map();
+      function diffRows(res){
+        if (!diffCache.has(res)){
+          diffCache.set(res, Promise.all([
+            loadData(`world_hex${res}_${relA}.json`),
+            loadData(`world_hex${res}_${relB}.json`),
+          ]).then(([a, b]) => mergeRows(a, b)));
+        }
+        return diffCache.get(res);
+      }
+      const d3 = await diffRows(3);
+      let net = 0; for (const r of d3) net += r[2];
+      let biggest = d3[0];
+      for (const r of d3) if (Math.abs(r[2]) > Math.abs(biggest[2])) biggest = r;
+      let pz, fine = null;
+      diffRows(4).then(rows => { fine = rows; });
+      function redraw(){
+        const v = pz.v;
+        const rows = (v.s >= 2.6 && fine) ? fine : d3;
+        const t0 = performance.now();
+        const vp = viewed(pr, v);
+        g.clearRect(0, 0, pr.W, pr.H);
+        const scale = rows === d3 ? 200000 : 60000;
+        const base = (rows === d3 ? 2.4 : 1.7) * Math.sqrt(v.s);
+        for (const r of rows){
+          const px = vp.x(r[1]), py = vp.y(r[0]);
+          if (px < -6 || px > pr.W + 6 || py < -6 || py > pr.H + 6) continue;
+          const dv = r[2];
+          const t = Math.pow(Math.min(1, Math.abs(dv) / scale), 0.4);
+          if (t < 0.04){ g.fillStyle = "rgba(160,150,128,.3)"; g.fillRect(px - base/3, py - base/3, base/1.5, base/1.5); continue; }
+          g.fillStyle = dv > 0 ? `rgba(51,135,90,${0.25 + 0.75 * t})` : `rgba(179,64,46,${0.25 + 0.75 * t})`;
+          const s = base + 1.6 * base * t;
+          g.fillRect(px - s / 2, py - s / 2, s, s);
+        }
+        g.beginPath(); g.arc(vp.x(biggest[1]), vp.y(biggest[0]), 13, 0, 7);
+        g.strokeStyle = "#28231a"; g.lineWidth = 1.4; g.stroke();
+        const ms = Math.max(1, Math.round(performance.now() - t0));
+        cap.innerHTML = `net: <span class="g">+${fmt(net)}</span> buildings in one month · ` +
+          `redrawn in <b>${ms} ms</b> at hex size ${rows === d3 ? 3 : 4} · zoom into the circle, then press Next`;
+      }
+      pz = panzoom(c, redraw, { max: 14 });
+      pz.render();
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 13 · a town appears ----------------------------------------------- */
+step({
+  kicker: "zooming into the change",
+  title: "A town appears",
+  copy: "That hotspot is <b>Assam, India</b>. In April's release this 3 × 3 km patch contains " +
+        "<b>0 buildings</b>; in May, <b>2,469</b> — a new data source arrived for the region. " +
+        "<b>Flip between the releases</b>; the hexagons catch the change instantly.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const pr = projector([95.44, 27.575, 95.475, 27.605], 360);
+    const [c, g] = makeCanvas(pr.W, pr.H);
+    const btns = el("div"); btns.style.cssText = "display:flex; gap:8px;";
+    inn.appendChild(btns); inn.appendChild(c);
+    const cap = el("div", "caption", "…");
+    inn.appendChild(cap);
+    st.appendChild(inn); zoomhint(st);
+    try {
+      const [oldD, newD, diff] = await Promise.all([
+        loadData("assam_2025-04-23-0.json"),
+        loadData("assam_2025-05-21-0.json"),
+        callPy({ action:"diff", res:"9" }),
+      ]);
+      const paths = [ringsPath(oldD.buildings, pr), ringsPath(newD.buildings, pr)];
+      const grown = diff.cells.filter(x => x.cnt_new + x.cnt_old > 0);
+      const grownP = cellPaths(grown, pr);
+      const mxg = Math.max(...grown.map(x => x.area_new - x.area_old));
+      let which = 0, pz;
+      function redraw(){
+        g.clearRect(0, 0, pr.W, pr.H);
+        if (which === 1)
+          paintCells(g, pz.v, grownP, { stroke:"rgba(51,135,90,.75)", lw:1,
+            fillFor: cc => `rgba(51,135,90,${0.05 + 0.5 * Math.pow(Math.max(0, cc.area_new - cc.area_old) / mxg, 0.8)})` });
+        paintPath(g, pz.v, paths[which], { fill:"rgba(43,107,228,.3)", stroke:"rgba(43,107,228,.8)", lw:1 });
+      }
+      function show(i){
+        which = i; pz.render();
+        cap.innerHTML = i === 0
+          ? `release <b>2025-04-23</b>: <span class="y">0 buildings</span> here — not empty land, just not yet in the data`
+          : `release <b>2025-05-21</b>: <span class="y">${fmt(newD.n)} buildings</span> · green = ` +
+            `per-hexagon growth, computed live at res 9 (<b>${diff.ms} ms</b>)`;
+        btns.querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === i));
+      }
+      pz = panzoom(c, redraw);
+      ["April release", "May release"].forEach((lbl, i) => {
+        const b = el("button", "small", lbl);
+        b.addEventListener("click", () => show(i));
+        btns.appendChild(b);
+      });
+      show(0); await sleep(1500); if (c.isConnected) show(1);
+    } catch(e){ pyFail(cap, e); }
+  }
+});
+
+/* ---- 14 · outro --------------------------------------------------------- */
+step({
+  kicker: "that's the trade",
+  title: "Geometry in, honeycomb out",
+  copy: "Trace everything once — <b>315 GB of outlines</b>. Pour it into addressed hexagons at every size — " +
+        "<b>13 GB, sorted and filed</b>. Give up the individual shapes; gain a planet you can " +
+        "question, compare and animate <b>in a browser tab</b>. That's H3 ingestion.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const strip = el("div"); strip.style.cssText = "display:flex; gap:22px; align-items:center;";
+    const items = [
+      ["trace the buildings", `<svg width="100" height="100" viewBox="0 0 100 100">
+        <rect x="14" y="18" width="26" height="20" fill="rgba(43,107,228,.25)" stroke="#2b6be4"/>
+        <rect x="48" y="14" width="20" height="30" fill="rgba(43,107,228,.25)" stroke="#2b6be4"/>
+        <rect x="20" y="52" width="30" height="26" fill="rgba(43,107,228,.25)" stroke="#2b6be4"/>
+        <rect x="58" y="56" width="24" height="20" fill="rgba(43,107,228,.25)" stroke="#2b6be4"/></svg>`],
+      ["pour into hexagons", `<svg width="100" height="100" viewBox="0 0 120 120">
+        <path d="M60 10 L103 35 L103 85 L60 110 L17 85 L17 35 Z" fill="rgba(217,100,44,.2)" stroke="#d9642c" stroke-width="2.5"/>
+        <text x="60" y="68" text-anchor="middle" font-size="20" font-family="Georgia" fill="#d9642c">Σ</text></svg>`],
+      ["save a tiny table", `<div class="tbl" style="font-size:10px; line-height:1.6">
+        <div class="hd">hex&nbsp;&nbsp;&nbsp;&nbsp;area</div>
+        <div><span class="hex">8919…</span>&nbsp;31k</div>
+        <div><span class="hex">891a…</span>&nbsp;27k</div></div>`],
+      ["subtract two months", `<svg width="100" height="100" viewBox="0 0 100 100">
+        <rect x="10" y="30" width="32" height="40" rx="5" fill="rgba(51,135,90,.2)" stroke="#33875a"/>
+        <rect x="58" y="30" width="32" height="40" rx="5" fill="rgba(179,64,46,.15)" stroke="#b3402e"/>
+        <text x="50" y="57" text-anchor="middle" font-size="22" fill="#28231a">−</text></svg>`],
+    ];
+    for (const [label, svg] of items){
+      const cell = el("div"); cell.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:9px;";
+      cell.appendChild(el("div", "", svg));
+      cell.appendChild(el("div", "", label)).style.cssText = "font-size:12px; color:var(--dim); text-align:center;";
+      strip.appendChild(cell);
+    }
+    inn.appendChild(strip);
+    const again = el("button", "small", "↻ Watch it again");
+    again.addEventListener("click", () => go(0));
+    inn.appendChild(again);
+    st.appendChild(inn);
+    $("#foot").innerHTML = "built on Fused Render — data: Overture Maps releases 2025-04-23 / 2025-05-21; " +
+      "every hexagon on this page computed live by local Python" +
+      (lastPyVersion ? " " + lastPyVersion : "") + " + DuckDB H3, the same functions as the production pipeline";
+  }
+});
+
+/* ================================================================ engine */
+const stage = $("#stage");
+let cur = -1;
+
+function go(i){
+  i = clamp(i, 0, steps.length - 1);
+  if (i === cur) return;
+  cur = i;
+  const s = steps[i];
+  stage.innerHTML = "";
+  $("#kicker").textContent = s.kicker || "";
+  $("#title").textContent = s.title;
+  $("#copy").innerHTML = s.copy;
+  $("#title").classList.remove("fadein"); void $("#title").offsetWidth; $("#title").classList.add("fadein");
+  $("#copy").classList.remove("fadein"); void $("#copy").offsetWidth; $("#copy").classList.add("fadein");
+  if (i !== steps.length - 1) $("#foot").innerHTML = "";
+  s.mount(stage);
+  $("#pn").textContent = "Part " + (i + 1) + " · " + steps.length;
+  $("#pt").textContent = ["", "", "", "", "live", "live", "live", "live", "live", "live", "", "", "live", "live", ""][i] || "";
+  const dots = $("#pdots"); dots.innerHTML = "";
+  steps.forEach((_, j) => { const d = el("i", j === i ? "on" : (j < i ? "past" : ""));
+    d.style.cursor = "pointer"; d.addEventListener("click", () => go(j)); dots.appendChild(d); });
+  $("#back").disabled = i === 0;
+  $("#next").textContent = i === 0 ? "Start →" : (i === steps.length - 1 ? "The end" : "Next →");
+  $("#next").disabled = i === steps.length - 1;
+  P.set && P.set("step", String(i));
+}
+
+$("#back").addEventListener("click", () => go(cur - 1));
+$("#next").addEventListener("click", () => go(cur + 1));
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); go(cur + 1); }
+  if (e.key === "ArrowLeft") { e.preventDefault(); go(cur - 1); }
+});
+
+go(parseInt(P.get && P.get("step") || "0", 10) || 0);
+</script>
+</body>
+</html>

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Overture × Census isochrone dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:       #0d0d0d;
+    --surface:    #1a1a19;
+    --surface-2:  #202020;
+    --ink:        #ffffff;
+    --ink-2:      #c3c2b7;
+    --muted:      #898781;
+    --grid:       #2c2c2a;
+    --border:     rgba(255,255,255,0.10);
+    --accent:     #3987e5;   /* POI-count context (blue) */
+    --accent-2:   #199e70;   /* income context (aqua)    */
+    --danger:     #e66767;   /* isochrone outline        */
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink-2); background: var(--page); font-size: 13px;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  header h1 { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0 12px 0 0; white-space: nowrap; }
+  label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  input[type="text"], select {
+    font: inherit; color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px;
+  }
+  input[type="text"] { width: 210px; }
+  input[type="range"] { vertical-align: middle; accent-color: var(--accent); width: 110px; }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  button {
+    font: inherit; font-weight: 600; color: #fff; background: #2b5fd9;
+    border: 1px solid #2b5fd9; border-radius: 6px; padding: 5px 16px; cursor: pointer;
+  }
+  button:hover { background: #3a6ee8; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { color: var(--muted); margin-left: auto; }
+  #status.err { color: var(--danger); }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+  #map { flex: 1; background: #0d0e10; }
+  #panel {
+    width: 340px; border-left: 1px solid var(--border); background: var(--surface);
+    overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .tile {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px;
+  }
+  .tile .lbl { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .tile .val { color: var(--ink); font-weight: 600; font-size: 26px; line-height: 1.15; }
+  .tile.hero .val { font-size: 48px; }
+  .tile .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tile-row { display: flex; gap: 14px; }
+  .tile-row .tile { flex: 1; }
+  #chart-card h2 { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 0 0 2px; }
+  #chart-card .h2sub { color: var(--muted); font-size: 11.5px; margin-bottom: 8px; }
+  #meta { color: var(--muted); font-size: 12px; line-height: 1.7; }
+  #meta b { color: var(--ink-2); font-weight: 500; }
+
+  /* map legend */
+  #legend {
+    position: absolute; z-index: 800; left: 12px; bottom: 24px;
+    background: rgba(26,26,25,.92); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 11.5px; color: var(--ink-2); min-width: 150px;
+  }
+  #legend .name { margin-bottom: 6px; color: var(--ink-2); }
+  #legend .bar { height: 8px; border-radius: 4px; margin-bottom: 3px; }
+  #legend .ends { display: flex; justify-content: space-between; color: var(--muted); }
+
+  /* chart tooltip */
+  #tip {
+    position: fixed; z-index: 2000; pointer-events: none; display: none;
+    background: rgba(32,32,32,.97); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 9px; font-size: 12px; color: var(--ink); box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  }
+  #tip .m { color: var(--muted); }
+  .leaflet-container { font: inherit; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Site analysis — Overture POIs × Census income</h1>
+    <label>address <input id="address" type="text" placeholder="address or place" /></label>
+    <label>mode
+      <select id="mode">
+        <option value="driving-car">driving</option>
+        <option value="cycling-regular">cycling</option>
+        <option value="foot-walking">walking</option>
+      </select>
+    </label>
+    <label>POI
+      <select id="poi">
+        <option value="restaurant">restaurants</option>
+        <option value="cafe">cafes</option>
+        <option value="retail">retail</option>
+        <option value="grocery">grocery</option>
+        <option value="pharmacy">pharmacies</option>
+        <option value="school">schools</option>
+        <option value="bank">banks</option>
+        <option value="hospital">hospitals</option>
+        <option value="park">parks</option>
+        <option value="gym">gyms</option>
+      </select>
+    </label>
+    <label>time <input id="minutes" type="range" min="5" max="30" step="5" />
+      <span id="minutes-val">15</span> min</label>
+    <button id="run">Run</button>
+    <label>color by
+      <select id="metric">
+        <option value="pois">POI count</option>
+        <option value="income">median income</option>
+      </select>
+    </label>
+    <label><input id="points" type="checkbox" /> POI points</label>
+    <span id="status"></span>
+  </header>
+
+  <div id="main">
+    <div id="map"></div>
+    <div id="panel">
+      <div class="tile hero">
+        <div class="lbl">Total points of interest</div>
+        <div class="val" id="stat-pois">—</div>
+        <div class="sub" id="stat-pois-sub">inside the isochrone</div>
+      </div>
+      <div class="tile-row">
+        <div class="tile">
+          <div class="lbl">Median household income</div>
+          <div class="val" id="stat-income">—</div>
+          <div class="sub">per H3 hex, ACS 2022 5-yr</div>
+        </div>
+        <div class="tile">
+          <div class="lbl">Isochrone area</div>
+          <div class="val" id="stat-area">—</div>
+          <div class="sub" id="stat-area-sub">—</div>
+        </div>
+      </div>
+      <div class="tile" id="chart-card">
+        <h2>Distribution of median income</h2>
+        <div class="h2sub">hex cells per income bin (20 equal-width bins)</div>
+        <div id="chart">—</div>
+      </div>
+      <div class="tile"><div id="meta">—</div></div>
+    </div>
+  </div>
+  <div id="tip"></div>
+
+  <script>
+    // ---------- defaults (mirror the canvas widget defaults) ----------
+    const DEFAULTS = { address: "San Francisco, CA", minutes: "15", mode: "driving-car",
+                       poi: "cafe", metric: "pois", points: "1" };
+
+    const $ = (id) => document.getElementById(id);
+    const controls = { address: $("address"), mode: $("mode"), poi: $("poi"),
+                       minutes: $("minutes"), metric: $("metric"), points: $("points") };
+
+    // ---------- color ramps (dataviz sequential: low recedes into the dark map) ----------
+    const RAMP_POIS   = ["#0d366b","#184f95","#1c5cab","#256abf","#2a78d6",
+                         "#3987e5","#5598e7","#6da7ec","#86b6ef","#9ec5f4"];
+    const RAMP_INCOME = ["#0e3b2c","#14513c","#186349","#1b7656","#1e8a63",
+                         "#199e70","#3dbd8c","#62d3a7","#8ce4c1","#b4f0d8"];
+    function rampColor(ramp, t) {          // t in [0,1] -> interpolated hex
+      t = Math.max(0, Math.min(1, t));
+      const x = t * (ramp.length - 1), i = Math.floor(x), f = x - i;
+      if (i >= ramp.length - 1) return ramp[ramp.length - 1];
+      const a = ramp[i].slice(1), b = ramp[i + 1].slice(1);
+      const ch = (o) => Math.round(parseInt(a.substr(o,2),16) * (1-f) + parseInt(b.substr(o,2),16) * f);
+      return `rgb(${ch(0)},${ch(2)},${ch(4)})`;
+    }
+
+    // ---------- map ----------
+    const map = L.map("map", { preferCanvas: true }).setView([37.78, -122.42], 12);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: "© OpenStreetMap, © CARTO", maxZoom: 19,
+    }).addTo(map);
+    let isoLayer = null, hexLayer = null, poiLayer = null, centerLayer = null;
+
+    const legend = document.createElement("div");
+    legend.id = "legend";
+    $("map").appendChild(legend);
+    legend.style.display = "none";
+
+    const statusEl = $("status");
+    function setStatus(msg, isErr) { statusEl.textContent = msg; statusEl.className = isErr ? "err" : ""; }
+
+    $("minutes").addEventListener("input", () => { $("minutes-val").textContent = $("minutes").value; });
+
+    // ---------- state ----------
+    // Memoize panel results in JS so metric/points toggles restyle without
+    // re-running Python (each bridge call is a fresh subprocess).
+    const memo = { key: null, poiKey: null, iso: null, poi: null, census: null };
+    let reqId = 0;
+
+    function fmtMoney(v) { return v == null ? "—" : "$" + Math.round(v).toLocaleString(); }
+    function fmtMoneyK(v) { return v == null ? "—" : "$" + (v / 1000).toFixed(0) + "k"; }
+
+    // ---------- hex layer ----------
+    function renderHexes() {
+      if (!memo.iso) return;
+      const metric = fused.params.get("metric") || DEFAULTS.metric;
+      const counts = (memo.poi && memo.poi.hex_counts) || {};
+      const income = (memo.census && memo.census.hex_income) || {};
+
+      // domain
+      let dom, ramp, name, fmt;
+      if (metric === "pois") {
+        const vals = Object.values(counts).sort((a,b)=>a-b);
+        const p95 = vals.length ? vals[Math.floor(vals.length * 0.95)] : 10;
+        dom = [0, Math.max(10, p95)];                    // canvas hard-coded [0,10]
+        ramp = RAMP_POIS; name = "POIs per hex"; fmt = (v)=>String(Math.round(v));
+      } else {
+        const vals = Object.values(income);
+        dom = vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 1];
+        ramp = RAMP_INCOME; name = "Median income per hex"; fmt = fmtMoneyK;
+      }
+
+      if (hexLayer) map.removeLayer(hexLayer);
+      const polys = memo.iso.iso_hexes.map((h) => {
+        const c = counts[h] || 0;
+        const inc = income[h];
+        const v = metric === "pois" ? c : inc;
+        const has = metric === "pois" ? true : inc != null;
+        const t = (v - dom[0]) / ((dom[1] - dom[0]) || 1);
+        const p = L.polygon(h3.cellToBoundary(h), {
+          stroke: false,
+          fillColor: has ? rampColor(ramp, t) : "#383835",
+          fillOpacity: has ? 0.55 : 0.25,
+        });
+        p.bindTooltip(
+          `POIs: ${c}<br>Income: ${inc != null ? fmtMoney(inc) : "no data"}`,
+          { sticky: true, direction: "top", opacity: 0.95 }
+        );
+        return p;
+      });
+      hexLayer = L.layerGroup(polys).addTo(map);
+      if (isoLayer) isoLayer.bringToFront();
+
+      legend.style.display = "";
+      legend.innerHTML =
+        `<div class="name">${name}</div>` +
+        `<div class="bar" style="background:linear-gradient(90deg, ${ramp.join(",")})"></div>` +
+        `<div class="ends"><span>${fmt(dom[0])}</span><span>${fmt(dom[1])}</span></div>`;
+    }
+
+    function renderPoiPoints() {
+      const show = (fused.params.get("points") || DEFAULTS.points) === "1";
+      if (poiLayer) { map.removeLayer(poiLayer); poiLayer = null; }
+      if (!show || !memo.poi) return;
+      poiLayer = L.layerGroup(memo.poi.pois.map((p) =>
+        L.circleMarker([p.lat, p.lon], {
+          radius: 2.5, weight: 1, color: "#d95926", fillColor: "#d95926", fillOpacity: 0.85,
+        }).bindTooltip(`${p.name || "(unnamed)"}<br><span style="color:#898781">${p.category}</span>`)
+      )).addTo(map);
+    }
+
+    // ---------- histogram (plain SVG) ----------
+    function renderHistogram() {
+      const el = $("chart");
+      const h = memo.census && memo.census.histogram;
+      if (!h || !h.counts.length) { el.textContent = "—"; return; }
+      const W = 292, H = 170, padL = 30, padB = 18, padT = 8;
+      const n = h.counts.length, maxC = Math.max(...h.counts, 1);
+      const yMax = Math.ceil(maxC / 10) * 10 || maxC;
+      const bw = (W - padL) / n;
+      const barW = Math.min(24, bw - 2);                 // ≤24px thick, 2px surface gap
+      const y = (v) => padT + (H - padB - padT) * (1 - v / yMax);
+      let s = `<svg width="${W}" height="${H}" style="display:block">`;
+      // hairline gridlines + ticks
+      [0, yMax / 2, yMax].forEach((g) => {
+        s += `<line x1="${padL}" x2="${W}" y1="${y(g)}" y2="${y(g)}" stroke="#2c2c2a" stroke-width="1"/>` +
+             `<text x="${padL - 5}" y="${y(g) + 3.5}" fill="#898781" font-size="10" text-anchor="end">${g}</text>`;
+      });
+      h.counts.forEach((c, i) => {
+        const x = padL + i * bw + (bw - barW) / 2;
+        const top = y(c), bh = Math.max(0, y(0) - top);
+        // 4px rounded data-end, square baseline: path with rounded top corners
+        const r = Math.min(4, barW / 2, bh);
+        s += `<path d="M${x},${y(0)} v${-(bh - r)} q0,-${r} ${r},-${r} h${barW - 2*r} q${r},0 ${r},${r} v${bh - r} z"
+                fill="#199e70" data-i="${i}" style="cursor:default"/>`;
+      });
+      // sparse x labels: min and max edges
+      const e = h.edges;
+      s += `<text x="${padL}" y="${H - 4}" fill="#898781" font-size="10">${fmtMoneyK(e[0])}</text>` +
+           `<text x="${W}" y="${H - 4}" fill="#898781" font-size="10" text-anchor="end">${fmtMoneyK(e[e.length-1])}</text>`;
+      s += "</svg>";
+      el.innerHTML = s;
+
+      const tip = $("tip");
+      el.querySelectorAll("path[data-i]").forEach((bar) => {
+        bar.addEventListener("mousemove", (ev) => {
+          const i = +bar.dataset.i;
+          tip.style.display = "block";
+          tip.innerHTML = `<b>${h.counts[i]}</b> hex cells<br><span class="m">${h.labels[i]}</span>`;
+          tip.style.left = Math.min(ev.clientX + 12, innerWidth - 190) + "px";
+          tip.style.top = (ev.clientY - 36) + "px";
+        });
+        bar.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      });
+    }
+
+    function renderMeta() {
+      const bits = [];
+      if (memo.iso) {
+        bits.push(`<b>${memo.iso.label}</b>`);
+        bits.push(`${memo.iso.range_min} min · ${memo.iso.profile.replace("-", " ")} · H3 res ${memo.iso.hex_res}`);
+        bits.push(`${memo.iso.iso_hexes.length.toLocaleString()} hex cells · Overture ${memo.iso.overture_release}`);
+      }
+      if (memo.census) bits.push(`${memo.census.bg_matched}/${memo.census.bg_count} census block groups matched`);
+      $("meta").innerHTML = bits.join("<br>") || "—";
+    }
+
+    // ---------- the draw loop (params are the state) ----------
+    async function draw() {
+      const p = {
+        address: fused.params.get("address") || DEFAULTS.address,
+        minutes: fused.params.get("minutes") || DEFAULTS.minutes,
+        mode:    fused.params.get("mode")    || DEFAULTS.mode,
+        poi:     fused.params.get("poi")     || DEFAULTS.poi,
+        metric:  fused.params.get("metric")  || DEFAULTS.metric,
+        points:  fused.params.get("points")  || DEFAULTS.points,
+      };
+      // reflect committed state into controls
+      controls.address.value = p.address;
+      controls.minutes.value = p.minutes; $("minutes-val").textContent = p.minutes;
+      controls.mode.value = p.mode; controls.poi.value = p.poi;
+      controls.metric.value = p.metric; controls.points.checked = p.points === "1";
+
+      const key = [p.address, p.minutes, p.mode].join("|");
+      const poiKey = key + "|" + p.poi;
+
+      // pure restyle? (metric/points toggles)
+      if (memo.key === key && memo.poiKey === poiKey) {
+        renderHexes(); renderPoiPoints();
+        return;
+      }
+
+      const mine = ++reqId;
+      $("run").disabled = true;
+      const args = { address: p.address, travel_time_min: p.minutes, transport_mode: p.mode };
+
+      try {
+        // 1. isochrone first (fast, warms geocode+ORS caches for the others)
+        if (memo.key !== key) {
+          setStatus("isochrone…");
+          memo.iso = null; memo.census = null;
+          const iso = await fused.runPython("./iso_area.py", args);
+          if (mine !== reqId) return;
+          memo.iso = iso; memo.key = key;
+
+          $("stat-area").textContent = iso.area_km2.toLocaleString();
+          $("stat-area-sub").textContent = "km²";
+          if (isoLayer) map.removeLayer(isoLayer);
+          if (centerLayer) map.removeLayer(centerLayer);
+          isoLayer = L.geoJSON(iso.geometry, {
+            style: { color: "#e66767", weight: 2, fill: true, fillColor: "#e66767", fillOpacity: 0.04 },
+          }).addTo(map);
+          centerLayer = L.circleMarker(iso.center, {
+            radius: 7, color: "#fff", weight: 2, fillColor: "#00bcd4", fillOpacity: 1,
+          }).addTo(map).bindTooltip(iso.label);
+          map.fitBounds(isoLayer.getBounds(), { padding: [30, 30] });
+          renderHexes(); renderMeta();
+        }
+        memo.poi = null; memo.poiKey = null;
+        $("stat-pois").textContent = "…";
+        if (!memo.census) { $("stat-income").textContent = "…"; $("chart").textContent = "…"; }
+
+        // 2. POIs and census in parallel (isochrone now disk-cached)
+        setStatus("querying Overture + Census…");
+        // Cold Overture scans run in a detached backend process: poll the
+        // warm step until ready (instant when the bbox is already cached).
+        const poiWarm = async () => {
+          for (;;) {
+            const w = await fused.runPython("./poi_panel.py",
+              { ...args, poi_category: p.poi, step: "warm" });
+            if (mine !== reqId || !w || w.ready !== false) return;
+            await new Promise((r) => setTimeout(r, 2000));
+            if (mine !== reqId) return;
+          }
+        };
+        const jobs = [
+          poiWarm().then(() => { if (mine !== reqId) return null;
+            return fused.runPython("./poi_panel.py", { ...args, poi_category: p.poi }); })
+            .then((r) => { if (mine !== reqId || !r) return;
+              memo.poi = r; memo.poiKey = poiKey;
+              $("stat-pois").textContent = r.poi_count.toLocaleString();
+              $("stat-pois-sub").textContent = `${p.poi} inside the isochrone`;
+              renderHexes(); renderPoiPoints();
+            }),
+          (memo.census ? Promise.resolve() :
+            fused.runPython("./census_panel.py", args).then((r) => { if (mine !== reqId) return;
+              memo.census = r;
+              $("stat-income").textContent = fmtMoneyK(r.median_income);
+              renderHexes(); renderHistogram(); renderMeta();
+            })),
+        ];
+        const results = await Promise.allSettled(jobs);
+        if (mine !== reqId) return;
+        const failed = results.filter((r) => r.status === "rejected");
+        if (failed.length) throw failed[0].reason;
+        setStatus("");
+      } catch (err) {
+        if (mine !== reqId) return;
+        setStatus(`${err.type || "error"}: ${err.message}`, true);
+      } finally {
+        if (mine === reqId) $("run").disabled = false;
+      }
+    }
+
+    // ---------- commit: capture all control values FIRST, then set params ----------
+    function commit() {
+      const next = {
+        address: controls.address.value.trim() || DEFAULTS.address,
+        minutes: controls.minutes.value,
+        mode: controls.mode.value,
+        poi: controls.poi.value,
+        metric: controls.metric.value,
+        points: controls.points.checked ? "1" : "0",
+      };
+      for (const [k, v] of Object.entries(next)) fused.params.set(k, v);
+    }
+    $("run").addEventListener("click", commit);
+    controls.address.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(); });
+    controls.metric.addEventListener("change", commit);   // instant restyle
+    controls.points.addEventListener("change", commit);   // instant restyle
+
+    // coalesce the burst of set() calls into one re-render
+    let drawTimer;
+    fused.params.onChange(() => { clearTimeout(drawTimer); drawTimer = setTimeout(draw, 30); });
+
+    draw();   // initial render reads URL state (defaults if absent)
+  </script>
+</body>
+</html>
