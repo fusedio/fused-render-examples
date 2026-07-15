@@ -16,11 +16,11 @@ key, noted in their README).
 <table>
   <tr>
     <td width="50%"><a href="geospatial/buildings_to_hexagons/"><img src="assets/buildings_to_hexagons.png" alt="Buildings to hexagons"></a><br><b>Buildings → hexagons</b><br>2.6B buildings in a 0.4 MB file — an interactive explainer.</td>
-    <td width="50%"><a href="geospatial/locker_network_simulator/"><img src="assets/locker_network_simulator.png" alt="Locker network simulator"></a><br><b>Parcel locker simulator</b><br>Live route re-optimization on real roads.</td>
+    <td width="50%"><a href="local-tools/pytop/"><img src="assets/pytop.png" alt="pytop"></a><br><b>pytop</b><br>A live <code>top</code>-style system monitor for your own machine.</td>
   </tr>
   <tr>
-    <td><a href="geospatial/store_site_selection/"><img src="assets/store_site_selection.png" alt="Store site selection"></a><br><b>Store site selection</b><br>Score city tracts with instant re-ranking.</td>
-    <td><a href="geospatial/overture_census_isochrone/"><img src="assets/overture_census_isochrone.png" alt="Isochrone dashboard"></a><br><b>Isochrone dashboard</b><br>Routing + POIs + demographics, fused.</td>
+    <td><a href="geospatial/locker_network_simulator/"><img src="assets/locker_network_simulator.png" alt="Locker network simulator"></a><br><b>Parcel locker simulator</b><br>Live route re-optimization on real roads.</td>
+    <td><a href="local-tools/disk_usage/"><img src="assets/disk_usage.png" alt="disk_usage"></a><br><b>disk_usage</b><br>Treemap disk-space explorer for your local filesystem.</td>
   </tr>
 </table>
 
