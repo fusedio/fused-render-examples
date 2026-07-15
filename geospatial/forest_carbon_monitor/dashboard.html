@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Protected Forest Monitor</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1321; --panel: #131a2c; --panel2: #192238; --line: #273353;
+    --text: #e4e9f4; --muted: #8d9bb8; --teal: #55c6c0; --teal-dim: #2c5f66;
+    --warm: #e88b4e; --accent: #7fd8d2;
+    font-size: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; height: 100vh; display: flex; overflow: hidden; }
+  aside { width: 330px; min-width: 330px; background: var(--panel); border-right: 1px solid var(--line); padding: 18px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #map { flex: 1.35; min-height: 0; position: relative; }
+  #bottom { flex: 1; min-height: 220px; display: flex; border-top: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 17px; font-weight: 650; letter-spacing: .2px; }
+  h1 small { display:block; color: var(--muted); font-size: 11.5px; font-weight: 400; margin-top: 2px;}
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
+  select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 13.5px; }
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpi { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+  .kpi .v { font-size: 17px; font-weight: 650; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .kpi .v.warm { color: var(--warm); }
+  .kpi .l { font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+  .layer { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; margin-bottom: 7px; }
+  .layer .row { display: flex; align-items: center; gap: 8px; }
+  .layer label { flex: 1; font-size: 13px; cursor: pointer; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; }
+  input[type=range] { width: 100%; accent-color: var(--teal); height: 18px; }
+  input[type=checkbox] { accent-color: var(--teal); }
+  .op { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .op span { font-size: 10.5px; color: var(--muted); min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+  .years { display: flex; gap: 8px; align-items: center; }
+  .years b { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; min-width: 34px; }
+  button.dl { background: var(--teal-dim); color: #e7f6f5; border: 0; border-radius: 6px; padding: 6px 11px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  button.dl:hover { background: #3a7d85; }
+  button.dl svg { width: 12px; height: 12px; }
+  .meta { font-size: 12px; color: var(--muted); }
+  .meta b { color: var(--text); font-weight: 550; }
+  .badge { font-size: 10px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--accent); }
+  #chartwrap { flex: 1.3; min-width: 0; padding: 10px 6px 4px 6px; display: flex; flex-direction: column; }
+  #chart { flex: 1; min-height: 0; }
+  #tablewrap { flex: 1; min-width: 0; border-left: 1px solid var(--line); padding: 10px 12px; overflow: auto; }
+  .panehead { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 6px 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 5px 6px; border-bottom: 1px solid #1e2a44; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.sel td { background: #223154; }
+  tbody tr { cursor: pointer; } tbody tr:hover td { background: #1d2a48; }
+  footer { font-size: 10.5px; color: var(--muted); line-height: 1.5; border-top: 1px solid var(--line); padding-top: 10px; margin-top: auto; }
+  footer a { color: var(--teal); text-decoration: none; }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(13,19,33,.55); z-index: 5; font-size: 13px; color: var(--accent); transition: opacity .2s; pointer-events: none; opacity: 0; }
+  #loading.on { opacity: 1; }
+  .legend { position: absolute; bottom: 22px; right: 10px; background: rgba(19,26,44,.92); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 11px; z-index: 4; }
+  .legend .li { display: flex; align-items: center; gap: 7px; margin: 3px 0; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Protected Forest Monitor
+    <small>Deforestation in protected areas &middot; fused-render demo</small>
+  </h1>
+  <div>
+    <h2>Protected area</h2>
+    <select id="park"></select>
+    <div class="meta" id="parkmeta" style="margin-top:8px"></div>
+  </div>
+  <div>
+    <h2>Key figures <span id="kpirange" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div class="kpis" id="kpis"></div>
+  </div>
+  <div>
+    <h2>Loss years</h2>
+    <div class="years">
+      <b id="ysl">2001</b>
+      <input type="range" id="ys" min="2001" max="2025" step="1">
+      <input type="range" id="ye" min="2001" max="2025" step="1">
+      <b id="yel">2025</b>
+    </div>
+    <div class="meta" style="margin-top:4px">Filters both the loss raster and the chart/KPIs.</div>
+  </div>
+  <div>
+    <h2>Map layers</h2>
+    <div class="layer">
+      <div class="row"><div class="swatch" style="background:#98bd3d"></div>
+        <label for="ck_tc">Tree cover 2000 (&ge;30%)</label>
+        <input type="checkbox" id="ck_tc"></div>
+      <div class="op"><input type="range" id="op_tc" min="0" max="100"><span id="opv_tc"></span></div>
+    </div>
+    <div class="layer">
+      <div class="row"><div class="swatch" style="background:#e88b4e"></div>
+        <label for="ck_loss">Tree cover loss (year-filtered)</label>
+        <input type="checkbox" id="ck_loss"></div>
+      <div class="op"><input type="range" id="op_loss" min="0" max="100"><span id="opv_loss"></span></div>
+    </div>
+    <div class="layer">
+      <div class="row"><div class="swatch" style="background:#55c6c0"></div>
+        <label for="ck_bnd">Park boundary</label>
+        <input type="checkbox" id="ck_bnd"></div>
+    </div>
+  </div>
+  <div>
+    <h2>Downloads</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="dl" id="dl_series">CSV &middot; annual loss</button>
+      <button class="dl" id="dl_table">CSV &middot; all parks</button>
+      <button class="dl" id="dl_geo">GeoJSON &middot; boundary</button>
+    </div>
+  </div>
+  <footer>
+    <b>Provenance.</b> Boundaries: OpenStreetMap protected-area relations
+    (simplified, ODbL &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OSM contributors</a>).
+    Loss &amp; extent: Hansen/UMD via the
+    <a href="https://data-api.globalforestwatch.org" target="_blank">GFW Data API</a>,
+    canopy density &ge;30%, computed on the shipped boundary — figures may differ
+    from officially listed areas (both shown). Tiles &copy; GFW / UMD; basemap &copy; CARTO &amp; OSM.
+  </footer>
+</aside>
+<main>
+  <div id="map">
+    <div id="loading" class="on">Loading park…</div>
+    <div class="legend">
+      <div class="li"><div class="swatch" style="background:#98bd3d"></div>Tree cover 2000</div>
+      <div class="li"><div class="swatch" style="background:linear-gradient(90deg,#8a5a3a,#ff7a4d)"></div>Loss (old &rarr; recent)</div>
+      <div class="li"><div class="swatch" style="border:1.5px solid #55c6c0;background:none"></div>Park boundary</div>
+    </div>
+  </div>
+  <div id="bottom">
+    <div id="chartwrap">
+      <div class="panehead"><h2 style="margin:0">Annual tree cover loss (ha)</h2></div>
+      <div id="chart"></div>
+    </div>
+    <div id="tablewrap">
+      <div class="panehead"><h2 style="margin:0">Protected areas (2001&ndash;2025 totals)</h2></div>
+      <table id="ptable"><thead><tr>
+        <th>Park</th><th>IUCN</th><th>Cover 2000 ha</th><th>Loss ha</th><th>% lost</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const YR_MIN = 2001, YR_MAX = 2025;
+const $ = id => document.getElementById(id);
+const fmt = n => n == null ? "–" : Number(n).toLocaleString("en-US", {maximumFractionDigits: n < 10 ? 1 : 0});
+
+// ---------- params (URL is the state) ----------
+const P = {
+  get: (k, d) => fused.params.get(k) ?? d,
+  num: (k, d) => parseInt(fused.params.get(k) ?? d, 10),
+  set: (k, v) => fused.params.set(k, String(v)),
+};
+function state() {
+  return {
+    park: P.get("park", "virunga_drc"),
+    ys: Math.max(YR_MIN, Math.min(YR_MAX, P.num("ys", YR_MIN))),
+    ye: Math.max(YR_MIN, Math.min(YR_MAX, P.num("ye", YR_MAX))),
+    tc: P.get("tc", "1") === "1",
+    loss: P.get("loss", "1") === "1",
+    bnd: P.get("bnd", "1") === "1",
+    op_tc: P.num("op_tc", 45), op_loss: P.num("op_loss", 90),
+  };
+}
+
+// ---------- GFW loss tiles: decode R=intensity, B=year-2000 client-side ----------
+const LOSS_TILES = "https://tiles.globalforestwatch.org/umd_tree_cover_loss/latest/tcd_30/{z}/{x}/{y}.png";
+const TC_TILES   = "https://tiles.globalforestwatch.org/umd_tree_cover_density_2000/latest/tcd_30/{z}/{x}/{y}.png";
+const EMPTY_PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="), c => c.charCodeAt(0));
+
+maplibregl.addProtocol("gfwloss", async (params) => {
+  // gfwloss://z/x/y?ys=..&ye=..
+  const m = params.url.match(/^gfwloss:\/\/(\d+)\/(\d+)\/(\d+)\?ys=(\d+)&ye=(\d+)/);
+  if (!m) throw new Error("bad gfwloss url " + params.url);
+  const [, z, x, y, ys, ye] = m.map(Number);
+  const src = LOSS_TILES.replace("{z}", z).replace("{x}", x).replace("{y}", y);
+  let resp;
+  try { resp = await fetch(src, { signal: params.signal }); }
+  catch (e) { return { data: EMPTY_PNG.buffer.slice(0) }; }  // aborted pan/zoom — serve empty
+  if (!resp.ok) return { data: EMPTY_PNG.buffer.slice(0) };
+  const bmp = await createImageBitmap(await resp.blob());
+  const cv = new OffscreenCanvas(bmp.width, bmp.height);
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0);
+  const img = ctx.getImageData(0, 0, bmp.width, bmp.height);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const intensity = d[i], year = 2000 + d[i + 2];
+    if (!intensity || year < ys || year > ye) { d[i + 3] = 0; continue; }
+    const t = (year - YR_MIN) / (YR_MAX - YR_MIN);       // old -> recent
+    d[i]     = Math.round(138 + t * 117);                // 138..255
+    d[i + 1] = Math.round(90 + t * 32);                  // 90..122
+    d[i + 2] = Math.round(58 + t * 19);                  // 58..77
+    d[i + 3] = Math.min(255, 70 + intensity);            // alpha from intensity
+  }
+  ctx.putImageData(img, 0, 0);
+  const out = await cv.convertToBlob({ type: "image/png" });
+  return { data: await out.arrayBuffer() };
+});
+
+// ---------- map ----------
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: { carto: { type: "raster", tiles: [
+      "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+      "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"], tileSize: 256,
+      attribution: "&copy; CARTO &copy; OpenStreetMap" } },
+    layers: [{ id: "carto", type: "raster", source: "carto" }],
+  },
+  center: [20, 0], zoom: 2.2, attributionControl: { compact: true },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+map.on("error", e => { if (e.error && /Abort/.test(String(e.error))) return; console.warn("map:", e.error); });
+
+function lossTileUrl(s) { return `gfwloss://{z}/{x}/{y}?ys=${s.ys}&ye=${s.ye}`; }
+
+map.on("load", () => {
+  const s = state();
+  map.addSource("tc", { type: "raster", tiles: [TC_TILES], tileSize: 256, maxzoom: 12 });
+  map.addLayer({ id: "tc", type: "raster", source: "tc",
+    paint: { "raster-opacity": s.op_tc / 100, "raster-saturation": -0.35 },
+    layout: { visibility: s.tc ? "visible" : "none" } });
+  map.addSource("loss", { type: "raster", tiles: [lossTileUrl(s)], tileSize: 512, maxzoom: 12 });
+  map.addLayer({ id: "loss", type: "raster", source: "loss",
+    paint: { "raster-opacity": s.op_loss / 100 },
+    layout: { visibility: s.loss ? "visible" : "none" } });
+  map.addSource("bnd", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "bnd-fill", type: "fill", source: "bnd",
+    paint: { "fill-color": "#55c6c0", "fill-opacity": 0.06 },
+    layout: { visibility: s.bnd ? "visible" : "none" } });
+  map.addLayer({ id: "bnd-line", type: "line", source: "bnd",
+    paint: { "line-color": "#55c6c0", "line-width": 2 },
+    layout: { visibility: s.bnd ? "visible" : "none" } });
+  mapReady = true;
+  if (pendingBoundary) setBoundary(pendingBoundary, true);
+});
+let mapReady = false, pendingBoundary = null;
+
+function bboxOf(geom) {
+  let w = 180, sN = 90, e = -180, n = -90;
+  const eat = c => { w = Math.min(w, c[0]); e = Math.max(e, c[0]); sN = Math.min(sN, c[1]); n = Math.max(n, c[1]); };
+  const walk = a => (typeof a[0] === "number") ? eat(a) : a.forEach(walk);
+  walk(geom.coordinates);
+  return [[w, sN], [e, n]];
+}
+function setBoundary(geom, fit) {
+  if (!mapReady) { pendingBoundary = geom; return; }
+  map.getSource("bnd").setData({ type: "Feature", geometry: geom, properties: {} });
+  if (fit) map.fitBounds(bboxOf(geom), { padding: 60, duration: 1400, maxZoom: 11 });
+}
+
+// ---------- data + rendering ----------
+let detail = null, catalog = null, lastPark = null;
+const chart = echarts.init($("chart"), null, { renderer: "canvas" });
+addEventListener("resize", () => chart.resize());
+
+function renderKpis() {
+  if (!detail) return;
+  const s = state(), k = kpisFor(s);
+  $("kpirange").textContent = `(${s.ys}–${s.ye})`;
+  $("kpis").innerHTML = `
+    <div class="kpi"><div class="v">${fmt(detail.kpis.area_boundary_ha)}</div><div class="l">Boundary area ha (OSM)</div></div>
+    <div class="kpi"><div class="v">${fmt(detail.kpis.extent_2000_ha)}</div><div class="l">Tree cover 2000 ha (&ge;30%)</div></div>
+    <div class="kpi"><div class="v warm">${fmt(k.cum)}</div><div class="l">Loss ha, ${s.ys}–${s.ye}</div></div>
+    <div class="kpi"><div class="v warm">${k.pct == null ? "–" : k.pct.toFixed(2) + "%"}</div><div class="l">of 2000 cover lost</div></div>
+    <div class="kpi"><div class="v">${k.worst ? k.worst.year : "–"}</div><div class="l">Worst year (${k.worst ? fmt(k.worst.loss_ha) + " ha" : "–"})</div></div>
+    <div class="kpi"><div class="v">${fmt(detail.meta.area_listed_ha)}</div><div class="l">Officially listed ha</div></div>`;
+  const m = detail.meta;
+  $("parkmeta").innerHTML = `<b>${m.designation}</b> &middot; ${m.country} &middot; ${m.managed_by}
+    <span class="badge">IUCN ${m.iucn}</span>`;
+}
+function kpisFor(s) {
+  const sel = detail.series.filter(r => r.year >= s.ys && r.year <= s.ye);
+  const cum = sel.reduce((a, r) => a + r.loss_ha, 0);
+  const worst = sel.reduce((a, r) => (!a || r.loss_ha > a.loss_ha) ? r : a, null);
+  const ext = detail.kpis.extent_2000_ha;
+  return { cum: Math.round(cum * 10) / 10, worst, pct: ext ? 100 * cum / ext : null };
+}
+
+function renderChart() {
+  if (!detail) return;
+  const s = state();
+  chart.setOption({
+    animationDuration: 300,
+    grid: { left: 56, right: 16, top: 14, bottom: 26 },
+    tooltip: { trigger: "axis", backgroundColor: "#192238", borderColor: "#273353",
+      textStyle: { color: "#e4e9f4", fontSize: 12 },
+      valueFormatter: v => fmt(v) + " ha" },
+    xAxis: { type: "category", data: detail.series.map(r => r.year),
+      axisLine: { lineStyle: { color: "#273353" } },
+      axisLabel: { color: "#8d9bb8", fontSize: 10.5 } },
+    yAxis: { type: "value",
+      splitLine: { lineStyle: { color: "#1e2a44" } },
+      axisLabel: { color: "#8d9bb8", fontSize: 10.5, formatter: v => fmt(v) } },
+    series: [{ type: "bar", data: detail.series.map(r => ({
+        value: r.loss_ha,
+        itemStyle: { color: (r.year >= s.ys && r.year <= s.ye) ? "#e88b4e" : "#31406a" },
+      })), barCategoryGap: "25%", name: "loss" }],
+  });
+}
+
+function renderTable() {
+  if (!catalog) return;
+  const cur = state().park;
+  $("ptable").querySelector("tbody").innerHTML = catalog.parks.map(p => `
+    <tr data-id="${p.id}" class="${p.id === cur ? "sel" : ""}">
+      <td>${p.name}<span style="color:var(--muted)"> · ${p.country}</span></td>
+      <td><span class="badge">${p.iucn}</span></td>
+      <td>${fmt(p.extent_2000_ha)}</td><td>${fmt(p.cumulative_loss_ha)}</td>
+      <td>${p.pct_extent_lost == null ? "–" : p.pct_extent_lost.toFixed(1) + "%"}</td></tr>`).join("");
+  $("ptable").querySelectorAll("tbody tr").forEach(tr =>
+    tr.addEventListener("click", () => P.set("park", tr.dataset.id)));
+}
+
+function reflectControls() {
+  const s = state();
+  $("park").value = s.park;
+  $("ys").value = s.ys; $("ye").value = s.ye;
+  $("ysl").textContent = s.ys; $("yel").textContent = s.ye;
+  $("ck_tc").checked = s.tc; $("ck_loss").checked = s.loss; $("ck_bnd").checked = s.bnd;
+  $("op_tc").value = s.op_tc; $("op_loss").value = s.op_loss;
+  $("opv_tc").textContent = s.op_tc + "%"; $("opv_loss").textContent = s.op_loss + "%";
+}
+
+function applyMapState() {
+  if (!mapReady) return;
+  const s = state();
+  map.setLayoutProperty("tc", "visibility", s.tc ? "visible" : "none");
+  map.setLayoutProperty("loss", "visibility", s.loss ? "visible" : "none");
+  ["bnd-fill", "bnd-line"].forEach(l => map.setLayoutProperty(l, "visibility", s.bnd ? "visible" : "none"));
+  map.setPaintProperty("tc", "raster-opacity", s.op_tc / 100);
+  map.setPaintProperty("loss", "raster-opacity", s.op_loss / 100);
+  const src = map.getSource("loss");
+  const want = lossTileUrl(s);
+  if (src && src.tiles[0] !== want) src.setTiles([want]);
+}
+
+async function loadDetail() {
+  const s = state();
+  $("loading").classList.add("on");
+  try {
+    detail = await fused.runPython("./forest.py", { action: "detail", park: s.park });
+    setBoundary(detail.boundary, s.park !== lastPark);
+    lastPark = s.park;
+    renderKpis(); renderChart();
+    renderTable();
+  } finally { $("loading").classList.remove("on"); }
+}
+
+let seq = 0;
+async function draw(changedKeys) {
+  reflectControls(); applyMapState();
+  const needsFetch = !detail || detail.id !== state().park;
+  if (needsFetch) {
+    const mySeq = ++seq;
+    await loadDetail().catch(err => { $("loading").classList.remove("on"); throw err; });
+    if (mySeq !== seq) return;
+  } else { renderKpis(); renderChart(); renderTable(); }
+}
+
+// ---------- CSV / GeoJSON downloads ----------
+function download(name, mime, text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+const csv = rows => rows.map(r => r.map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(",")).join("\n");
+
+$("dl_series").addEventListener("click", () => {
+  if (!detail) return;
+  const s = state();
+  const rows = [["park", "country", "year", "tree_cover_loss_ha", "canopy_threshold_pct"]];
+  detail.series.filter(r => r.year >= s.ys && r.year <= s.ye)
+    .forEach(r => rows.push([detail.meta.name, detail.meta.country, r.year, r.loss_ha, detail.threshold]));
+  download(`${detail.id}_loss_${s.ys}_${s.ye}.csv`, "text/csv", csv(rows));
+});
+$("dl_table").addEventListener("click", () => {
+  if (!catalog) return;
+  const rows = [["park", "designation", "country", "iucn", "managed_by", "area_listed_ha",
+    "area_boundary_ha", "tree_cover_2000_ha_30pct", "cumulative_loss_ha", "pct_cover_lost"]];
+  catalog.parks.forEach(p => rows.push([p.name, p.designation, p.country, p.iucn, p.managed_by,
+    p.area_listed_ha, p.area_boundary_ha, p.extent_2000_ha, p.cumulative_loss_ha, p.pct_extent_lost]));
+  download("protected_forest_monitor.csv", "text/csv", csv(rows));
+});
+$("dl_geo").addEventListener("click", () => {
+  if (!detail) return;
+  download(`${detail.id}_boundary.geojson`, "application/geo+json", JSON.stringify({
+    type: "Feature", properties: { name: detail.meta.name, country: detail.meta.country,
+      source: "OpenStreetMap protected-area relation (simplified)" }, geometry: detail.boundary }));
+});
+
+// ---------- controls -> params ----------
+$("park").addEventListener("change", e => P.set("park", e.target.value));
+let yearT = null;
+function setYears(ys, ye) {
+  clearTimeout(yearT);
+  $("ysl").textContent = ys; $("yel").textContent = ye;   // instant label feedback
+  yearT = setTimeout(() => { P.set("ys", ys); P.set("ye", ye); }, 220);
+}
+$("ys").addEventListener("input", e => setYears(Math.min(+e.target.value, state().ye), state().ye));
+$("ye").addEventListener("input", e => setYears(state().ys, Math.max(+e.target.value, state().ys)));
+[["ck_tc", "tc"], ["ck_loss", "loss"], ["ck_bnd", "bnd"]].forEach(([id, k]) =>
+  $(id).addEventListener("change", e => P.set(k, e.target.checked ? "1" : "0")));
+let opT = null;
+[["op_tc", "op_tc"], ["op_loss", "op_loss"]].forEach(([id, k]) =>
+  $(id).addEventListener("input", e => {
+    $("opv_" + id.slice(3)).textContent = e.target.value + "%";
+    clearTimeout(opT); opT = setTimeout(() => P.set(k, e.target.value), 150);
+  }));
+
+// ---------- boot ----------
+(async () => {
+  // Cold stats are fetched by a detached backend process: poll until ready
+  // (instant when the disk cache is warm).
+  const t0 = Date.now();
+  for (;;) {
+    const w = await fused.runPython("./forest.py", { action: "warm" });
+    if (!w || w.ready !== false) break;
+    $("loading").textContent =
+      `Fetching GFW zonal stats (${w.done}/${w.total} parks, ${Math.round((Date.now() - t0) / 1000)}s)…`;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  $("loading").textContent = "Loading park…";
+  catalog = await fused.runPython("./forest.py", { action: "catalog" });
+  $("park").innerHTML = catalog.parks.map(p =>
+    `<option value="${p.id}">${p.name} (${p.country})</option>`).join("");
+  fused.params.onChange(() => draw());
+  await draw();
+})();
+</script>
+</body>
+</html>

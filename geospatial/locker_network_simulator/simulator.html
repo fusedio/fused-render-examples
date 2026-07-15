@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Parcel Locker Impact Simulator — Amsterdam</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --page: #0d0d0d; --surface: #1a1a19; --panel: #151514;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --hairline: #2c2c2a; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5;      /* optimized route / primary series */
+    --violet: #9085e9;      /* lockers + captured parcels */
+    --red: #e66767;         /* failed deliveries */
+    --good: #0ca30c;        /* positive deltas */
+    --baseline: #71706a;    /* dimmed baseline route */
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--page); color: var(--ink);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; overflow: hidden;
+  }
+  #side {
+    width: 372px; min-width: 372px; height: 100%; overflow-y: auto;
+    background: var(--panel); border-right: 1px solid var(--hairline);
+    padding: 18px 18px 28px; display: flex; flex-direction: column; gap: 16px;
+  }
+  #map { flex: 1; height: 100%; background: var(--page); }
+  h1 { font-size: 15px; font-weight: 650; letter-spacing: .01em; }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-badge {
+    width: 34px; height: 34px; border-radius: 8px; flex: none;
+    background: #063b8f; color: #ffd500; font-weight: 800; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; letter-spacing: .02em;
+  }
+  section { display: flex; flex-direction: column; gap: 8px; }
+  .sec-title { font-size: 11px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted); }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row label { color: var(--ink-2); }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .val { min-width: 52px; text-align: right; color: var(--ink); font-weight: 600;
+    font-variant-numeric: tabular-nums; }
+  .day-ctl { display: flex; align-items: center; gap: 8px; }
+  button {
+    background: #222220; color: var(--ink-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #2b2b29; color: var(--ink); }
+  button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+  button.primary:hover { background: #4a93ea; }
+  button:disabled { opacity: .45; cursor: default; }
+  .check { display: flex; gap: 8px; align-items: flex-start; color: var(--ink-2); cursor: pointer; }
+  .check input { margin-top: 2px; accent-color: var(--accent); }
+  .hint { color: var(--muted); font-size: 12px; }
+  .locker-item, .sugg-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  }
+  .locker-dot { width: 12px; height: 12px; border-radius: 3px; background: var(--violet); flex: none; }
+  .locker-main { flex: 1; min-width: 0; }
+  .locker-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .locker-meta { color: var(--muted); font-size: 11.5px; }
+  .x-btn { padding: 2px 8px; color: var(--muted); }
+  .x-btn:hover { color: var(--red); }
+  .sugg-item { border-style: dashed; }
+  /* KPI area */
+  .hero { background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 12px 14px; }
+  .hero .label { color: var(--muted); font-size: 12px; }
+  .hero .value { font-size: 34px; font-weight: 650; line-height: 1.15; }
+  .hero .value .unit { font-size: 16px; font-weight: 500; color: var(--ink-2); }
+  .hero .delta { color: var(--good); font-size: 12px; font-weight: 600; margin-top: 2px; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tile { background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 9px 12px; }
+  .tile .label { color: var(--muted); font-size: 11px; }
+  .tile .value { font-size: 18px; font-weight: 650; margin-top: 1px; }
+  .tile .delta { font-size: 11.5px; margin-top: 1px; color: var(--muted); }
+  .tile .delta.good { color: var(--good); font-weight: 600; }
+  table.ba { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.ba th { text-align: right; color: var(--muted); font-size: 11px; font-weight: 600;
+    padding: 3px 0; text-transform: uppercase; letter-spacing: .05em; }
+  table.ba th:first-child, table.ba td:first-child { text-align: left; color: var(--ink-2); font-weight: 400; }
+  table.ba td { text-align: right; padding: 3px 0; border-top: 1px solid var(--hairline); }
+  table.ba td.after { color: var(--ink); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; color: var(--ink-2); font-size: 11.5px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .k { width: 14px; height: 0; border-top: 3px solid; border-radius: 2px; }
+  .kd { width: 10px; height: 10px; border-radius: 50%; }
+  #status {
+    position: absolute; top: 12px; left: 388px; right: 16px; z-index: 1000;
+    display: flex; justify-content: center; pointer-events: none;
+  }
+  #status .pill {
+    background: rgba(20,20,19,.92); border: 1px solid var(--border); color: var(--ink-2);
+    border-radius: 999px; padding: 6px 16px; font-size: 12.5px; display: none;
+    align-items: center; gap: 9px;
+  }
+  #status .pill.error { color: #f1a3a3; border-color: rgba(230,103,103,.4); }
+  .spin { width: 12px; height: 12px; border: 2px solid var(--muted);
+    border-top-color: var(--accent); border-radius: 50%; animation: sp 0.8s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  /* map markers */
+  .pmark { border-radius: 50%; background: #3c3c39; border: 1.5px solid #55554f;
+    color: #d8d7cd; font: 600 9px/16px system-ui, sans-serif; text-align: center; }
+  .pmark.failed { border-color: var(--red); color: #f0b6b6; }
+  .pmark.captured { background: #2c2653; border-color: var(--violet); color: #cdc7f5; }
+  .lmark { background: var(--violet); color: #17133a; border-radius: 5px;
+    font: 800 10px/20px system-ui, sans-serif; text-align: center;
+    box-shadow: 0 0 0 2px #1a1a19; }
+  .lmark.ghost { background: transparent; color: var(--violet);
+    border: 2px dashed var(--violet); line-height: 17px; box-shadow: none; cursor: pointer; }
+  .dmark { background: #063b8f; color: #ffd500; border-radius: 6px;
+    font: 800 11px/22px system-ui, sans-serif; text-align: center;
+    box-shadow: 0 0 0 2px #1a1a19; }
+  .leaflet-container { background: #0d0d0d; font: inherit; }
+  .leaflet-tooltip { background: #222220; color: var(--ink-2); border: 1px solid var(--border);
+    box-shadow: none; font-size: 12px; }
+  .leaflet-tooltip-top:before { border-top-color: #222220; }
+  .empty-kpi { color: var(--muted); font-size: 12.5px; background: var(--surface);
+    border: 1px dashed var(--hairline); border-radius: 10px; padding: 12px 14px; }
+</style>
+</head>
+<body>
+<div id="side">
+  <div class="brand">
+    <div class="brand-badge">NW</div>
+    <div>
+      <h1>Locker Impact Simulator</h1>
+      <div class="sub">Amsterdam West · depot tour, one delivery day</div>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-title">Delivery day</div>
+    <div class="day-ctl">
+      <button id="prevDay">◀</button>
+      <div class="val" id="dayLabel" style="min-width:70px;text-align:center"></div>
+      <button id="nextDay">▶</button>
+      <div class="hint" id="dayStats" style="margin-left:auto"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-title">Locker rules</div>
+    <div class="row">
+      <label>Capture radius</label>
+      <input id="radius" type="range" min="200" max="800" step="50">
+      <div class="val" id="radiusVal"></div>
+    </div>
+    <label class="check">
+      <input id="emailOnly" type="checkbox">
+      <span>Only redirect parcels whose recipient has a valid e-mail
+        <span class="hint">(needed to notify them of the locker drop)</span></span>
+    </label>
+  </section>
+
+  <section>
+    <div class="sec-title">Lockers</div>
+    <div id="lockerList" style="display:flex;flex-direction:column;gap:6px"></div>
+    <div class="hint" id="placeHint">Click anywhere on the map to place a hypothetical locker.</div>
+    <div class="row">
+      <button id="suggestBtn" class="primary">Suggest next locker site</button>
+      <button id="clearBtn">Clear all</button>
+    </div>
+    <div id="suggList" style="display:flex;flex-direction:column;gap:6px"></div>
+  </section>
+
+  <section id="kpiSection">
+    <div class="sec-title">Route impact</div>
+    <div id="kpis"></div>
+  </section>
+
+  <section>
+    <div class="sec-title">Legend</div>
+    <div class="legend">
+      <span><i class="k" style="border-color:#a3a196;border-top-style:dashed"></i>baseline tour</span>
+      <span><i class="k" style="border-color:var(--accent)"></i>optimized tour</span>
+      <span><i class="kd" style="background:#3c3c39;border:1.5px solid #55554f"></i>home stop</span>
+      <span><i class="kd" style="background:#3c3c39;border:1.5px solid var(--red)"></i>failed attempt</span>
+      <span><i class="kd" style="background:#2c2653;border:1.5px solid var(--violet)"></i>redirected to locker</span>
+      <span><i class="kd" style="background:var(--violet);border-radius:3px"></i>locker</span>
+    </div>
+    <div class="hint">Parcels sampled from real Overture Maps addresses; tours solved on the
+      real road network (OSRM). Share this URL — it reproduces the exact scenario.</div>
+  </section>
+</div>
+
+<div id="map"></div>
+<div id="status"><div class="pill" id="statusPill"><span class="spin" id="statusSpin"></span><span id="statusText"></span></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+// ---------- params (URL is the state) ----------
+const P = {
+  seed:   () => fused.params.get("seed")   || "7",
+  radius: () => fused.params.get("radius") || "400",
+  email:  () => (fused.params.get("email") || "0") === "1",
+  lockers:() => fused.params.get("lockers") || "",
+};
+function setParams(obj) {           // batch: draw is debounced by scheduleDraw
+  for (const [k, v] of Object.entries(obj)) fused.params.set(k, String(v));
+}
+
+// ---------- map ----------
+const map = L.map("map", { zoomControl: true }).setView([52.375, 4.855], 14);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: "abcd", maxZoom: 19,
+}).addTo(map);
+const layers = {
+  baseline: L.layerGroup().addTo(map),
+  optimized: L.layerGroup().addTo(map),
+  links: L.layerGroup().addTo(map),
+  parcels: L.layerGroup().addTo(map),
+  lockers: L.layerGroup().addTo(map),
+  suggestions: L.layerGroup().addTo(map),
+};
+
+// polyline5 decoder
+function decodePolyline(str) {
+  let i = 0, lat = 0, lon = 0; const out = [];
+  while (i < str.length) {
+    for (const which of [0, 1]) {
+      let shift = 0, result = 0, b;
+      do { b = str.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      const d = (result & 1) ? ~(result >> 1) : (result >> 1);
+      if (which === 0) lat += d; else lon += d;
+    }
+    out.push([lat / 1e5, lon / 1e5]);
+  }
+  return out;
+}
+
+// ---------- status pill ----------
+const pill = document.getElementById("statusPill");
+const statusText = document.getElementById("statusText");
+const statusSpin = document.getElementById("statusSpin");
+function showStatus(msg, isError) {
+  pill.style.display = "flex";
+  pill.classList.toggle("error", !!isError);
+  statusSpin.style.display = isError ? "none" : "";
+  statusText.textContent = msg;
+}
+function hideStatus() { pill.style.display = "none"; }
+
+// ---------- rendering ----------
+const fmt = (n, d = 1) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: 0 });
+const fmtMin = (m) => m >= 60 ? `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, "0")} m` : `${Math.round(m)} min`;
+let lastResult = null;
+let didFitBounds = false;
+
+function parcelIcon(p) {
+  const cls = "pmark" + (p.captured_by !== null ? " captured" : p.status === "failed" ? " failed" : "");
+  return L.divIcon({ className: cls, html: String(p.seq ?? ""), iconSize: [19, 19] });
+}
+
+function renderMap(r) {
+  Object.values(layers).forEach(g => g.clearLayers());
+  // routes
+  const base = decodePolyline(r.baseline.polyline);
+  if (r.optimized) {
+    // dimmed, dashed "before" under the highlighted "after"
+    L.polyline(base, { color: "#a3a196", weight: 2.5, opacity: 0.55, dashArray: "5 7" })
+      .addTo(layers.baseline);
+    L.polyline(decodePolyline(r.optimized.polyline),
+      { color: getCss("--accent"), weight: 4, opacity: 0.95 }).addTo(layers.optimized);
+  } else {
+    L.polyline(base, { color: "#a3a196", weight: 3, opacity: 0.85 }).addTo(layers.baseline);
+  }
+  // depot
+  L.marker([r.depot.lat, r.depot.lon], {
+    icon: L.divIcon({ className: "dmark", html: "D", iconSize: [22, 22] }), zIndexOffset: 900,
+  }).bindTooltip(r.depot.name).addTo(layers.lockers);
+  // lockers + radius circles
+  const active = r.lockers;
+  active.forEach((lk, i) => {
+    L.circle([lk.lat, lk.lon], { radius: r.rule.radius_m, color: getCss("--violet"),
+      weight: 1, opacity: 0.5, fillColor: getCss("--violet"), fillOpacity: 0.07 }).addTo(layers.lockers);
+    L.marker([lk.lat, lk.lon], {
+      icon: L.divIcon({ className: "lmark", html: lk.label, iconSize: [21, 21] }), zIndexOffset: 1000,
+    }).bindTooltip(`<b>${lk.label}</b>${lk.host ? " · at " + lk.host : ""}<br>` +
+      `${lk.captured} parcel${lk.captured === 1 ? "" : "s"} captured`, { sticky: true })
+      .addTo(layers.lockers);
+  });
+  // parcels + capture links
+  for (const p of r.parcels) {
+    if (p.captured_by !== null) {
+      const lk = r.lockers[p.captured_by];
+      L.polyline([[p.lat, p.lon], [lk.lat, lk.lon]],
+        { color: getCss("--violet"), weight: 1, opacity: 0.5, dashArray: "3 4" }).addTo(layers.links);
+    }
+    L.marker([p.lat, p.lon], { icon: parcelIcon(p), zIndexOffset: 100 })
+      .bindTooltip(
+        `<b>${p.id}</b> · stop #${p.seq}<br>${p.addr}<br>` +
+        `${p.status === "failed" ? "❌ failed first attempt" : "✅ delivered"} · ${p.weight_kg} kg<br>` +
+        `e-mail on file: ${p.has_email ? "yes" : "no"}` +
+        (p.captured_by !== null ? `<br><b>→ redirected to ${r.lockers[p.captured_by].label}</b>` : ""),
+        { sticky: true })
+      .addTo(layers.parcels);
+  }
+  if (!didFitBounds) {
+    const pts = r.parcels.map(p => [p.lat, p.lon]).concat([[r.depot.lat, r.depot.lon]]);
+    map.fitBounds(L.latLngBounds(pts).pad(0.06));
+    didFitBounds = true;
+  }
+}
+function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function renderSidebar(r) {
+  document.getElementById("dayLabel").textContent = "Day " + r.seed;
+  document.getElementById("dayStats").textContent =
+    `${r.parcels.length} parcels · ${r.baseline.failed} failed`;
+  document.getElementById("radiusVal").textContent = r.rule.radius_m + " m";
+
+  // locker list
+  const list = document.getElementById("lockerList");
+  list.innerHTML = "";
+  r.lockers.forEach((lk, i) => {
+    const el = document.createElement("div");
+    el.className = "locker-item";
+    el.innerHTML = `<div class="locker-dot"></div>
+      <div class="locker-main">
+        <div class="locker-name">${lk.label}${lk.host ? " · " + lk.host : ""}</div>
+        <div class="locker-meta">${lk.captured} parcel${lk.captured === 1 ? "" : "s"} captured within ${r.rule.radius_m} m</div>
+      </div>
+      <button class="x-btn" title="Remove locker">✕</button>`;
+    el.querySelector(".x-btn").onclick = () => removeLocker(i);
+    list.appendChild(el);
+  });
+  document.getElementById("placeHint").style.display = r.lockers.length ? "none" : "";
+
+  // KPIs
+  const k = document.getElementById("kpis");
+  if (!r.optimized) {
+    const msg = r.lockers.length
+      ? "No parcels captured — widen the radius or move the locker closer to the tour."
+      : "Place a locker (or use “Suggest”) to simulate the reroute.";
+    k.innerHTML = `<div class="empty-kpi">${msg}</div>
+      <table class="ba" style="margin-top:10px">
+        <tr><th></th><th>Baseline</th></tr>
+        <tr><td>Driven distance</td><td>${fmt(r.baseline.distance_km)} km</td></tr>
+        <tr><td>Tour time (drive + stops)</td><td>${fmtMin(r.baseline.total_min)}</td></tr>
+        <tr><td>Stops</td><td>${r.baseline.stops}</td></tr>
+        <tr><td>Parcels delivered</td><td>${r.baseline.delivered} / ${r.parcels.length}</td></tr>
+        <tr><td>Productivity</td><td>${fmt(10 * r.baseline.delivered / r.baseline.total_min, 2)} parcels / 10 min</td></tr>
+      </table>`;
+    return;
+  }
+  const b = r.baseline, o = r.optimized, kp = r.kpis;
+  k.innerHTML = `
+    <div class="hero">
+      <div class="label">Time saved on this tour</div>
+      <div class="value">${fmt(kp.time_saved_min, 0)} <span class="unit">min</span></div>
+      <div class="delta">≈ capacity for ${kp.extra_capacity} more parcels with the same truck</div>
+    </div>
+    <div class="tiles" style="margin-top:8px">
+      <div class="tile"><div class="label">Parcels redirected</div>
+        <div class="value">${kp.redirected}</div>
+        <div class="delta good">${kp.failed_avoided ? kp.failed_avoided + " failed attempt" + (kp.failed_avoided > 1 ? "s" : "") + " avoided" : "one locker stop replaces them"}</div></div>
+      <div class="tile"><div class="label">Distance saved</div>
+        <div class="value">${fmt(kp.distance_saved_km)} km</div>
+        <div class="delta good">−${fmt(100 * kp.distance_saved_km / b.distance_km, 1)}% driven</div></div>
+      <div class="tile"><div class="label">Stops</div>
+        <div class="value">${o.stops}</div>
+        <div class="delta good">−${kp.stops_removed} vs baseline</div></div>
+      <div class="tile"><div class="label">Productivity</div>
+        <div class="value">${fmt(kp.productivity_after, 2)}</div>
+        <div class="delta good">was ${fmt(kp.productivity_before, 2)} parcels / 10 min</div></div>
+    </div>
+    <table class="ba" style="margin-top:10px">
+      <tr><th></th><th>Baseline</th><th>With lockers</th></tr>
+      <tr><td>Driven distance</td><td>${fmt(b.distance_km)} km</td><td class="after">${fmt(o.distance_km)} km</td></tr>
+      <tr><td>Drive time</td><td>${fmtMin(b.drive_min)}</td><td class="after">${fmtMin(o.drive_min)}</td></tr>
+      <tr><td>Stop time</td><td>${fmtMin(b.service_min)}</td><td class="after">${fmtMin(o.service_min)}</td></tr>
+      <tr><td>Tour time</td><td>${fmtMin(b.total_min)}</td><td class="after">${fmtMin(o.total_min)}</td></tr>
+      <tr><td>Stops</td><td>${b.stops}</td><td class="after">${o.stops}</td></tr>
+      <tr><td>Parcels delivered</td><td>${b.delivered}</td><td class="after">${o.delivered}</td></tr>
+    </table>`;
+}
+
+// ---------- suggestions ----------
+let suggestions = [];
+function renderSuggestions() {
+  layers.suggestions.clearLayers();
+  const box = document.getElementById("suggList");
+  box.innerHTML = "";
+  if (suggestions.length) {
+    const all = document.createElement("button");
+    all.className = "primary";
+    all.style.cssText = "width:100%;margin-bottom:6px";
+    all.textContent = suggestions.length > 1
+      ? `✓ Apply all ${suggestions.length} proposals` : "✓ Apply proposal";
+    all.title = "Add every proposed site and re-run the simulation to see the impact";
+    all.onclick = applyAllSuggestions;
+    box.appendChild(all);
+  }
+  suggestions.forEach((s) => {
+    L.marker([s.lat, s.lon], {
+      icon: L.divIcon({ className: "lmark ghost", html: "+", iconSize: [21, 21] }), zIndexOffset: 950,
+    }).bindTooltip(`<b>${s.name}</b><br>would capture ~${s.captures} parcels — click to apply`)
+      .on("click", () => addLocker(s.lat, s.lon))
+      .addTo(layers.suggestions);
+    const el = document.createElement("div");
+    el.className = "sugg-item";
+    el.innerHTML = `<div class="locker-dot" style="background:transparent;border:2px dashed var(--violet)"></div>
+      <div class="locker-main">
+        <div class="locker-name">${s.name}</div>
+        <div class="locker-meta">${s.category.replace(/_/g, " ")} · ~${s.captures} parcels in range</div>
+      </div>
+      <button>Apply</button>`;
+    el.querySelector("button").onclick = () => addLocker(s.lat, s.lon);
+    box.appendChild(el);
+  });
+}
+function applyAllSuggestions() {
+  const arr = lockersArr();
+  suggestions.forEach((s) => arr.push(`${s.lat.toFixed(5)},${s.lon.toFixed(5)}`));
+  clearSuggestions();
+  setParams({ lockers: arr.join(";") });   // one param write -> one re-simulation
+}
+function clearSuggestions() { suggestions = []; renderSuggestions(); }
+
+// ---------- state mutations ----------
+function lockersArr() { return P.lockers() ? P.lockers().split(";").filter(Boolean) : []; }
+function addLocker(lat, lon) {
+  clearSuggestions();
+  const arr = lockersArr();
+  arr.push(`${lat.toFixed(5)},${lon.toFixed(5)}`);
+  setParams({ lockers: arr.join(";") });
+}
+function removeLocker(i) {
+  clearSuggestions();
+  const arr = lockersArr();
+  arr.splice(i, 1);
+  setParams({ lockers: arr.join(";") });
+}
+map.on("click", (e) => addLocker(e.latlng.lat, e.latlng.lng));
+
+// ---------- controls ----------
+const radiusEl = document.getElementById("radius");
+const emailEl = document.getElementById("emailOnly");
+let radiusTimer = null;
+radiusEl.addEventListener("input", () => {
+  document.getElementById("radiusVal").textContent = radiusEl.value + " m";
+  clearTimeout(radiusTimer);
+  radiusTimer = setTimeout(() => setParams({ radius: radiusEl.value }), 300);
+});
+emailEl.addEventListener("change", () => setParams({ email: emailEl.checked ? "1" : "0" }));
+document.getElementById("prevDay").onclick = () => { clearSuggestions(); setParams({ seed: String(Math.max(1, +P.seed() - 1)) }); };
+document.getElementById("nextDay").onclick = () => { clearSuggestions(); setParams({ seed: String(+P.seed() + 1) }); };
+document.getElementById("clearBtn").onclick = () => { clearSuggestions(); setParams({ lockers: "" }); };
+document.getElementById("suggestBtn").onclick = async () => {
+  const btn = document.getElementById("suggestBtn");
+  btn.disabled = true;
+  showStatus("Scoring shop & supermarket sites…");
+  try {
+    const res = await fused.runPython("./suggest.py", {
+      seed: P.seed(), lockers: P.lockers(), radius_m: P.radius(),
+      email_only: P.email() ? "true" : "false",
+    });
+    suggestions = res.suggestions;
+    renderSuggestions();
+    hideStatus();
+    if (!suggestions.length) showStatus("No candidate sites capture any remaining parcels.", true);
+  } catch (err) {
+    showStatus("Suggestion failed: " + err.message, true);
+  } finally { btn.disabled = false; }
+};
+
+// ---------- main draw loop ----------
+let reqId = 0, warmed = false, drawTimer = null;
+async function draw() {
+  const my = ++reqId;
+  // reflect URL state into controls
+  radiusEl.value = P.radius();
+  document.getElementById("radiusVal").textContent = P.radius() + " m";
+  emailEl.checked = P.email();
+  document.getElementById("dayLabel").textContent = "Day " + P.seed();
+  try {
+    if (!warmed) {
+      // Cold Overture scan runs in a detached backend process; poll until ready.
+      const t0 = Date.now();
+      for (;;) {
+        const w = await fused.runPython("./tour_data.py", { seed: P.seed() });
+        if (my !== reqId) return;
+        if (!w || w.ready !== false) break;
+        showStatus(`Loading real Amsterdam addresses from Overture (${Math.round((Date.now() - t0) / 1000)}s)…`);
+        await new Promise((r) => setTimeout(r, 2000));
+        if (my !== reqId) return;
+      }
+      warmed = true;
+    }
+    showStatus(P.lockers() ? "Re-solving the tour on the road network…" : "Solving the baseline tour…");
+    const r = await fused.runPython("./simulate.py", {
+      seed: P.seed(), lockers: P.lockers(), radius_m: P.radius(),
+      email_only: P.email() ? "true" : "false",
+    });
+    if (my !== reqId) return;
+    lastResult = r;
+    renderMap(r);
+    renderSidebar(r);
+    hideStatus();
+  } catch (err) {
+    if (my !== reqId) return;
+    showStatus((err.type ? err.type + ": " : "") + err.message, true);
+    console.error(err.traceback || err);
+  }
+}
+function scheduleDraw() { clearTimeout(drawTimer); drawTimer = setTimeout(draw, 40); }
+fused.params.onChange(scheduleDraw);
+draw();
+</script>
+</body>
+</html>
