@@ -16,7 +16,7 @@ interactive treemap over the result. Defaults to `~/Desktop`.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `disk.html`. Point it
+Copy this folder into your Fused Render install and open `index.html`. Point it
 at any directory.
 
 ## Files
@@ -24,4 +24,4 @@ at any directory.
 | File | Role |
 |---|---|
 | `disk.py` | `scan` (directory sizes), `preview` (file metadata), `trash` (guarded move to `~/.Trash`) |
-| `disk.html` | Zoomable treemap UI over the scan result |
+| `index.html` | Zoomable treemap UI over the scan result |

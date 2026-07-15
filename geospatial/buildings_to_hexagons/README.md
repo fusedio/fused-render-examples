@@ -15,7 +15,7 @@ the summarization costs you.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `explainer.html`. The
+Copy this folder into your Fused Render install and open `index.html`. The
 `data/` folder ships the pre-computed hex tiles; `h3_ingest.py` shows how they
 were built from Overture building footprints.
 
@@ -23,6 +23,6 @@ were built from Overture building footprints.
 
 | File | Role |
 |---|---|
-| `explainer.html` | The step-driven interactive story |
+| `index.html` | The step-driven interactive story |
 | `h3_ingest.py` | Aggregates Overture buildings into H3 hexes (how `data/` was made) |
 | `data/` | Pre-computed hex tiles for several cities + the world |

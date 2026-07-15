@@ -13,7 +13,7 @@ ACS), all fused inside one reachability polygon and rendered as hexes + charts.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `dashboard.html`.
+Copy this folder into your Fused Render install and open `index.html`.
 Needs two free API keys — copy `.env.example` to `.env` and fill in:
 - `ORS_API_KEY` — [openrouteservice.org](https://openrouteservice.org/dev)
 - `CENSUS_API_KEY` — [api.census.gov](https://api.census.gov/data/key_signup.html)
@@ -26,4 +26,4 @@ Needs two free API keys — copy `.env.example` to `.env` and fill in:
 | `poi_panel.py` | Overture POIs inside the isochrone → H3 counts |
 | `census_panel.py` | Census ACS income per hex |
 | `_common.py` | Shared caching, DuckDB/H3, key loading, warm-up daemon |
-| `dashboard.html` | Map + KPIs + charts |
+| `index.html` | Map + KPIs + charts |

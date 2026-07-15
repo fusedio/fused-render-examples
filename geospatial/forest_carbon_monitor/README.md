@@ -16,7 +16,7 @@ client-side by year.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `dashboard.html`. No
+Copy this folder into your Fused Render install and open `index.html`. No
 keys required (GFW's public frontend key is embedded). First load fetches zonal
 stats for six parks via a detached warmer; then cached.
 
@@ -25,5 +25,5 @@ stats for six parks via a detached warmer; then cached.
 | File | Role |
 |---|---|
 | `forest.py` | GFW zonal queries per boundary + warm-up daemon |
-| `dashboard.html` | MapLibre loss/cover tiles + KPIs + annual-loss chart |
+| `index.html` | MapLibre loss/cover tiles + KPIs + annual-loss chart |
 | `boundaries/` | Six park boundaries (OSM, simplified GeoJSON) |

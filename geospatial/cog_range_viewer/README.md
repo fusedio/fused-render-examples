@@ -15,11 +15,11 @@ zoom.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `viewer.html`.
+Copy this folder into your Fused Render install and open `index.html`.
 
 ## Files
 
 | File | Role |
 |---|---|
 | `range_server.py` | Local proxy that forwards HTTP `Range` requests to the remote COG |
-| `viewer.html` | Tile viewer that decodes COG tiles and visualizes the range reads |
+| `index.html` | Tile viewer that decodes COG tiles and visualizes the range reads |

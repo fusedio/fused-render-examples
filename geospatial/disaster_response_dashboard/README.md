@@ -15,7 +15,7 @@ MapLibre map. Built on the Maxar Open Data program (Hurricane Melissa, Oct 2025)
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `dashboard.html`. No
+Copy this folder into your Fused Render install and open `index.html`. No
 keys required — all sources are public. First load crawls the imagery STAC via a
 resumable, budget-bounded poll; then cached.
 
@@ -24,4 +24,4 @@ resumable, budget-bounded poll; then cached.
 | File | Role |
 |---|---|
 | `disaster_data.py` | STAC crawl + track + AOI fusion, resumable poll protocol |
-| `dashboard.html` | MapLibre imagery/track/buildings layers + timeline |
+| `index.html` | MapLibre imagery/track/buildings layers + timeline |

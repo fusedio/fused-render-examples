@@ -16,7 +16,7 @@ responsive desktop-app feel from a single `.py` + `.html`.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `pytop.html`. Nothing
+Copy this folder into your Fused Render install and open `index.html`. Nothing
 to configure.
 
 ## Files
@@ -24,4 +24,4 @@ to configure.
 | File | Role |
 |---|---|
 | `pytop.py` | `action=stats` returns CPU/mem/process snapshot; `action=kill` terminates a PID |
-| `pytop.html` | Meters + process table, polls `pytop.py` on an interval |
+| `index.html` | Meters + process table, polls `pytop.py` on an interval |

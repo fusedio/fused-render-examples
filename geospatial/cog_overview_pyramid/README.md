@@ -21,7 +21,7 @@ it works the moment you open it; point it at your own `.tif` via the path box.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `pyramid.html`. It
+Copy this folder into your Fused Render install and open `index.html`. It
 builds a small raster environment (rasterio / rio-cogeo / tifffile) on first run
 via [`uv`](https://astral.sh/uv), so make sure `uv` is installed.
 
@@ -30,6 +30,6 @@ via [`uv`](https://astral.sh/uv), so make sure `uv` is installed.
 | File | Role |
 |---|---|
 | `overview_pyramid.py` | Reads a GeoTIFF's levels; analyze / build-overviews / cogify |
-| `pyramid.html` | 3D pyramid view, per-level stats, and a map tab |
+| `index.html` | 3D pyramid view, per-level stats, and a map tab |
 | `tile_server.py` + `_tiff_core.py` / `tiff_reader.py` / `_raster_common.py` | Bundled tile daemon powering the "On the map" tab |
 | `sample_satellite_cog.tif` | 1.1 MB demo COG (Maxar Open Data, Manila) |

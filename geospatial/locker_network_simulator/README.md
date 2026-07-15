@@ -16,7 +16,7 @@ captured stops removed. Fully fictional scenario, real data and routing.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `simulator.html`. First
+Copy this folder into your Fused Render install and open `index.html`. First
 run fetches Amsterdam addresses from Overture via a detached warmer (~30 s), then
 routing is cached.
 
@@ -28,4 +28,4 @@ routing is cached.
 | `suggest.py` | Greedy next-best locker site from real shop locations |
 | `tour_data.py` | Overture address/shop warm-up daemon |
 | `_common.py` | OSRM matrices, TSP heuristics, caching |
-| `simulator.html` | Map, controls, before/after KPIs |
+| `index.html` | Map, controls, before/after KPIs |

@@ -15,7 +15,7 @@ Python round-trips.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `dashboard.html`. Needs
+Copy this folder into your Fused Render install and open `index.html`. Needs
 a free `CENSUS_API_KEY` — copy `.env.example` to `.env`
 ([get one here](https://api.census.gov/data/key_signup.html)). First load per
 city fetches the data via a detached warmer; then it's cached.
@@ -25,4 +25,4 @@ city fetches the data via a detached warmer; then it's cached.
 | File | Role |
 |---|---|
 | `site_data.py` | Tracts + demographics + competitor POIs + warm-up daemon |
-| `dashboard.html` | Choropleth + weighted scoring UI |
+| `index.html` | Choropleth + weighted scoring UI |

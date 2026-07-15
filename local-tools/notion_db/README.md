@@ -17,7 +17,7 @@ tables (`tasks`, `ideas`) so the UI opens ready to use.
 
 ## Run it
 
-Copy this folder into your Fused Render install and open `tasks.html`.
+Copy this folder into your Fused Render install and open `index.html`.
 
 ## Files
 
@@ -26,5 +26,5 @@ Copy this folder into your Fused Render install and open `tasks.html`.
 | `tasks_db.py` | Bridge entrypoint the UI calls (list/create/update rows and tables) |
 | `lake.py` | The Parquet snapshot lake (each write = a new full-state file) |
 | `lakectl.py` | CLI over the same lake |
-| `tasks.html` | Notion-style task/doc UI |
+| `index.html` | Notion-style task/doc UI |
 | `lake/` | Seed Parquet tables |
