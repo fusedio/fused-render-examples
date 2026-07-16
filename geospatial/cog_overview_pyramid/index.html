@@ -242,10 +242,14 @@ window.addEventListener("error", (e) => {
 });
 const SELF_PATH = new URLSearchParams(location.search).get("path") || "";
 const PAGE_DIR = SELF_PATH ? SELF_PATH.replace(/[^/]+$/, "") : "";
-const READER = PAGE_DIR ? PAGE_DIR + "overview_pyramid.py" : "./overview_pyramid.py";
-// map-tab tile daemon, bundled alongside this example
-const TILE_SERVER = PAGE_DIR ? PAGE_DIR + "tile_server.py" : "./tile_server.py";
-// the sample COG shipped with this example (a real Maxar scene, 6 pyramid levels)
+// runPython targets are page-relative literals ("./overview_pyramid.py" for the
+// reader, "./tile_server.py" for the map-tab tile daemon) passed inline at each
+// call: the hosted exporter derives a served route from the literal and can't
+// follow a variable (fused-render EXPORT.md), and locally the server resolves
+// them relative to this page. The sample COG shipped with this example (a real
+// Maxar scene, 6 pyramid levels) stays absolute — it's handed to the shared,
+// long-lived tile daemon whose CWD is fixed at first spawn, so an absolute path
+// stays unambiguous across pages.
 const DEMO = PAGE_DIR ? PAGE_DIR + "sample_satellite_cog.tif" : "./sample_satellite_cog.tif";
 const $ = (id) => document.getElementById(id);
 const setStatus = (m, err) => { $("status").textContent = m; $("status").className = err ? "err" : ""; };
@@ -294,7 +298,7 @@ async function analyze(file) {
   if (!file) { setStatus("no file — paste a path above", true); return; }
   setStatus("reading levels… (first run installs rasterio)");
   let res;
-  try { res = await fused.runPython(READER, { file }); }
+  try { res = await fused.runPython("./overview_pyramid.py", { file }); }
   catch (e) { showError("reader failed: " + (e.message || e)); return; }
   if (res.error) { showError(res.error); return; }
   R = res; sel = 0;
@@ -575,12 +579,10 @@ const cmp = { inited: false, A: null, B: null, la: 0, lb: 0, auto: true, port: n
 async function ensureTileDaemon() {
   if (cmp.port !== null) return cmp.port;
   cmp.port = 0;
-  if (TILE_SERVER) {
-    try {
-      const r = await fused.runPython(TILE_SERVER, { action: "ensure" });
-      if (r && r.port) cmp.port = r.port;
-    } catch (e) { /* fall back to thumbnails */ }
-  }
+  try {
+    const r = await fused.runPython("./tile_server.py", { action: "ensure" });
+    if (r && r.port) cmp.port = r.port;
+  } catch (e) { /* fall back to thumbnails */ }
   return cmp.port;
 }
 
@@ -820,12 +822,12 @@ $("jm-hide").addEventListener("click", () => { jm.hidden = true; jm.close(); });
 // launch a detached reader job (build/cogify escape the app's 30s budget) and
 // poll its status file until it reports done
 async function runJob(params, onProgress) {
-  const r = await fused.runPython(READER, params);
+  const r = await fused.runPython("./overview_pyramid.py", params);
   if (r.error) throw new Error(r.error);
   if (!r.started) return r;
   for (;;) {
     await new Promise(res => setTimeout(res, 2000));
-    const st = await fused.runPython(READER,
+    const st = await fused.runPython("./overview_pyramid.py",
       { file: params.file, action: "status", out: r.status_key });
     if (st.state === "done") return st;
     if (st.state === "error" || st.error) throw new Error(st.error || "job failed");
@@ -869,7 +871,7 @@ function wireFixPanel() {
 
   async function loadPredict() {
     try {
-      const p = await fused.runPython(READER, { file: R.file, action: "predict" });
+      const p = await fused.runPython("./overview_pyramid.py", { file: R.file, action: "predict" });
       if (p.error) throw new Error(p.error);
       window.__predict = p;
       $("predict-out").innerHTML = `<table class="kv">` + p.rows.map(row => `
