@@ -21,10 +21,35 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
+
+
+def _is_hosted() -> bool:
+    """True on the hosted serve runtime (which injects the `openfused` shim);
+    locally the example runs in its own uv script-venv where it's absent. Same
+    probe cog_overview_pyramid/overview_pyramid.py uses."""
+    try:
+        import openfused  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+_HOSTED = _is_hosted()
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see warm.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-zonal-stats-hex-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 CENSUS = (
     "s3://us-west-2.opendata.source.coop/fused/hex/"
@@ -211,6 +236,14 @@ def _spawn_warmer(region: str):
 def warm(region: str, kind: str):
     fn = fetch_pop if kind == "pop" else fetch_elev
     if os.path.exists(fn.cache_path(region)):
+        return {"ready": True}
+
+    if _HOSTED:
+        # No detached daemon or cross-call cache hosted (per-call subprocess
+        # isolation, read-only bundle). Skip the background warmer and report
+        # ready — the step="view" call runs fetch_pop/fetch_elev inline within
+        # the larger hosted budget (the local ~30s bridge is the only reason the
+        # daemon exists).
         return {"ready": True}
 
     lock, err = _warmer_paths(region)

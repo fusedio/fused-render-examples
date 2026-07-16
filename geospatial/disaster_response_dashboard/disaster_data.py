@@ -39,11 +39,36 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE = os.path.join(_HERE, ".cache")
+
+
+def _is_hosted() -> bool:
+    """True on the hosted serve runtime (which injects the `openfused` shim);
+    locally the example runs in its own uv script-venv where it's absent. Same
+    probe cog_overview_pyramid/overview_pyramid.py uses."""
+    try:
+        import openfused  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+_HOSTED = _is_hosted()
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), which is why the resumable poll loop is collapsed to a
+# single call hosted; see main().
+_CACHE = (
+    os.path.join(tempfile.gettempdir(), "fr-disaster-response-dashboard-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 CATALOG_URL = "https://maxar-opendata.s3.amazonaws.com/events/{event}/collection.json"
 IBTRACS_CSV = (
@@ -56,6 +81,11 @@ IBTRACS_CSV = (
 # at 6 s so the worst-case tail (budget + one in-flight task of 2 requests)
 # stays under the timeout even on a cold cache.
 TIME_BUDGET_S = 14.0
+# Hosted has no cross-call cache (per-call isolation), so the resumable poll
+# strategy can't accumulate — the fan-out must finish in ONE call. The hosted
+# per-call budget is far larger than the local 30 s bridge (Lambda-class), so
+# run the whole fan-out inline. Kept comfortably under a 300 s Lambda timeout.
+HOSTED_BUDGET_S = 240.0
 REQ_TIMEOUT_S = 6
 POOL_WORKERS = 24
 
@@ -393,7 +423,9 @@ def _assemble(rows, track, event_name):
 
 
 def main(event_name: str = "Hurricane-Melissa-Oct-2025") -> dict:
-    deadline = time.monotonic() + TIME_BUDGET_S
+    # Hosted: one long call (no cross-call cache to resume from). Local: the 14 s
+    # per-poll budget with the page polling until complete.
+    deadline = time.monotonic() + (HOSTED_BUDGET_S if _HOSTED else TIME_BUDGET_S)
 
     track = _track()  # disk-cached after the first successful poll
 

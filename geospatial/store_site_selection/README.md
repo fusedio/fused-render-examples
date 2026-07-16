@@ -26,3 +26,19 @@ city fetches the data via a detached warmer; then it's cached.
 |---|---|
 | `site_data.py` | Tracts + demographics + competitor POIs + warm-up daemon |
 | `index.html` | Choropleth + weighted scoring UI |
+
+## Deploying (hosted)
+
+This page can be deployed. Hosted there is no local filesystem and per-call
+subprocess isolation, so the background warm-up daemon can't work.
+`site_data.py` detects the hosted runtime (the `openfused` shim is present only
+when served) and **skips the daemon**, computing the city fetch (TIGERweb tracts
++ ACS demand + Overture Places) inline in a single, longer call. Local behaviour
+is unchanged.
+
+Requirements:
+- **Provision `CENSUS_API_KEY` as a hosted secret** — this is *required*: the ACS
+  demand call 401s without it (locally it is read from a sibling `.env`).
+- **Allow outbound HTTPS** to `tigerweb.geo.census.gov`, `api.census.gov`, and
+  Overture Places S3 (`us-west-2`, via DuckDB `httpfs`). Confirm the per-call
+  timeout accommodates the cold fetch.

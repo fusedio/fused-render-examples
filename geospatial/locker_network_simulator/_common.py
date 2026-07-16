@@ -22,12 +22,37 @@ import math
 import os
 import random
 import sys
+import tempfile
 
 import requests
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
+
+
+def _is_hosted() -> bool:
+    """True on the hosted serve runtime (which injects the `openfused` shim);
+    locally the example runs in its own uv script-venv where it's absent. Same
+    probe cog_overview_pyramid/overview_pyramid.py uses."""
+    try:
+        import openfused  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+_HOSTED = _is_hosted()
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see warm_via_daemon.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-locker-network-simulator-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 UA = {"User-Agent": "fused-render-locker-network-simulator/1.0"}
 OSRM = "https://router.project-osrm.org"
@@ -83,10 +108,20 @@ def warm_via_daemon(tag: str, target_paths, code: str):
     Spawns a DETACHED process running `code` (which fills the disk cache) and
     returns {"ready": False} until every path in target_paths exists. The page
     polls this every couple of seconds.
+
+    Hosted there is no daemon: a detached warmer can't outlive the call and its
+    cache wouldn't survive per-call isolation, so this returns ready immediately
+    and the caller's data step computes the same @disk_cache work inline.
     """
     import subprocess
 
     if all(os.path.exists(p) for p in target_paths):
+        return {"ready": True}
+
+    if _HOSTED:
+        # Skip the background warmer entirely (see docstring); the local ~30s
+        # bridge budget is the only reason it exists, and the hosted budget fits
+        # the cold fetch inline.
         return {"ready": True}
 
     os.makedirs(_CACHE_DIR, exist_ok=True)

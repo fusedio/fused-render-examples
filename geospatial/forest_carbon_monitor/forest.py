@@ -22,10 +22,35 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
+
+
+def _is_hosted() -> bool:
+    """True on the hosted serve runtime (which injects the `openfused` shim);
+    locally the example runs in its own uv script-venv where it's absent. Same
+    probe cog_overview_pyramid/overview_pyramid.py uses."""
+    try:
+        import openfused  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+_HOSTED = _is_hosted()
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see _warm.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-forest-carbon-monitor-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 _GFW_API = "https://data-api.globalforestwatch.org"
 # Public key embedded in globalforestwatch.org's own frontend bundle.
@@ -170,6 +195,14 @@ def _warm(threshold: int):
     missing = [p for p in PARKS
                if not os.path.exists(_park_stats.cache_path(p, threshold))]
     if not missing:
+        return {"ready": True, "done": len(PARKS), "total": len(PARKS)}
+
+    if _HOSTED:
+        # No detached daemon or cross-call cache hosted (per-call subprocess
+        # isolation, read-only bundle) — the reason the page hung at "0/6 parks".
+        # Skip the background warmer and report ready; step="catalog"/"detail"
+        # run _park_stats inline within the larger hosted budget (the local ~30s
+        # bridge is the only reason the daemon exists).
         return {"ready": True, "done": len(PARKS), "total": len(PARKS)}
 
     os.makedirs(_CACHE_DIR, exist_ok=True)

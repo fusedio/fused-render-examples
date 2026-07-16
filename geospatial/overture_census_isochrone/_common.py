@@ -19,11 +19,36 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
+
+
+def _is_hosted() -> bool:
+    """True on the hosted serve runtime (which injects the `openfused` shim);
+    locally the example runs in its own uv script-venv where it's absent. Same
+    probe cog_overview_pyramid/overview_pyramid.py uses."""
+    try:
+        import openfused  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+_HOSTED = _is_hosted()
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see warm_via_daemon.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-overture-census-isochrone-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 # Canvas `costing` values mapped to ORS profiles (same mapping the canvas
 # UDF latlng_isochrone_simplified used).
@@ -102,10 +127,20 @@ def warm_via_daemon(tag: str, target_path: str, code: str):
     Spawns a DETACHED process running `code` (which must end up writing the
     disk-cache file at target_path) and returns {"ready": False} until that
     file exists. Callers poll from the page every couple of seconds.
+
+    Hosted there is no daemon: a detached warmer can't outlive the call and its
+    cache wouldn't survive per-call isolation, so this returns ready immediately
+    and the caller's data step computes the same @disk_cache work inline.
     """
     import subprocess
 
     if os.path.exists(target_path):
+        return {"ready": True}
+
+    if _HOSTED:
+        # Skip the background warmer entirely (see docstring); the local ~30s
+        # bridge budget is the only reason it exists, and the hosted budget fits
+        # the cold fetch inline.
         return {"ready": True}
 
     os.makedirs(_CACHE_DIR, exist_ok=True)

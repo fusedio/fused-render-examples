@@ -27,3 +27,17 @@ stats for six parks via a detached warmer; then cached.
 | `forest.py` | GFW zonal queries per boundary + warm-up daemon |
 | `index.html` | MapLibre loss/cover tiles + KPIs + annual-loss chart |
 | `boundaries/` | Six park boundaries (OSM, simplified GeoJSON) |
+
+## Deploying (hosted)
+
+This page can be deployed. Hosted there is no local filesystem and per-call
+subprocess isolation, so the background warm-up daemon can't work — this is what
+made the page hang at "0/6 parks" when served. `forest.py` detects the hosted
+runtime (the `openfused` shim is present only when served) and **skips the
+daemon**, running the per-park GFW zonal queries inline when the catalog/detail
+is requested. Local behaviour is unchanged.
+
+Requirement: **allow outbound HTTPS** to `data-api.globalforestwatch.org` (the
+GFW API key is a public literal baked into the source — no secret to provision).
+The map's basemap/loss tiles are fetched client-side from GFW/Carto. Confirm the
+per-call timeout accommodates the cold catalog (~12 GFW queries).

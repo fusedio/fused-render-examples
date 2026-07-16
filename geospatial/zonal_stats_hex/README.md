@@ -25,3 +25,16 @@ runtime's time limit); subsequent loads are instant from cache.
 |---|---|
 | `zonal.py` | DuckDB join + H3 aggregation + resumable warm-up daemon |
 | `index.html` | deck.gl hex map, KPIs, elevation-band chart |
+
+## Deploying (hosted)
+
+This page can be deployed. Hosted there is no local filesystem and per-call
+subprocess isolation, so the background warm-up daemon can't work (its `./.cache`
+wouldn't survive to the next call). `zonal.py` detects the hosted runtime (the
+`openfused` shim is present only when served) and **skips the daemon**, running
+the population/elevation fetch inline in a single, longer call. Local behaviour
+is unchanged.
+
+Requirement: **allow outbound HTTPS** to the two public Parquet sources
+(`*.source.coop`, the `fused-asset` S3 bucket) via DuckDB `httpfs`. No secrets.
+Confirm the per-call timeout accommodates the cold fetch (60–90 s locally).
