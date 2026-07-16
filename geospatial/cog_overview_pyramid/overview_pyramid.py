@@ -359,22 +359,43 @@ def _venv_python():
     return vpy
 
 
-def main(file: str = "", action: str = "analyze", resampling: str = "",
+def main(file: str = "", asset: str = "", action: str = "analyze", resampling: str = "",
          profile: str = "", out: str = "", overwrite: str = ""):
     import json
     import os
     import subprocess
+    import sys
     import tempfile
 
-    if not file:
-        return {"error": "no file selected — pass a .tif/.tiff path"}
-    file = os.path.abspath(os.path.expanduser(file))
-    if not os.path.isfile(file):
-        return {"error": f"not a file: {file}"}
+    # `asset` is set only by a hosted page (fused.env === "hosted"): the .tif ships in
+    # the deploy bundle and is materialized as a real local file under the project root,
+    # reachable via openfused.asset_path(). In that mode we trust the serve image's deps
+    # (rasterio/tifffile/…) instead of building the local uv venv, and refuse the
+    # in-place write actions — a hosted artifact is read-only.
+    hosted = bool(asset)
+    if hosted:
+        try:
+            import openfused
+        except ImportError:
+            return {"error": "asset mode needs the hosted runtime (openfused shim unavailable)"}
+        file = openfused.asset_path(*asset.split("/"))
+        if not os.path.isfile(file):
+            return {"error": f"bundled asset {asset!r} not found — add it to the deploy's "
+                             "publish list (Deploy → Will publish → Add files)"}
+    else:
+        if not file:
+            return {"error": "no file selected — pass a .tif/.tiff path"}
+        file = os.path.abspath(os.path.expanduser(file))
+        if not os.path.isfile(file):
+            return {"error": f"not a file: {file}"}
     if os.path.splitext(file)[1].lower() not in (".tif", ".tiff"):
         return {"error": "the overview pyramid only reads .tif/.tiff files"}
     if action not in ("analyze", "build", "cogify", "predict", "status"):
         return {"error": f"unknown action: {action}"}
+    if hosted and action in ("build", "cogify"):
+        return {"error": "adding overviews / writing a COG rewrites the file in place, which "
+                         "isn't possible on a read-only hosted page — use the local "
+                         "fused-render app for that."}
     opts = {k: v for k, v in [("resampling", resampling), ("profile", profile),
                               ("out", out), ("overwrite", overwrite)] if v}
 
@@ -405,13 +426,20 @@ def main(file: str = "", action: str = "analyze", resampling: str = "",
                 st["error"] = "worker process died without reporting a result"
         return st
 
-    try:
-        vpy = _venv_python()
-    except RuntimeError as e:
-        return {"error": str(e)}
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"venv setup failed: {type(e).__name__}: {e}"}
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONHOME", "PYTHONPATH")}
+    if hosted:
+        # Deps are baked into the serve image — run the worker on the ambient
+        # interpreter and inherit its env (site-packages visibility); no venv build,
+        # which needs uv + network + writable cache and won't run in the sandbox.
+        vpy = sys.executable
+        env = None
+    else:
+        try:
+            vpy = _venv_python()
+        except RuntimeError as e:
+            return {"error": str(e)}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"venv setup failed: {type(e).__name__}: {e}"}
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONHOME", "PYTHONPATH")}
 
     if action in ("build", "cogify"):
         # too slow for the app's 30s runPython budget → detach and poll

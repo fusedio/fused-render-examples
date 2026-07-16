@@ -251,6 +251,16 @@ const PAGE_DIR = SELF_PATH ? SELF_PATH.replace(/[^/]+$/, "") : "";
 // long-lived tile daemon whose CWD is fixed at first spawn, so an absolute path
 // stays unambiguous across pages.
 const DEMO = PAGE_DIR ? PAGE_DIR + "sample_satellite_cog.tif" : "./sample_satellite_cog.tif";
+// Where are we running? fused.env is the first-class signal ("local" in the
+// fused-render app, "hosted" on a deployed artifact); fall back to the hosted-only
+// __FUSED_RENDER__ seed for runtimes that predate fused.env. When hosted there is no
+// local filesystem, no runtime venv build, and no reachable 127.0.0.1 daemon, so the
+// page reads only the bundled demo COG (below) and hides the local-only controls.
+const IS_HOSTED = (typeof window.fused !== "undefined" && window.fused.env === "hosted")
+  || typeof window.__FUSED_RENDER__ !== "undefined";
+// Hosted: the demo COG ships in the deploy bundle and the reader resolves it via
+// openfused.asset_path(); this is the bundle key (its page-relative name).
+const DEMO_ASSET = "sample_satellite_cog.tif";
 const $ = (id) => document.getElementById(id);
 const setStatus = (m, err) => { $("status").textContent = m; $("status").className = err ? "err" : ""; };
 const human = (n) => { if (n == null) return "?"; for (const u of ["B","KB","MB","GB"]) { if (n < 1024 || u === "GB") return u === "B" ? n + " B" : n.toFixed(1) + " " + u; n /= 1024; } };
@@ -294,25 +304,40 @@ const groundKm = () => {
   return km >= 1 ? km.toFixed(1) + " km" : Math.round(km * 1000) + " m";
 };
 
+// Local entry: analyze a file the user typed / the shell owns (a real fs path).
 async function analyze(file) {
   if (!file) { setStatus("no file — paste a path above", true); return; }
-  setStatus("reading levels… (first run installs rasterio)");
+  await _readAndRender({ file }, file);
+}
+
+// Hosted entry: analyze a COG bundled with the deployed page. The reader resolves
+// `asset` via openfused.asset_path(); there is no local path box or `file` param.
+async function analyzeAsset(asset) {
+  await _readAndRender({ asset }, null);
+}
+
+// Shared: run the reader and render the pyramid. `localFile` is the fs path to
+// reflect into the path box / URL (local only); null in hosted asset mode.
+async function _readAndRender(params, localFile) {
+  setStatus(IS_HOSTED ? "reading levels…" : "reading levels… (first run installs rasterio)");
   let res;
-  try { res = await fused.runPython("./overview_pyramid.py", { file }); }
+  try { res = await fused.runPython("./overview_pyramid.py", params); }
   catch (e) { showError("reader failed: " + (e.message || e)); return; }
   if (res.error) { showError(res.error); return; }
   R = res; sel = 0;
   cmp.inited = false;
-  // as a template mode the shell owns the file (_file param) — writing our own
-  // file param there would fight it and pin the demo path into the URL
-  if (!fused.params.get("_file")) fused.params.set("file", file);
-  $("file-in").value = file;
+  if (localFile !== null) {
+    // as a template mode the shell owns the file (_file param) — writing our own
+    // file param there would fight it and pin the demo path into the URL
+    if (!fused.params.get("_file")) fused.params.set("file", localFile);
+    $("file-in").value = localFile;
+  }
   setStatus("");
   buildScene();
   renderLeft();
   // debug/deep-link (read-only): ?tab=map | ?level=N (focus) | &inspect=1 (fly onto it)
   // | ?rx/rz/s camera | ?click=N synthetic chip click
-  if (fused.params.get("tab") === "map") switchTab("map");
+  if (fused.params.get("tab") === "map" && !IS_HOSTED) switchTab("map");
   const pl = parseInt(fused.params.get("level"), 10);
   if (!Number.isNaN(pl) && pl >= 0 && pl < R.levels.length) {
     if (fused.params.get("inspect") === "1") zoomTo(pl);
@@ -330,8 +355,9 @@ async function analyze(file) {
     if (el) el.click();
   }, 800);
   // headless debug only: ?fix=build|cog exercises the real button path once
+  // (in-place writes — local only; the fix panel is hidden when hosted)
   const fx = fused.params.get("fix");
-  if (fx && !window.__fixClicked) {
+  if (fx && !IS_HOSTED && !window.__fixClicked) {
     window.__fixClicked = true;
     setTimeout(() => $(fx === "cog" ? "fix-cog-toggle" : "fix-build")?.click(), 800);
   }
@@ -579,6 +605,10 @@ const cmp = { inited: false, A: null, B: null, la: 0, lb: 0, auto: true, port: n
 async function ensureTileDaemon() {
   if (cmp.port !== null) return cmp.port;
   cmp.port = 0;
+  // The tile daemon binds 127.0.0.1 and the browser fetches it directly — that only
+  // works locally. Hosted, the map tab is hidden; guard here too so nothing spawns a
+  // daemon in the serve sandbox that the browser could never reach (silent blank tiles).
+  if (IS_HOSTED) return 0;
   try {
     const r = await fused.runPython("./tile_server.py", { action: "ensure" });
     if (r && r.port) cmp.port = r.port;
@@ -757,6 +787,9 @@ function cogSectionHtml() {
 }
 
 function fixPanelHtml() {
+  // Build / cogify write the file in place — impossible on a read-only hosted
+  // artifact, so the whole fix panel is local-only.
+  if (IS_HOSTED) return "";
   if (R.fix) {
     const mpx = (R.levels[0].width * R.levels[0].height / 1e6).toFixed(0);
     return `
@@ -987,11 +1020,22 @@ function select(i) {
 $("an-btn").addEventListener("click", () => analyze($("file-in").value.trim()));
 $("file-in").addEventListener("keydown", (e) => { if (e.key === "Enter") analyze($("file-in").value.trim()); });
 window.addEventListener("resize", () => { if (R && tab === "pyr") { buildScene(); applyView(false); } });
-// _file first: in template-mode views the shell owns it, and any file= param
-// alongside it is stale pollution from an older version of this tool
-const initial = fused.params.get("_file") || fused.params.get("file") || DEMO;
-$("file-in").value = initial;
-analyze(initial);
+
+if (IS_HOSTED) {
+  // No local filesystem to browse and no localhost map daemon: hide the path box
+  // and the map tab, and analyze the COG bundled with the deployed page.
+  document.body.classList.add("hosted");
+  for (const id of ["file-in", "an-btn"]) { const el = $(id); if (el) el.style.display = "none"; }
+  const mapBtn = document.querySelector('.tab-btn[data-t="map"]');
+  if (mapBtn) mapBtn.style.display = "none";
+  analyzeAsset(DEMO_ASSET);
+} else {
+  // _file first: in template-mode views the shell owns it, and any file= param
+  // alongside it is stale pollution from an older version of this tool
+  const initial = fused.params.get("_file") || fused.params.get("file") || DEMO;
+  $("file-in").value = initial;
+  analyze(initial);
+}
 </script>
 </body>
 </html>
