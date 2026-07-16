@@ -129,6 +129,8 @@
 
   /* ---- map compare pane ---- */
   #tab-map { display: none; }
+  /* hosted mode (body.hosted, set at init) hides local-only copy/affordances */
+  body.hosted .local-only { display: none; }
   #cmp { position: absolute; inset: 0; }
   #mapA, #mapB { position: absolute; inset: 0; }
   #mapB-wrap { position: absolute; inset: 0; pointer-events: none; }
@@ -188,9 +190,9 @@
   <div class="left" id="left">
     <div class="panel" style="color:var(--dim);font-size:13px">Every resolution level of a GeoTIFF.
       <b>3D pyramid</b>: click a level to focus it (camera stays put), click again or hit the zoom
-      button to inspect it face-on; drag to orbit, scroll to zoom.
+      button to inspect it face-on; drag to orbit, scroll to zoom.<span class="local-only">
       <b>On the map</b>: swipe two levels against each other at real resolution on a basemap.
-      First run installs rasterio (~1 min).</div>
+      First run installs rasterio (~1 min).</span></div>
   </div>
   <div class="right" id="right">
     <div id="tabs">
