@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Claude config</title>
+<style>
+  /* Claude-like theme (matches claude-config-ui): warm coral accent over a
+     neutral dark base, driven by CSS variables so accents stay consistent. */
+  :root {
+    color-scheme: dark;
+    --bg: #1a1915;          /* warm near-black, Claude's dark canvas */
+    --panel: #211f1b;       /* sidebar / raised surfaces */
+    --card: #24221d;        /* cards, inputs, buttons */
+    --card-hover: #2f2c26;
+    --border: #38352e;
+    --text: #ecece6;
+    --muted: #a39d92;       /* warm gray */
+    --faint: #7c766c;
+    --accent: #d97757;      /* Claude coral */
+    --accent-hover: #e28a6c;
+    --accent-tint: rgba(217, 119, 87, 0.16);
+    --on-accent: #221008;
+    --ok: #7bd88f;
+    --ok-bg: #1c3324;
+    --warn: #e3c97a;
+    --warn-bg: #322b16;
+    --danger: #e5847b;
+    --danger-bg: #3a2320;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    font-size: 14px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  #layout { display: flex; min-height: 100vh; }
+  #sidebar {
+    width: 210px; flex: none; border-right: 1px solid var(--border);
+    background: var(--panel);
+    padding: 20px 12px; position: sticky; top: 0; height: 100vh;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  #sidebar h1 { font-size: 15px; margin: 0 8px 4px; }
+  #sidebar .tagline { color: var(--faint); font-size: 11px; margin: 0 8px 18px; line-height: 1.4; }
+  .nav-item {
+    padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--muted);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .nav-item:hover { background: var(--card-hover); color: var(--text); }
+  .nav-item.active { background: var(--accent-tint); color: var(--accent); font-weight: 500; }
+  #badge {
+    margin-top: auto; padding: 8px 10px; border-radius: 6px; cursor: pointer;
+    font-size: 12px; border: 1px solid var(--border);
+  }
+  #badge.clean { color: var(--ok); }
+  #badge.dirty { color: var(--warn); border-color: #4a4326; background: var(--warn-bg); }
+
+  #main { flex: 1; padding: 28px 36px; max-width: 900px; }
+  #main h2 { font-size: 20px; margin: 0 0 2px; }
+  .caption { color: var(--faint); font-size: 12px; margin-bottom: 22px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .group { margin-bottom: 26px; }
+  .group h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); margin: 0 0 10px; font-weight: 600;
+  }
+  .row {
+    display: flex; align-items: center; gap: 14px; padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .row .meta { flex: 1; min-width: 0; }
+  .row .label { font-weight: 500; }
+  .row .doc { color: var(--faint); font-size: 12px; margin-top: 2px; }
+  .row .control { flex: none; display: flex; align-items: center; gap: 8px; }
+  .unset { color: var(--faint); font-size: 12px; font-style: italic; }
+  .reset { color: var(--faint); cursor: pointer; font-size: 12px; background: none; border: none; }
+  .reset:hover { color: var(--text); }
+
+  select, input[type=text], input[type=number], input[type=url], input[type=file] {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 9px; font-size: 13px; font-family: inherit;
+  }
+  input[type=text], input[type=url] { min-width: 220px; }
+  select:focus, input[type=text]:focus, input[type=number]:focus, input[type=url]:focus {
+    outline: none; border-color: var(--accent);
+  }
+
+  /* toggle */
+  .switch { position: relative; width: 38px; height: 22px; flex: none; }
+  /* Input overlays the whole switch (transparent, on top) so a click lands on it
+     and fires onchange — a zero-size input isn't clickable and no toggle would work. */
+  .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0;
+    cursor: pointer; z-index: 1; -webkit-appearance: none; appearance: none; }
+  .slider {
+    position: absolute; inset: 0; background: var(--border); border-radius: 22px;
+    transition: 0.15s; cursor: pointer;
+  }
+  .slider::before {
+    content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+    background: var(--text); border-radius: 50%; transition: 0.15s;
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(16px); background: #fff; }
+  /* unset = using Claude's default (unknown): a third state, never read as `false`
+     (preferences.md §4). Muted, dashed, knob centered — neither on nor off. */
+  .switch input:indeterminate + .slider { background: transparent; border: 1px dashed var(--faint); }
+  .switch input:indeterminate + .slider::before { transform: translateX(8px); background: var(--faint); }
+
+  button.btn {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; font-family: inherit;
+  }
+  button.btn:hover { background: var(--card-hover); }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
+  button.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.btn.danger:hover { background: var(--danger-bg); border-color: #7a3a3a; color: var(--danger); }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+
+  .card {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .card .title { font-weight: 600; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .card .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .pill {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 2px 7px; border-radius: 4px; background: var(--border); color: var(--muted);
+  }
+  .pill.on { background: var(--ok-bg); color: var(--ok); }
+  .pill.ro { background: var(--warn-bg); color: var(--warn); }
+  .pill.err { background: var(--danger-bg); color: var(--danger); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .empty { color: var(--faint); padding: 30px 0; text-align: center; }
+  .change-badge { font-size: 11px; color: var(--warn); }
+  .count-badge { font-size: 11px; color: var(--muted); font-weight: 400; }
+
+  .log-entry { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .log-entry .msg { flex: 1; }
+  .log-entry .sha { color: var(--faint); font-size: 12px; }
+  .log-entry .date { color: var(--faint); font-size: 12px; }
+
+  /* toast */
+  #toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; font-size: 13px; opacity: 0; pointer-events: none;
+    transition: opacity 0.2s; z-index: 90; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  #toast.show { opacity: 1; }
+  #toast.err { border-color: #7a3a3a; color: var(--danger); }
+
+  /* modal (version-control.md §6: in-app scrollable, never native) */
+  #overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: none; align-items: center; justify-content: center; z-index: 80;
+  }
+  #overlay.open { display: flex; }
+  #modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    width: min(620px, 92vw); max-height: 82vh; display: flex; flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  }
+  #modalHead {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 18px; border-bottom: 1px solid var(--border);
+  }
+  #modalHead h3 { margin: 0; font-size: 15px; }
+  #modalClose { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+  #modalBody { padding: 14px 18px; overflow-y: auto; }
+  #modalFoot { padding: 14px 18px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+  .delta { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .delta .k { font-weight: 500; }
+  .delta .fromto { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .fstat { display: inline-block; width: 16px; font-weight: 700; }
+  .fstat.A { color: var(--ok); } .fstat.M { color: var(--warn); }
+  .fstat.D { color: var(--danger); } .fstat.R { color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="layout">
+  <nav id="sidebar">
+    <h1>Claude config</h1>
+    <p class="tagline">Edits write to your Claude config and commit to git. Applies on the next session.</p>
+    <div id="nav"></div>
+    <div id="badge" class="clean">checking…</div>
+  </nav>
+  <main id="main"><div class="empty">Loading…</div></main>
+</div>
+
+<div id="toast"></div>
+<div id="overlay"><div id="modal">
+  <div id="modalHead"><h3 id="modalTitle"></h3><button id="modalClose">&times;</button></div>
+  <div id="modalBody"></div>
+  <div id="modalFoot"></div>
+</div></div>
+
+<script>
+/* Load the app logic from the sibling script.js module. A relative <script src>
+   resolves against the server's /render route (404), and fused.rawUrl/readFile
+   don't resolve relative paths against this page's dir either — so derive the
+   page's own absolute dir from the render URL's ?path= param and load via an
+   absolute raw-bytes URL (served with the correct JS MIME). See architecture.md
+   §3a. onerror surfaces a load failure instead of a silent blank page. */
+(function () {
+  var self = new URLSearchParams(location.search).get("path") || "";
+  var dir = self.slice(0, self.lastIndexOf("/"));
+  var s = document.createElement("script");
+  s.src = fused.rawUrl(dir ? dir + "/script.js" : "./script.js");
+  s.onerror = function () {
+    var m = document.getElementById("main");
+    if (m) m.innerHTML = '<div class="empty" style="color:var(--danger)">Failed to load script.js \u2014 the UI cannot start.</div>';
+  };
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "//": "Type-checks script.js against types/fused.d.ts. Editors pick this up automatically for live checking; `tsc -p jsconfig.json` (via validate.py) runs it in CI/pre-commit. Lenient flags: the code is untyped vanilla DOM JS, so we keep bug-finding checks (undefined vars, typos, wrong-arg-count, fused misuse) but silence implicit-any / null noise that would otherwise drown the signal.",
+  "compilerOptions": {
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false
+  },
+  "include": ["script.js", "types/**/*.d.ts"]
+}

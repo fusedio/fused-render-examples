@@ -118,7 +118,7 @@ def git_tracked(path):
 
 
 def lint(path):
-    errs = []
+    errs, warns = [], []
     tracked = git_tracked(path)
     htmls = [f for f in tracked if f.endswith(".html") and "/" not in f]
     if len(htmls) != 1:
@@ -152,29 +152,34 @@ def lint(path):
         if any(isinstance(n, ast.FunctionDef) and n.name == "main"
                for n in ast.walk(tree)):
             entry_has_main = True
-        # import-time __file__ is the classic cold-import break; safe only when
-        # guarded with `"__file__" in globals()`. Parse via ast so mentions in
-        # comments/docstrings don't count — only real code references.
+        # The current runner loads modules via importlib (spec_from_file_location
+        # → exec_module), which SETS __file__ — so unguarded __file__ works. It's
+        # only worth guarding (`"__file__" in globals()`) for portability if the
+        # file might be exec'd some other way, so this is a note, not a failure.
         uses_dunder_file = any(isinstance(n, ast.Name) and n.id == "__file__"
                                for n in ast.walk(tree))
         if uses_dunder_file and '"__file__" in globals()' not in src:
-            errs.append(f"{stem}: uses __file__ without a `\"__file__\" in globals()` guard")
+            warns.append(f"{stem}: uses __file__ unguarded (works — runner sets it — "
+                         "but a `\"__file__\" in globals()` guard is more portable)")
         if "/// script" in src:
             block = re.search(r"# /// script\n(.*?)# ///", src, re.S)
             if block and "dependencies" not in block.group(1):
                 errs.append(f"{stem}: PEP 723 header without a dependencies list")
     if pys and not entry_has_main:
         errs.append("no .py defines a module-level main()")
-    return errs
+    return errs, warns
 
 
 # ----------------------------------------------------------------- layer 2
 
 def html_entrypoints(view_html, fresh_dir):
-    """The .py files the view calls. Literal `runPython("./x.py")` paths first;
-    if the view builds the path dynamically (a variable), fall back to every
-    .py in the project that defines a module-level main()."""
+    """The .py files the view calls. Scans the view AND sibling .js files (some
+    projects keep their runPython calls in script.js) for literal
+    `runPython("./x.py")` paths; if the path is built dynamically (a variable),
+    fall back to every .py in the project that defines a module-level main()."""
     src = open(view_html, encoding="utf-8").read()
+    for js in sorted(f for f in os.listdir(fresh_dir) if f.endswith(".js")):
+        src += "\n" + open(os.path.join(fresh_dir, js), encoding="utf-8").read()
     seen = []
     for m in re.finditer(r'runPython\(\s*["\']\.?/?([A-Za-z0-9_./-]+\.py)["\']', src):
         rel = m.group(1)
@@ -324,9 +329,11 @@ def main():
         """Test one project; return (name, ok, log_lines). Thread-safe: touches
         only its own fresh temp dir and its own Chrome tab."""
         log = [f"── {name}"]
-        lint_errs = lint(src)
+        lint_errs, lint_warns = lint(src)
         for e in lint_errs:
             log.append(f"   structure: ✗ {e}")
+        for w in lint_warns:
+            log.append(f"   structure: · note: {w}")
         if not lint_errs:
             log.append("   structure: ✓")
 

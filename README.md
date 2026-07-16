@@ -16,7 +16,7 @@ key, noted in their README).
 <table>
   <tr>
     <td width="50%"><a href="geospatial/buildings_to_hexagons/"><img src="assets/buildings_to_hexagons.png" alt="Buildings to hexagons"></a><br><b>Buildings → hexagons</b><br>2.6B buildings in a 0.4 MB file — an interactive explainer.</td>
-    <td width="50%"><a href="local-tools/pytop/"><img src="assets/pytop.png" alt="pytop"></a><br><b>pytop</b><br>A live <code>top</code>-style system monitor for your own machine.</td>
+    <td width="50%"><a href="local-tools/visual_claude/"><img src="assets/visual_claude.png" alt="visual-claude"></a><br><b>visual-claude</b><br>A visual settings page for Claude Code, writing to <code>~/.claude</code>.</td>
   </tr>
   <tr>
     <td><a href="geospatial/locker_network_simulator/"><img src="assets/locker_network_simulator.png" alt="Locker network simulator"></a><br><b>Parcel locker simulator</b><br>Live route re-optimization on real roads.</td>
@@ -46,6 +46,7 @@ Fused Render pointed at your **own machine** instead of the cloud.
 
 | Example | What it does |
 |---|---|
+| [visual-claude](local-tools/visual_claude/) | A visual settings page for Claude Code (writes to `~/.claude`, git-versioned) |
 | [pytop](local-tools/pytop/) | A live `top`-style system + process monitor |
 | [disk_usage](local-tools/disk_usage/) | Treemap disk-space explorer and cleaner |
 | [notion_db](local-tools/notion_db/) | Notion-style task tracker on a local Parquet lake |
