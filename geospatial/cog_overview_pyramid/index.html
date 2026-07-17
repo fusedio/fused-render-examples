@@ -254,12 +254,15 @@ const PAGE_DIR = SELF_PATH ? SELF_PATH.replace(/[^/]+$/, "") : "";
 // stays unambiguous across pages.
 const DEMO = PAGE_DIR ? PAGE_DIR + "sample_satellite_cog.tif" : "./sample_satellite_cog.tif";
 // Where are we running? fused.env is the first-class signal ("local" in the
-// fused-render app, "hosted" on a deployed artifact); fall back to the hosted-only
-// __FUSED_RENDER__ seed for runtimes that predate fused.env. When hosted there is no
-// local filesystem, no runtime venv build, and no reachable 127.0.0.1 daemon, so the
-// page reads only the bundled demo COG (below) and hides the local-only controls.
-const IS_HOSTED = (typeof window.fused !== "undefined" && window.fused.env === "hosted")
-  || typeof window.__FUSED_RENDER__ !== "undefined";
+// fused-render app, "hosted" on a deployed artifact) and is AUTHORITATIVE when
+// present — an explicit "local" must never be treated as hosted. Only when
+// fused.env is absent (runtimes that predate it) do we fall back to the
+// hosted-only __FUSED_RENDER__ seed. When hosted there is no local filesystem, no
+// runtime venv build, and no reachable 127.0.0.1 daemon, so the page reads only
+// the bundled demo COG (below) and hides the local-only controls.
+const IS_HOSTED = (typeof window.fused !== "undefined" && typeof window.fused.env === "string")
+  ? window.fused.env === "hosted"
+  : typeof window.__FUSED_RENDER__ !== "undefined";
 // Hosted: the demo COG ships in the deploy bundle and the reader resolves it via
 // openfused.asset_path(); this is the bundle key (its page-relative name).
 const DEMO_ASSET = "sample_satellite_cog.tif";

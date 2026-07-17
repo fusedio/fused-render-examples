@@ -31,6 +31,22 @@ import json
 import struct
 import time
 
+
+def _is_hosted() -> bool:
+    """True on the hosted serve runtime (which injects the `openfused` shim);
+    locally the FusedRender executor has no openfused (and no __file__), which is
+    why the client passes an absolute data_dir. Same probe the sibling examples
+    use."""
+    try:
+        import openfused  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+_HOSTED = _is_hosted()
+
 DATASETS = {
     "ams": "ams_2025-05-21-0.json",
     "assam_new": "assam_2025-05-21-0.json",
@@ -64,12 +80,24 @@ def _duck():
     return _con
 
 
+def _data_path(data_dir, filename):
+    """Resolve a bundled data file. Hosted, the deploy bundle is read-only and the
+    client-passed data_dir ("/data") isn't a real path, so resolve via the bundle
+    asset map (openfused.asset_path); locally use the absolute data_dir the page
+    derived from its URL."""
+    if _HOSTED:
+        import openfused
+
+        return openfused.asset_path("data", filename)
+    return f"{data_dir}/{filename}"
+
+
 def _load(data_dir, dataset):
     if dataset not in DATASETS:
         raise ValueError(f"unknown dataset {dataset!r}")
     key = (data_dir, dataset)
     if key not in _cache:
-        with open(f"{data_dir}/{DATASETS[dataset]}") as f:
+        with open(_data_path(data_dir, DATASETS[dataset])) as f:
             _cache[key] = json.load(f)
     return _cache[key]
 
@@ -130,7 +158,7 @@ def _load_raster(data_dir, dataset):
         raise ValueError(f"unknown raster {dataset!r}")
     key = (data_dir, "raster:" + dataset)
     if key not in _cache:
-        with open(f"{data_dir}/{RASTERS[dataset]}") as f:
+        with open(_data_path(data_dir, RASTERS[dataset])) as f:
             _cache[key] = json.load(f)
     return _cache[key]
 
@@ -164,7 +192,7 @@ def main(
     t0 = time.monotonic()
     res = max(3, min(12, int(res)))
     n = int(n)
-    if not data_dir:
+    if not data_dir and not _HOSTED:
         raise ValueError("data_dir is required (absolute path to the episode's data/ folder)")
 
     out = {}

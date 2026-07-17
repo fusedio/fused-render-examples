@@ -145,8 +145,16 @@ const DATA_DIR = PAGE_DIR + "/data";
 const dataCache = new Map();
 async function loadData(name){                       // baked real extracts (see data/meta.json)
   if (dataCache.has(name)) return dataCache.get(name);
-  const url = PAGE_DIR ? "/api/fs/raw?path=" + encodeURIComponent(DATA_DIR + "/" + name)
-                       : "data/" + name;
+  // Portable bundled-data URL. fused.rawUrl resolves both in the local app and on
+  // a deployed page: page-relative "./data/…" hosted, and the page's absolute dir
+  // locally (local rawUrl doesn't resolve relative to this page — same reason
+  // visual_claude derives the dir from ?path=). A plain relative fetch (which
+  // resolves to /data/… at the server root and 404s when deployed) is only the
+  // last-resort standalone-preview fallback.
+  const rel = "data/" + name;
+  const url = (HAS_FUSED && fused.rawUrl)
+    ? fused.rawUrl(PAGE_DIR ? PAGE_DIR + "/" + rel : "./" + rel)
+    : rel;
   const p = fetch(url).then(r => { if (!r.ok) throw new Error(name + ": HTTP " + r.status); return r.json(); });
   dataCache.set(name, p);
   return p;

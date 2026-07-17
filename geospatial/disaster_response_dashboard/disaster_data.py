@@ -431,8 +431,18 @@ def main(event_name: str = "Hurricane-Melissa-Oct-2025") -> dict:
 
     rows, done, total, complete = _footprints(event_name, deadline)
     if not complete:
-        print(f"footprints partial: {done}/{total} — page will poll again")
-        return {"ready": False, "stage": "acquisition footprints", "done": done, "total": total}
+        if not _HOSTED:
+            # Local: resumable — the page polls and each call continues the fan-out.
+            print(f"footprints partial: {done}/{total} — page will poll again")
+            return {"ready": False, "stage": "acquisition footprints", "done": done, "total": total}
+        # Hosted: no cross-call cache to resume from, so returning ready:False would
+        # make the page re-poll and restart the fan-out from zero, never converging.
+        # Render whatever completed within the budget (a partial map beats an
+        # un-resumable poll); only fail if nothing came back at all.
+        if not rows:
+            raise RuntimeError("footprint fetch exceeded the hosted time budget "
+                               "before any acquisition completed — reload to retry.")
+        print(f"hosted: assembling partial {done}/{total} footprints (budget hit)")
 
     payload = _assemble(rows, track, event_name)
     print(f"payload ready: {len(payload['fc']['features'])} footprints, "
