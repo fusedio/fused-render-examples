@@ -227,15 +227,38 @@
    ===================================================================== */
 
 const DEFAULT_URL = "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/32/T/QR/2025/8/S2A_32TQR_20250812_0_L2A/TCI.tif";
+const BUNDLED_COG = "sample_cog.tif";        // a real tiled COG shipped alongside this page
 const QS = new URLSearchParams(location.search);
 const LOCAL_FILE = QS.get("file") || "";
 const REMOTE_URL = QS.get("url") || "";
-const IS_CUSTOM = !!(LOCAL_FILE || REMOTE_URL);
-let COG_URL = REMOTE_URL || DEFAULT_URL;    // local files resolved in boot() via the range daemon
+// Runtime identity. A hosted (exported) page has no local filesystem and no 127.0.0.1
+// range daemon — but its bundled COG is served by the Range-capable `_asset` route, and
+// `fused.rawUrl()` resolves to it. Locally `fused.rawUrl()` resolves to `/api/fs/raw`,
+// which is also Range-capable, so the same browser-side byte-range reads work in both,
+// with no daemon. `fused.env` is a positive signal present in both runtimes (EXPORT.md).
+const HOSTED = !!(window.fused && window.fused.env === "hosted");
+
+// Resolve the COG URL, preferring an absolute URL so the fetch interceptor's
+// `startsWith(COG_URL)` and the curl hint below both match what geotiff.js requests.
+// `fused.rawUrl("./name")` is the string-literal call the exporter bundles and the
+// hosted runtime maps to `_asset`; locally `fused.rawUrl(localPath)` hits `/api/fs/raw`.
+const _abs = (u) => { try { return new URL(u, location.href).href; } catch (e) { return u; } };
+function resolveCogUrl() {
+  if (REMOTE_URL) return REMOTE_URL;                                  // explicit remote COG (any env)
+  if (HOSTED) return _abs(window.fused.rawUrl("./" + BUNDLED_COG));   // bundled COG via _asset (Range)
+  if (LOCAL_FILE && window.fused && window.fused.rawUrl)
+    return _abs(window.fused.rawUrl(LOCAL_FILE));                     // local file via /api/fs/raw (Range)
+  return DEFAULT_URL;                                                 // local default: the 316 MB remote demo
+}
+let COG_URL = resolveCogUrl();
+const USING_BUNDLED = HOSTED && !REMOTE_URL;
+const IS_CUSTOM = !!(LOCAL_FILE || REMOTE_URL || USING_BUNDLED);
 const FILE_NAME = (() => {
   if (LOCAL_FILE) return LOCAL_FILE.split("/").pop();
-  try {                       // daemon-style URLs carry the real path in ?file=
-    const f = new URL(COG_URL).searchParams.get("file");
+  if (USING_BUNDLED) return BUNDLED_COG;
+  try {                       // some URLs carry the real path in ?file= (daemon) or ?name= (_asset)
+    const u = new URL(COG_URL, location.href);
+    const f = u.searchParams.get("file") || u.searchParams.get("name");
     if (f) return decodeURIComponent(f).split("/").pop();
   } catch (e) {}
   return COG_URL.split("/").pop().split("?")[0];
@@ -374,15 +397,9 @@ async function boot() {
     ? "Slow-motion replay — watch the stack on the right…" : "Contacting the server…";
   try { pool = new GeoTIFF.Pool(); } catch (e) { pool = null; }
 
-  if (LOCAL_FILE) {
-    if (!window.fused || !fused.runPython)
-      throw new Error("local files need the FusedRender app (open via /view/…)");
-    const sp = location.pathname.replace(/^\/view/, "").replace(/[^/]+$/, "");
-    const RANGE_SERVER = sp + "range_server.py";
-    const r = await fused.runPython(RANGE_SERVER, { action: "ensure", self_path: RANGE_SERVER });
-    if (!r || r.error) throw new Error((r && r.error) || "range daemon failed");
-    COG_URL = `http://127.0.0.1:${r.port}/raw?file=${encodeURIComponent(LOCAL_FILE)}`;
-  }
+  // COG_URL is already resolved (module top): a remote URL, the bundled COG via
+  // fused.rawUrl (hosted → _asset, local → /api/fs/raw — both Range-capable), or the
+  // remote default. No 127.0.0.1 range daemon — geotiff.js ranges the URL directly.
 
   tiff = await GeoTIFF.fromUrl(COG_URL, { blockSize: BLOCK, cacheSize: 512 });
   const count = await tiff.getImageCount();
@@ -438,7 +455,9 @@ async function boot() {
     $("pageTitle").textContent = `One file, ${fmtB(state.fileSize)}, zero downloads`;
     $("ledeP").innerHTML =
       `<b>${FILE_NAME}</b> is <b>one single ${fmtB(state.fileSize)} file</b> (a Cloud-Optimized
-       GeoTIFF) ${LOCAL_FILE ? "on your disk, served over local HTTP" : "on a public server"}.
+       GeoTIFF) ${LOCAL_FILE ? "on your disk, served over local HTTP"
+         : USING_BUNDLED ? "bundled with this page, streamed by the server over HTTP range requests"
+         : "on a public server"}.
        Pan and zoom — the viewer fetches <b>only the pieces it needs</b>, and they light up in
        the stack on the right. Every number is a real request.` +
       (grayMode ? " Single-band data, shown as stretched grayscale." : "");
