@@ -27,19 +27,11 @@ _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
 
 
-def _is_hosted() -> bool:
-    """True on the hosted serve runtime (which injects the `openfused` shim);
-    locally the example runs in its own uv script-venv where it's absent. Same
-    probe cog_overview_pyramid/overview_pyramid.py uses."""
-    try:
-        import openfused  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-_HOSTED = _is_hosted()
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. A runtime fact, not an
+# import probe — `import openfused` also succeeds on the local built-in executor,
+# so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
 
 # Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
 # cache into a per-run temp dir instead. Cross-call it won't persist (per-call
@@ -140,14 +132,9 @@ def _child_range(c: int, child_res: int):
 # ---------------------------------------------------------------- DuckDB side
 
 def _connect():
-    import tempfile
-
     import duckdb
 
     con = duckdb.connect()
-    # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
-    # INSTALL — point it at a writable temp dir. Harmless locally.
-    con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
     con.execute("INSTALL httpfs; LOAD httpfs; INSTALL h3 FROM community; LOAD h3;")
     # path-style URLs: the source.coop bucket name contains dots, which breaks
     # TLS for virtual-host-style addressing.
