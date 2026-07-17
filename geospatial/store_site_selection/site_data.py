@@ -49,7 +49,11 @@ _CACHE_DIR = (
     else os.path.join(_HERE, ".cache")
 )
 
-OVERTURE_RELEASE = "2026-05-20.0"
+# Kept in step with the other Overture examples (locker/overture) on a release the
+# public STAC catalog still serves — _cafes resolves place files through STAC, and
+# only recent releases stay on that endpoint. The Places schema is stable across
+# these releases, so the query below is unaffected.
+OVERTURE_RELEASE = "2026-06-17.0"
 ACS_URL = "https://api.census.gov/data/2022/acs/acs5"
 TIGERWEB = ("https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/"
             "Tracts_Blocks/MapServer/0/query")
