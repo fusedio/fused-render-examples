@@ -357,6 +357,13 @@ def _assemble(rows, track, event_name):
     rows = [r for r in rows
             if r.get("date") not in (None, "unknown")
             and None not in (r.get("w"), r.get("s"), r.get("e"), r.get("n"))]
+    if not rows:
+        # Every fetched acquisition was missing a date/bbox — nothing to place on
+        # the globe. Fail clearly instead of letting the extent min()/max() below
+        # crash on an empty sequence (matters on the hosted partial-assembly path,
+        # which can reach here with only unusable rows).
+        raise RuntimeError("no usable acquisition footprints (all were missing a "
+                           "date or bounding box)")
     rows.sort(key=lambda r: r["date"])
 
     features = []
