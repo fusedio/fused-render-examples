@@ -28,19 +28,11 @@ _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
 
 
-def _is_hosted() -> bool:
-    """True on the hosted serve runtime (which injects the `openfused` shim);
-    locally the example runs in its own uv script-venv where it's absent. Same
-    probe cog_overview_pyramid/overview_pyramid.py uses."""
-    try:
-        import openfused  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-_HOSTED = _is_hosted()
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. A runtime fact, not an
+# import probe — `import openfused` also succeeds on the local built-in executor,
+# so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
 
 # Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
 # cache into a per-run temp dir instead. Cross-call it won't persist (per-call
@@ -139,16 +131,12 @@ def disk_cache(fn):
 
 
 def _boundary(park: str) -> dict:
-    # Hosted, the bundle is a read-only exec dir that holds only the entrypoint
-    # code — sibling data like boundaries/ isn't next to __file__, so resolve it
-    # through the bundle asset map instead (the files are bundled via the
-    # _bundleBoundaries() literals in index.html). Locally read beside the script.
-    if _HOSTED:
-        import openfused
-
-        path = openfused.asset_path("boundaries", f"{park}.json")
-    else:
-        path = os.path.join(_HERE, "boundaries", f"{park}.json")
+    # boundaries/ sits beside this script in both runtimes: locally it's part of
+    # the example, and hosted bundle v2 lands every bundled file at its real
+    # page-relative path under the project root (_HERE). The files ship via the
+    # fused-bundle manifest glob in index.html — no asset_path (that anchors under
+    # an assets/ prefix the fused-render bundle doesn't use).
+    path = os.path.join(_HERE, "boundaries", f"{park}.json")
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 

@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>Overview pyramid</title>
+<!-- Bundle manifest: when this page is exported for hosted serving, ship the demo
+     COG. overview_pyramid.py reads it server-side by name (DEMO_ASSET), which the
+     HTML scan can't follow to a bundled file, so this glob is what gets the .tif
+     into the deploy bundle; the reader then resolves it beside the script. -->
+<script type="application/fused-bundle">
+{ "include": ["sample_satellite_cog.tif"] }
+</script>
 <link href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js" crossorigin="anonymous"></script>
 <style>
@@ -263,8 +270,8 @@ const DEMO = PAGE_DIR ? PAGE_DIR + "sample_satellite_cog.tif" : "./sample_satell
 const IS_HOSTED = (typeof window.fused !== "undefined" && typeof window.fused.env === "string")
   ? window.fused.env === "hosted"
   : typeof window.__FUSED_RENDER__ !== "undefined";
-// Hosted: the demo COG ships in the deploy bundle and the reader resolves it via
-// openfused.asset_path(); this is the bundle key (its page-relative name).
+// Hosted: the demo COG ships in the deploy bundle (via the fused-bundle manifest
+// above) and the reader resolves it beside the script; this is its page-relative name.
 const DEMO_ASSET = "sample_satellite_cog.tif";
 const $ = (id) => document.getElementById(id);
 const setStatus = (m, err) => { $("status").textContent = m; $("status").className = err ? "err" : ""; };
@@ -316,7 +323,7 @@ async function analyze(file) {
 }
 
 // Hosted entry: analyze a COG bundled with the deployed page. The reader resolves
-// `asset` via openfused.asset_path(); there is no local path box or `file` param.
+// `asset` to a path beside the script; there is no local path box or `file` param.
 async function analyzeAsset(asset) {
   await _readAndRender({ asset }, null);
 }

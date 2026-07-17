@@ -367,35 +367,36 @@ def main(file: str = "", asset: str = "", action: str = "analyze", resampling: s
     import sys
     import tempfile
 
-    # Hosted vs local is a RUNTIME fact — gate on the env var the serve Lambda sets
-    # (the same signal openfused's shim keys on), NOT on which param the caller sent.
-    # Keying off bool(asset) let a hosted caller omit `asset`, pass an arbitrary
-    # `file`, and slip past the read-only guards below into filesystem .tif reads /
-    # in-place writes. A caller can't set the Lambda's environment, so this can't be
-    # spoofed; locally the var is absent, so the local `file` path stays intact.
-    hosted = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+    # Hosted vs local is a RUNTIME fact — gate on OPENFUSED_DEPLOYED, the env var
+    # the serve backend injects on the compute (values "aws"/"fused"; unset
+    # locally), NOT on which param the caller sent. Keying off bool(asset) let a
+    # hosted caller omit `asset`, pass an arbitrary `file`, and slip past the
+    # read-only guards below into filesystem .tif reads / in-place writes. A caller
+    # can't set the compute's environment, so this can't be spoofed; locally the
+    # var is absent, so the local `file` path stays intact.
+    hosted = bool(os.environ.get("OPENFUSED_DEPLOYED"))
     if hosted:
         # A served page has no local filesystem: it reads ONLY a bundled asset, so an
         # arbitrary `file` path is refused outright. The .tif ships in the deploy
-        # bundle (reached via openfused.asset_path()); we trust the serve image's
+        # bundle beside this script — bundle v2 lands every bundled file at its real
+        # page-relative path under the project root — and we trust the serve image's
         # deps (rasterio/tifffile/…) instead of building the local uv venv, and
         # refuse the in-place write actions — a hosted artifact is read-only.
         if not asset:
             return {"error": "a hosted page can only read a bundled asset — pass `asset`, not `file`"}
-        try:
-            import openfused
-        except ImportError:
-            return {"error": "asset mode needs the hosted runtime (openfused shim unavailable)"}
         # `asset` is a caller-influenced route param — confine it to a plain relative
         # path *inside* the bundle so a crafted value ("../…", an absolute path, or
-        # empty/odd segments) can't make asset_path() resolve outside the assets dir.
+        # empty/odd segments) can't resolve outside this script's directory.
         parts = asset.split("/")
         if (os.path.isabs(asset) or asset.startswith(("/", "\\"))
                 or any(p in ("", ".", "..") or "\\" in p or "\x00" in p for p in parts)):
             return {"error": f"invalid asset path {asset!r}"}
-        # With "..", absolute, and empty segments rejected, asset_path() can only
-        # join these components *under* the assets root — no traversal possible.
-        file = openfused.asset_path(*parts)
+        # With "..", absolute, and empty segments rejected, this only joins the
+        # components *under* the bundle root — no traversal possible. No asset_path:
+        # it anchors under an assets/ prefix the fused-render bundle doesn't use.
+        base = (os.path.dirname(os.path.abspath(__file__))
+                if "__file__" in globals() else os.getcwd())
+        file = os.path.join(base, *parts)
         if not os.path.isfile(file):
             return {"error": f"bundled asset {asset!r} not found — add it to the deploy's "
                              "publish list (Deploy → Will publish → Add files)"}

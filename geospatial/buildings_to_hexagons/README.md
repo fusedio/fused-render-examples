@@ -33,9 +33,9 @@ This page can be deployed. Both the client (baked extracts) and `h3_ingest.py`
 (live H3 aggregation) load the bundled `data/` files, and both resolve them
 portably: the page loads each through a single `fused.rawUrl("data/" + name)`
 (resolved against the page dir locally, and against the bundled asset map when
-served) and `h3_ingest.py` uses `openfused.asset_path("data", …)` when served
-(a read-only bundle has no `/api/fs/raw` and no writable `data/` path). Local
-behaviour is unchanged.
+served) and `h3_ingest.py` reads them beside the script (`data/<name>`) — bundle
+v2 lands every bundled file at its real page-relative path under the project
+root, so the same path resolves locally and hosted. Local behaviour is unchanged.
 
 Notes for deploying:
 

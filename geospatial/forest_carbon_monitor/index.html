@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>Protected Forest Monitor</title>
+<!-- Bundle manifest: when this page is exported for hosted serving, ship every
+     park-boundary polygon as a bundled file. forest.py reads them server-side by
+     a computed path (_HERE/boundaries/<park>.json) the HTML scan can't see, so the
+     glob is what gets boundaries/ into the bundle. Add a park to forest.py PARKS,
+     drop its GeoJSON in boundaries/, and it ships — no per-file list to maintain. -->
+<script type="application/fused-bundle">
+{ "include": ["boundaries/*.json"] }
+</script>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
@@ -148,20 +156,9 @@
 <script>
 "use strict";
 
-// Deploy-only, never called. forest.py reads these park-boundary polygons
-// server-side via openfused.asset_path when hosted; they're never fetched from
-// the browser. The exporter bundles only files it sees as build-time rawUrl calls
-// with a literal path, so listing them here (in a function that never runs, to
-// avoid a local rawUrl call) is what gets boundaries/ into the bundle.
-// Add a line here when you add a park to forest.py PARKS.
-function _bundleBoundaries() {
-  fused.rawUrl("./boundaries/bwindi_uganda.json");
-  fused.rawUrl("./boundaries/corcovado_cr.json");
-  fused.rawUrl("./boundaries/gunung_leuser_id.json");
-  fused.rawUrl("./boundaries/manu_peru.json");
-  fused.rawUrl("./boundaries/masoala_mg.json");
-  fused.rawUrl("./boundaries/virunga_drc.json");
-}
+// Park-boundary polygons ship via the fused-bundle manifest glob at the top of
+// this page; forest.py reads them server-side (boundaries/<park>.json beside the
+// script). They're never fetched from the browser.
 
 const YR_MIN = 2001, YR_MAX = 2025;
 const $ = id => document.getElementById(id);

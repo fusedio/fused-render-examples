@@ -42,8 +42,10 @@ read-only mode. The page detects where it runs via `fused.env` (`"local"` vs
 `"hosted"`) and adapts:
 
 - **Reads the bundled demo COG only.** Hosted, the reader resolves the shipped
-  `.tif` via `openfused.asset_path()` instead of a disk path, so the 3D pyramid,
-  per-level stats, and the same-ground comparison all work on `sample_satellite_cog.tif`.
+  `.tif` beside the script (bundle v2 lands it at its page-relative path under the
+  project root; it ships via the `fused-bundle` manifest in `index.html`), so the
+  3D pyramid, per-level stats, and the same-ground comparison all work on
+  `sample_satellite_cog.tif`.
 - **Hidden when hosted:** the "paste your own path" box, the "On the map" tab
   (its tile daemon binds `127.0.0.1`, unreachable from a served page), and the
   build-overviews / cogify panel (those rewrite the file in place — impossible on

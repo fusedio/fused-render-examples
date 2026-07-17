@@ -33,18 +33,20 @@ stats for six parks via a detached warmer; then cached.
 This page can be deployed. Hosted there is no local filesystem and per-call
 subprocess isolation, so the background warm-up daemon can't work — this is what
 made the page hang at "0/6 parks" when served. `forest.py` detects the hosted
-runtime (the `openfused` shim is present only when served) and **skips the
-daemon**, running the per-park GFW zonal queries inline when the catalog/detail
-is requested. The park-boundary polygons in `boundaries/` are read server-side
-via `openfused.asset_path()` when served (a hosted bundle holds only the
-entrypoint code next to `__file__`, not sibling data). Local behaviour is
-unchanged.
+runtime (the `OPENFUSED_DEPLOYED` env var the backend injects on the compute) and
+**skips the daemon**, running the per-park GFW zonal queries inline when the
+catalog/detail is requested. The park-boundary polygons in `boundaries/` are read
+server-side beside the script (`boundaries/<park>.json`) — bundle v2 lands every
+bundled file at its real page-relative path under the project root, so the same
+path works locally and hosted. Local behaviour is unchanged.
 
 Requirements:
-- **The `boundaries/` files bundle automatically** — each is registered as a
-  build-time `rawUrl` literal in the never-called `_bundleBoundaries()` in
-  `index.html` (they're read server-side, not fetched from the browser). Add a
-  line there whenever you add a park to `PARKS`, or its polygon won't be exported.
+- **The `boundaries/` files bundle automatically** via the bundle manifest at the
+  top of `index.html`:
+  `<script type="application/fused-bundle">{ "include": ["boundaries/*.json"] }</script>`.
+  They're read server-side by a computed path the HTML scan can't see, so the glob
+  is what ships them. Add a park to `PARKS`, drop its polygon in `boundaries/`, and
+  it ships — no per-file list to maintain.
 - **Allow outbound HTTPS** to `data-api.globalforestwatch.org` (the GFW API key
   is a public literal baked into the source — no secret to provision). The map's
   basemap/loss tiles are fetched client-side from GFW/Carto. Confirm the per-call
