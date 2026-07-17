@@ -24,28 +24,22 @@ written to memory, zstd-compressed, both sides measured the same way).
                                   (dataset = a RASTERS key, e.g. "fuji")
 
 The client passes data_dir (absolute path to this episode's data/ folder,
-derived from the page URL) because the runner exposes no __file__.
+derived from the page URL) for local runs. Hosted, the deploy bundle
+materializes every bundled file at its real page-relative path under the
+project root (the runtime's cwd + sys.path[0]), so this script and its data/
+folder sit side by side and a __file__-relative read resolves them.
 """
 
 import json
+import os
 import struct
 import time
 
-
-def _is_hosted() -> bool:
-    """True on the hosted serve runtime (which injects the `openfused` shim);
-    locally the FusedRender executor has no openfused (and no __file__), which is
-    why the client passes an absolute data_dir. Same probe the sibling examples
-    use."""
-    try:
-        import openfused  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-_HOSTED = _is_hosted()
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. This is a runtime fact,
+# not an import probe: `import openfused` also succeeds on the local built-in
+# executor, so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
 
 DATASETS = {
     "ams": "ams_2025-05-21-0.json",
@@ -71,14 +65,8 @@ def _duck():
     on disk after the first call, so only the very first run needs network)."""
     global _con
     if _con is None:
-        import tempfile
-
         import duckdb
         _con = duckdb.connect()
-        # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
-        # INSTALL/LOAD the community h3 extension ("Can't find the home directory").
-        # Point it at a writable temp dir; harmless locally.
-        _con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
         try:
             _con.sql("LOAD h3;")
         except Exception:
@@ -87,14 +75,19 @@ def _duck():
 
 
 def _data_path(data_dir, filename):
-    """Resolve a bundled data file. Hosted, the deploy bundle is read-only and the
-    client-passed data_dir ("/data") isn't a real path, so resolve via the bundle
-    asset map (openfused.asset_path); locally use the absolute data_dir the page
-    derived from its URL."""
-    if _HOSTED:
-        import openfused
-
-        return openfused.asset_path("data", filename)
+    """Resolve a bundled data file. Locally the page passes an absolute data_dir
+    (derived from its URL). Hosted, that data_dir ("/data") isn't a real path — but
+    bundle v2 lands every bundled file at its real page-relative path under the
+    project root (the runtime's cwd + sys.path[0]), so data/ sits beside this
+    script. Prefer the __file__-relative copy when it exists — that resolves hosted
+    no matter how the runtime signals deployment, and locally too — else fall back
+    to the page's data_dir. (No asset_path: it anchors under an assets/ prefix the
+    fused-render bundle doesn't use, which produced the old "assets/data/…" miss.)"""
+    if "__file__" in globals():
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "data", filename)
+        if os.path.isfile(here):
+            return here
     return f"{data_dir}/{filename}"
 
 
