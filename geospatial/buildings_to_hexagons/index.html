@@ -142,19 +142,41 @@ const PAGE_DIR = (() => {                            // abs dir of this page on 
 })();
 const DATA_DIR = PAGE_DIR + "/data";
 
+// Deployed-asset manifest. A hosted page can only fetch files the exporter saw as
+// STRING LITERALS at build time — it statically scans source for fused.rawUrl("…")
+// and bundles/serves exactly those. loadData uses computed names, so every data
+// file is registered here as a literal: this both makes the exporter bundle it and
+// gives loadData a name → served-URL lookup. Built only when deployed (no PAGE_DIR):
+// the local app instead reads via /api/fs/raw (below), where a page-relative
+// "./data/…" wouldn't resolve anyway. Add a row here when you add a data file.
+const RAW_URLS = (HAS_FUSED && fused.rawUrl && !PAGE_DIR) ? {
+  "meta.json": fused.rawUrl("./data/meta.json"),
+  "ams_2025-04-23-0.json": fused.rawUrl("./data/ams_2025-04-23-0.json"),
+  "ams_2025-05-21-0.json": fused.rawUrl("./data/ams_2025-05-21-0.json"),
+  "assam_2025-04-23-0.json": fused.rawUrl("./data/assam_2025-04-23-0.json"),
+  "assam_2025-05-21-0.json": fused.rawUrl("./data/assam_2025-05-21-0.json"),
+  "barcelona_2025-05-21-0.json": fused.rawUrl("./data/barcelona_2025-05-21-0.json"),
+  "elev_fuji_terrarium.json": fused.rawUrl("./data/elev_fuji_terrarium.json"),
+  "nyc_2025-05-21-0.json": fused.rawUrl("./data/nyc_2025-05-21-0.json"),
+  "venice_2025-05-21-0.json": fused.rawUrl("./data/venice_2025-05-21-0.json"),
+  "world_hex3_2025-04-23-0.json": fused.rawUrl("./data/world_hex3_2025-04-23-0.json"),
+  "world_hex3_2025-05-21-0.json": fused.rawUrl("./data/world_hex3_2025-05-21-0.json"),
+  "world_hex4_2025-04-23-0.json": fused.rawUrl("./data/world_hex4_2025-04-23-0.json"),
+  "world_hex4_2025-05-21-0.json": fused.rawUrl("./data/world_hex4_2025-05-21-0.json"),
+} : {};
+
 const dataCache = new Map();
 async function loadData(name){                       // baked real extracts (see data/meta.json)
   if (dataCache.has(name)) return dataCache.get(name);
-  // Portable bundled-data URL. fused.rawUrl resolves both in the local app and on
-  // a deployed page: page-relative "./data/…" hosted, and the page's absolute dir
-  // locally (local rawUrl doesn't resolve relative to this page — same reason
-  // visual_claude derives the dir from ?path=). A plain relative fetch (which
-  // resolves to /data/… at the server root and 404s when deployed) is only the
-  // last-resort standalone-preview fallback.
-  const rel = "data/" + name;
-  const url = (HAS_FUSED && fused.rawUrl)
-    ? fused.rawUrl(PAGE_DIR ? PAGE_DIR + "/" + rel : "./" + rel)
-    : rel;
+  let url;
+  if (PAGE_DIR) {                                     // local app: raw-bytes endpoint (abs path)
+    url = "/api/fs/raw?path=" + encodeURIComponent(DATA_DIR + "/" + name);
+  } else if (HAS_FUSED && fused.rawUrl) {            // deployed: exported-literal asset lookup
+    url = RAW_URLS[name];
+    if (!url) throw new Error(name + ": not in the exported data manifest (add it to RAW_URLS)");
+  } else {                                            // standalone preview (no fused runtime)
+    url = "data/" + name;
+  }
   const p = fetch(url).then(r => { if (!r.ok) throw new Error(name + ": HTTP " + r.status); return r.json(); });
   dataCache.set(name, p);
   return p;

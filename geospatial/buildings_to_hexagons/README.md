@@ -30,17 +30,21 @@ were built from Overture building footprints.
 ## Deploying (hosted)
 
 This page can be deployed. Both the client (baked extracts) and `h3_ingest.py`
-(live H3 aggregation) load the bundled `data/` files, and both now resolve them
-portably: the page uses `fused.rawUrl()` and `h3_ingest.py` uses
+(live H3 aggregation) load the bundled `data/` files, and both resolve them
+portably: the page maps each file through a build-time `fused.rawUrl("./data/…")`
+literal (`RAW_URLS` in `index.html`) and `h3_ingest.py` uses
 `openfused.asset_path("data", …)` when served (a read-only bundle exposes no
-`/api/fs/raw` and no writable `data/` path). Local behaviour is unchanged.
+`/api/fs/raw` and no writable `data/` path). Local behaviour is unchanged (the
+app reads via `/api/fs/raw`).
 
-Requirements to deploy:
+Notes for deploying:
 
-1. **Include the `data/` folder in the bundle.** The files are loaded by computed
-   names (e.g. `world_hex${res}_${release}.json`), so the exporter can't
-   auto-detect them — add the whole `data/` directory in the Deploy modal's "Will
-   publish" list (~17 MB total; within the inline-upload cap).
+1. **The `data/` files bundle automatically.** A hosted page can only fetch paths
+   the exporter saw as string literals at build time, so every file is registered
+   as a literal in the `RAW_URLS` manifest in `index.html` — that both bundles it
+   (~17 MB total; within the inline-upload cap) and lets the client look it up by
+   its computed name. **Add a row to `RAW_URLS` whenever you add a data file**, or
+   it won't be exported.
 2. **Bake DuckDB + the H3 community extension into the serve image**, and allow
    outbound HTTPS on first use so DuckDB can fetch the `h3` community extension —
    `h3_ingest.py`'s live-compute steps run on the serve interpreter. Static steps

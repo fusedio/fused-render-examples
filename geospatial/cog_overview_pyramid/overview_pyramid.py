@@ -378,7 +378,17 @@ def main(file: str = "", asset: str = "", action: str = "analyze", resampling: s
             import openfused
         except ImportError:
             return {"error": "asset mode needs the hosted runtime (openfused shim unavailable)"}
-        file = openfused.asset_path(*asset.split("/"))
+        # `asset` is a caller-influenced runPython route param — treat it as
+        # untrusted. Confine it to a plain relative path *inside* the bundle so a
+        # crafted value ("../…", an absolute path, or empty/odd segments) can't
+        # make asset_path() resolve outside the assets dir (path traversal).
+        parts = asset.split("/")
+        if (os.path.isabs(asset) or asset.startswith(("/", "\\"))
+                or any(p in ("", ".", "..") or "\\" in p or "\x00" in p for p in parts)):
+            return {"error": f"invalid asset path {asset!r}"}
+        # With "..", absolute, and empty segments rejected, asset_path() can only
+        # join these components *under* the assets root — no traversal possible.
+        file = openfused.asset_path(*parts)
         if not os.path.isfile(file):
             return {"error": f"bundled asset {asset!r} not found — add it to the deploy's "
                              "publish list (Deploy → Will publish → Add files)"}
