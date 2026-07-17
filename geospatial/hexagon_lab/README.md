@@ -36,9 +36,10 @@ toggles · `R` replay · hold `⇧` to paint.
 ## Deployable
 
 This page follows the hosted contract (literal `readFile`/`runPython` paths,
-files beside the page, hosted detection via `window.__FUSED_RENDER__`,
-`openfused.asset_path` fallback in the backend) — the Deploy button publishes
-it as-is. Live copy: https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e
+files beside the page, hosted detection via `window.__FUSED_RENDER__`, and
+`h3_ingest.py` reading `data/` beside the script — bundle v2 lands every bundled
+file at its real page-relative path under the project root) — the Deploy button
+publishes it as-is. Live copy: https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e
 
 ## Files
 
