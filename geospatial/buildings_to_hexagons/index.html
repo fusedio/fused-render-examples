@@ -143,8 +143,8 @@ const PAGE_DIR = (() => {                            // abs dir of this page on 
 const DATA_DIR = PAGE_DIR + "/data";
 
 // Deployed-asset manifest. A hosted page can only fetch files the exporter saw as
-// STRING LITERALS at build time — it statically scans source for fused.rawUrl("…")
-// and bundles/serves exactly those. loadData uses computed names, so every data
+// STRING LITERALS at build time — it statically scans source for rawUrl calls with
+// a literal path and bundles/serves exactly those. loadData uses computed names, so every data
 // file is registered here as a literal: this both makes the exporter bundle it and
 // gives loadData a name → served-URL lookup. Built only when deployed (no PAGE_DIR):
 // the local app instead reads via /api/fs/raw (below), where a page-relative
