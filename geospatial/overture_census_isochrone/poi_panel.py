@@ -13,6 +13,18 @@ if "__file__" in globals():
     # Running as a plain script; the fused-render runner already puts the
     # script dir at sys.path[0] and exposes no __file__.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Hosted, the code runs with no __file__ (so the insert above is skipped) and the
+# bundled sibling module (_common.py) lands under the project's assets/ dir, which
+# isn't on sys.path. Add it so `from _common import …` (in main) resolves. Harmless
+# locally: that dir doesn't exist there and _common is already importable above.
+try:
+    import openfused  # noqa: E402
+
+    _assets_dir = os.path.join(openfused.project_root(), "assets")
+    if os.path.isdir(_assets_dir):
+        sys.path.insert(0, _assets_dir)
+except ImportError:
+    pass
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))

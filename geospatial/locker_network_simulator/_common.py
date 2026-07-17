@@ -159,6 +159,21 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def _parse_lockers(lockers: str):
+    """Parse a "lat,lon;lat,lon" string into [{"lat","lon"}]. Lives here (not in
+    simulate.py) so suggest.py can import it without importing a sibling entrypoint
+    — a hosted bundle exposes _common (a bundled asset) but not the other run
+    entrypoints as importable modules."""
+    out = []
+    for part in (lockers or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        lat, lon = part.split(",")
+        out.append({"lat": round(float(lat), 5), "lon": round(float(lon), 5)})
+    return out
+
+
 # --- Overture data ----------------------------------------------------------
 
 def _duck():
