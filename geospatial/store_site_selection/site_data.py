@@ -181,6 +181,19 @@ def _acs_demand(state: str, county: str):
     return out
 
 
+def _s3_to_https(href: str) -> str:
+    """Rewrite an ``s3://`` Overture href to its public HTTPS URL so DuckDB's HTTP
+    reader fetches it UNSIGNED (anonymous). Reading ``s3://`` makes httpfs sign the
+    request with whatever ambient AWS credentials exist — on a hosted Lambda those
+    are the execution role, which the public Overture bucket rejects with HTTP 403.
+    The bucket is us-west-2; the region-qualified host avoids a redirect."""
+    if not href.startswith("s3://"):
+        return href
+    bucket, _, key = href[len("s3://"):].partition("/")
+    # `=` in the key (theme=…/type=…) is percent-encoded, matching S3's own URL form.
+    return f"https://{bucket}.s3.us-west-2.amazonaws.com/{key.replace('=', '%3D')}"
+
+
 @disk_cache
 def _cafes(west: float, south: float, east: float, north: float):
     """Coffee-shop POIs from the Overture Maps public S3 release via DuckDB."""
@@ -192,12 +205,25 @@ def _cafes(west: float, south: float, east: float, north: float):
     # INSTALL — point it at a writable temp dir. Harmless locally.
     con.sql(f"SET home_directory='{tempfile.gettempdir()}';")
     con.sql("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';")
-    path = (f"s3://overturemaps-us-west-2/release/{OVERTURE_RELEASE}"
-            f"/theme=places/type=place/*")
+    # Resolve the place parquet files intersecting the bbox from the STAC catalog,
+    # then read them over public HTTPS (unsigned). A direct s3:// glob makes DuckDB
+    # sign the request with the Lambda's execution role, which the public bucket
+    # 403s — and it also scanned every global place file; the STAC bbox prefilter
+    # reads only the tiles this city needs.
+    stac = f"https://stac.overturemaps.org/{OVERTURE_RELEASE}/collections.parquet"
+    files = con.execute(
+        f"SELECT assets.aws.alternate.s3.href h FROM '{stac}' "
+        f"WHERE collection='place' "
+        f"AND bbox.xmax >= {west} AND bbox.xmin <= {east} "
+        f"AND bbox.ymax >= {south} AND bbox.ymin <= {north}"
+    ).fetchdf()["h"].dropna().tolist()
+    if not files:
+        return []
+    flist = ", ".join(f"'{_s3_to_https(f)}'" for f in files)
     df = con.sql(f"""
         SELECT names.primary AS name,
                bbox.xmin AS lon, bbox.ymin AS lat
-        FROM read_parquet('{path}', hive_partitioning=1)
+        FROM read_parquet([{flist}])
         WHERE bbox.xmin BETWEEN {west} AND {east}
           AND bbox.ymin BETWEEN {south} AND {north}
           AND categories.primary IN ('coffee_shop', 'cafe')
