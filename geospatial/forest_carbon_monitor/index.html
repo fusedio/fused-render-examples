@@ -429,10 +429,14 @@ let opT = null;
       `Fetching GFW zonal stats (${w.done}/${w.total} parks, ${Math.round((Date.now() - t0) / 1000)}s)…`;
     await new Promise(r => setTimeout(r, 2000));
   }
-  $("loading").textContent = "Loading park…";
+  // catalog is the slow step when the warmer was skipped (hosted: no cross-call
+  // cache, so it fetches every park's GFW stats inline here) — say so, since the
+  // warm poll above never runs in that mode.
+  $("loading").textContent = "Fetching GFW zonal stats…";
   catalog = await fused.runPython("./forest.py", { action: "catalog" });
   $("park").innerHTML = catalog.parks.map(p =>
     `<option value="${p.id}">${p.name} (${p.country})</option>`).join("");
+  $("loading").textContent = "Loading park…";
   fused.params.onChange(() => draw());
   await draw();
 })();

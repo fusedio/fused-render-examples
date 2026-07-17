@@ -307,6 +307,15 @@ def _warm(city: str):
 def main(city: str = "austin", radius_km: float = RADIUS_KM, step: str = "view") -> dict:
     if city not in CITIES:
         raise ValueError(f"city must be one of {sorted(CITIES)}, got {city!r}")
+    if _HOSTED and not os.environ.get("CENSUS_API_KEY"):
+        # Hosted has no sibling .env (read-only bundle), so the key must be a
+        # provisioned secret. Fail fast at every step with an actionable, hosted-
+        # accurate message instead of raising deep in _fetch_city -> _census_key
+        # (whose "add it to .env" hint doesn't apply on a served page).
+        raise RuntimeError(
+            "CENSUS_API_KEY is not set. Provision it as a hosted secret / env var "
+            "(free key: https://api.census.gov/data/key_signup.html)."
+        )
     if step == "warm":
         return _warm(city)
 
