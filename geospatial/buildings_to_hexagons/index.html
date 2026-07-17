@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>How do you map every building on Earth?</title>
+<!-- Bundle manifest: when this page is exported for hosted serving, bundle every
+     data extract as a read-only asset. The page fetches them by a COMPUTED name
+     (fused.rawUrl("data/" + name)), which the HTML scan can't see — the glob is what
+     gets them into the bundle, and the hosted _asset route then resolves the computed
+     path by key. Add a file to data/ and it ships; no RAW_URLS table to maintain. -->
+<script type="application/fused-bundle">
+{ "include": ["data/*.json"] }
+</script>
 <style>
   :root {
     /* warm paper + ink; blue = the buildings (input), orange = the hexagons (output). */
@@ -145,8 +153,11 @@ const DATA_DIR = PAGE_DIR + "/data";
 const dataCache = new Map();
 async function loadData(name){                       // baked real extracts (see data/meta.json)
   if (dataCache.has(name)) return dataCache.get(name);
-  const url = PAGE_DIR ? "/api/fs/raw?path=" + encodeURIComponent(DATA_DIR + "/" + name)
-                       : "data/" + name;
+  // One page-relative call for every runtime: fused.rawUrl resolves it against this
+  // page's dir locally and against the bundled asset map when hosted (the data/*.json
+  // manifest glob above ships the files). Bare standalone (no fused) falls back to a
+  // relative fetch.
+  const url = (HAS_FUSED && fused.rawUrl) ? fused.rawUrl("data/" + name) : "data/" + name;
   const p = fetch(url).then(r => { if (!r.ok) throw new Error(name + ": HTTP " + r.status); return r.json(); });
   dataCache.set(name, p);
   return p;
