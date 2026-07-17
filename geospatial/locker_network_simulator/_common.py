@@ -192,6 +192,19 @@ def _duck():
     return con
 
 
+def _s3_to_https(href: str) -> str:
+    """Rewrite an ``s3://`` Overture href to its public HTTPS URL so DuckDB's HTTP
+    reader fetches it UNSIGNED (anonymous). Reading ``s3://`` makes httpfs sign the
+    request with whatever ambient AWS credentials exist — on a hosted Lambda those
+    are the execution role, which the public Overture bucket rejects with HTTP 403.
+    The bucket is us-west-2; the region-qualified host avoids a redirect."""
+    if not href.startswith("s3://"):
+        return href
+    bucket, _, key = href[len("s3://"):].partition("/")
+    # `=` in the key (theme=…/type=…) is percent-encoded, matching S3's own URL form.
+    return f"https://{bucket}.s3.us-west-2.amazonaws.com/{key.replace('=', '%3D')}"
+
+
 @disk_cache
 def address_pool(bbox=BBOX):
     """~3k real Amsterdam addresses in the delivery area (thinned by id hash)."""
@@ -208,7 +221,7 @@ def address_pool(bbox=BBOX):
     )
     if not files:
         return []
-    flist = ", ".join(f"'{f}'" for f in files)
+    flist = ", ".join(f"'{_s3_to_https(f)}'" for f in files)
     df = con.execute(f"""
         SELECT ST_Y(geometry) lat, ST_X(geometry) lon, number, street
         FROM read_parquet([{flist}])
@@ -249,7 +262,7 @@ def shop_candidates(bbox=BBOX):
     )
     if not files:
         return []
-    flist = ", ".join(f"'{f}'" for f in files)
+    flist = ", ".join(f"'{_s3_to_https(f)}'" for f in files)
     df = con.execute(f"""
         SELECT names.primary AS name, categories.primary AS category,
                ST_Y(geometry) lat, ST_X(geometry) lon
