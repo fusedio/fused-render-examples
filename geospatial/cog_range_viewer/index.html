@@ -256,9 +256,14 @@ function resolveCogUrl() {
 }
 let COG_URL = resolveCogUrl();
 const USING_BUNDLED = HOSTED && !REMOTE_URL;
-const IS_CUSTOM = !!(LOCAL_FILE || REMOTE_URL || USING_BUNDLED);
+// `?file=` names a local path, but resolveCogUrl only honours it when NOT hosted (a
+// hosted page has no local FS, so it falls through to the bundled COG). Gate the UI on
+// that so a hosted `?file=` page reflects the bundled COG it actually streams rather
+// than mislabelling it with the disk path / "on your disk".
+const LOCAL_ACTIVE = !!LOCAL_FILE && !HOSTED;
+const IS_CUSTOM = !!(LOCAL_ACTIVE || REMOTE_URL || USING_BUNDLED);
 const FILE_NAME = (() => {
-  if (LOCAL_FILE) return LOCAL_FILE.split("/").pop();
+  if (LOCAL_ACTIVE) return LOCAL_FILE.split("/").pop();
   if (USING_BUNDLED) return BUNDLED_COG;
   try {                       // some URLs carry the real path in ?file= (daemon) or ?name= (_asset)
     const u = new URL(COG_URL, location.href);
@@ -459,7 +464,7 @@ async function boot() {
     $("pageTitle").textContent = `One file, ${fmtB(state.fileSize)}, zero downloads`;
     $("ledeP").innerHTML =
       `<b>${FILE_NAME}</b> is <b>one single ${fmtB(state.fileSize)} file</b> (a Cloud-Optimized
-       GeoTIFF) ${LOCAL_FILE ? "on your disk, served over local HTTP"
+       GeoTIFF) ${LOCAL_ACTIVE ? "on your disk, served over local HTTP"
          : USING_BUNDLED ? "bundled with this page, streamed by the server over HTTP range requests"
          : "on a public server"}.
        Pan and zoom — the viewer fetches <b>only the pieces it needs</b>, and they light up in
