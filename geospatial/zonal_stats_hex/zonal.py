@@ -140,9 +140,14 @@ def _child_range(c: int, child_res: int):
 # ---------------------------------------------------------------- DuckDB side
 
 def _connect():
+    import tempfile
+
     import duckdb
 
     con = duckdb.connect()
+    # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
+    # INSTALL — point it at a writable temp dir. Harmless locally.
+    con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
     con.execute("INSTALL httpfs; LOAD httpfs; INSTALL h3 FROM community; LOAD h3;")
     # path-style URLs: the source.coop bucket name contains dots, which breaks
     # TLS for virtual-host-style addressing.

@@ -184,8 +184,13 @@ def _acs_demand(state: str, county: str):
 @disk_cache
 def _cafes(west: float, south: float, east: float, north: float):
     """Coffee-shop POIs from the Overture Maps public S3 release via DuckDB."""
+    import tempfile
+
     import duckdb
     con = duckdb.connect()
+    # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
+    # INSTALL — point it at a writable temp dir. Harmless locally.
+    con.sql(f"SET home_directory='{tempfile.gettempdir()}';")
     con.sql("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';")
     path = (f"s3://overturemaps-us-west-2/release/{OVERTURE_RELEASE}"
             f"/theme=places/type=place/*")

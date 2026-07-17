@@ -71,8 +71,14 @@ def _duck():
     on disk after the first call, so only the very first run needs network)."""
     global _con
     if _con is None:
+        import tempfile
+
         import duckdb
         _con = duckdb.connect()
+        # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
+        # INSTALL/LOAD the community h3 extension ("Can't find the home directory").
+        # Point it at a writable temp dir; harmless locally.
+        _con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
         try:
             _con.sql("LOAD h3;")
         except Exception:

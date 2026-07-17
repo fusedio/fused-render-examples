@@ -285,9 +285,14 @@ def h3_connect():
     Stand-in for fused common.duckdb_connect(); the extension download is a
     one-time cost (DuckDB caches it in ~/.duckdb).
     """
+    import tempfile
+
     import duckdb
 
     con = duckdb.connect()
+    # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
+    # INSTALL — point it at a writable temp dir. Harmless locally.
+    con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
     con.execute("INSTALL h3 FROM community; LOAD h3;")
     return con
 
@@ -318,6 +323,8 @@ def overture_pois_bbox(xmin, ymin, xmax, ymax, category: str):
 
     The slow step (S3 parquet scan via DuckDB) — disk-cached by bbox+category.
     """
+    import tempfile
+
     import duckdb
 
     if category not in POI_CATEGORIES:
@@ -326,6 +333,9 @@ def overture_pois_bbox(xmin, ymin, xmax, ymax, category: str):
     extra = "AND lower(CAST(categories AS VARCHAR)) NOT LIKE '%parking%'" if category == "park" else ""
 
     con = duckdb.connect()
+    # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
+    # INSTALL — point it at a writable temp dir. Harmless locally.
+    con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
     con.execute("INSTALL httpfs; LOAD httpfs;")
     con.execute("INSTALL spatial; LOAD spatial;")
     con.execute("SET s3_region='us-west-2';")

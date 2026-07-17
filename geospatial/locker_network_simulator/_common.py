@@ -162,9 +162,14 @@ def haversine_m(lat1, lon1, lat2, lon2):
 # --- Overture data ----------------------------------------------------------
 
 def _duck():
+    import tempfile
+
     import duckdb
 
     con = duckdb.connect()
+    # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
+    # INSTALL — point it at a writable temp dir. Harmless locally.
+    con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
     con.execute("INSTALL httpfs; LOAD httpfs;")
     con.execute("INSTALL spatial; LOAD spatial;")
     con.execute("SET s3_region='us-west-2';")
