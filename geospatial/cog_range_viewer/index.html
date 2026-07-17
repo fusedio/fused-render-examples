@@ -231,24 +231,28 @@ const BUNDLED_COG = "sample_cog.tif";        // a real tiled COG shipped alongsi
 const QS = new URLSearchParams(location.search);
 const LOCAL_FILE = QS.get("file") || "";
 const REMOTE_URL = QS.get("url") || "";
-// Runtime identity. A hosted (exported) page has no local filesystem and no 127.0.0.1
-// range daemon — but its bundled COG is served by the Range-capable `_asset` route, and
-// `fused.rawUrl()` resolves to it. Locally `fused.rawUrl()` resolves to `/api/fs/raw`,
-// which is also Range-capable, so the same browser-side byte-range reads work in both,
-// with no daemon. `fused.env` is a positive signal present in both runtimes (EXPORT.md).
-const HOSTED = !!(window.fused && window.fused.env === "hosted");
+const HAS_FUSED = typeof window.fused !== "undefined";
+// Hosted detection. A hosted (exported) page has no local filesystem and no 127.0.0.1
+// range daemon — its bundled COG is served by the Range-capable `_asset` route instead.
+// The serve runtime does NOT (yet) expose `fused.env`, so the documented
+// `fused.env === "hosted"` check silently fails on open.fused.io; every hosted artifact
+// IS seeded with `window.__FUSED_RENDER__` before any script runs, so use that as the
+// sentinel and keep the env check for when the runtime gains it (matches hexagon_lab).
+const HOSTED = HAS_FUSED && (window.fused.env === "hosted" || !!window.__FUSED_RENDER__);
 
 // Resolve the COG URL, preferring an absolute URL so the fetch interceptor's
 // `startsWith(COG_URL)` and the curl hint below both match what geotiff.js requests.
-// `fused.rawUrl("./name")` is the string-literal call the exporter bundles and the
-// hosted runtime maps to `_asset`; locally `fused.rawUrl(localPath)` hits `/api/fs/raw`.
+// `fused.rawUrl()` MUST take a STRING LITERAL: the deploy exporter scans literal
+// rawUrl paths to bundle the file and the hosted runtime maps that literal to the
+// `_asset` route (a computed arg is left unbundled → 404 hosted). Locally the same
+// literal resolves to `/api/fs/raw`; both honour HTTP Range. A `?file=` local path is
+// dynamic, so it hits `/api/fs/raw` directly rather than through rawUrl.
 const _abs = (u) => { try { return new URL(u, location.href).href; } catch (e) { return u; } };
 function resolveCogUrl() {
-  if (REMOTE_URL) return REMOTE_URL;                                  // explicit remote COG (any env)
-  if (HOSTED) return _abs(window.fused.rawUrl("./" + BUNDLED_COG));   // bundled COG via _asset (Range)
-  if (LOCAL_FILE && window.fused && window.fused.rawUrl)
-    return _abs(window.fused.rawUrl(LOCAL_FILE));                     // local file via /api/fs/raw (Range)
-  return DEFAULT_URL;                                                 // local default: the 316 MB remote demo
+  if (REMOTE_URL) return REMOTE_URL;                                        // explicit remote COG (any env)
+  if (HOSTED) return _abs(fused.rawUrl("./sample_cog.tif"));                // bundled COG via _asset (Range)
+  if (LOCAL_FILE) return _abs("/api/fs/raw?path=" + encodeURIComponent(LOCAL_FILE));  // local file (Range)
+  return DEFAULT_URL;                                                       // local default: the 316 MB remote demo
 }
 let COG_URL = resolveCogUrl();
 const USING_BUNDLED = HOSTED && !REMOTE_URL;
@@ -397,8 +401,8 @@ async function boot() {
     ? "Slow-motion replay — watch the stack on the right…" : "Contacting the server…";
   try { pool = new GeoTIFF.Pool(); } catch (e) { pool = null; }
 
-  // COG_URL is already resolved (module top): a remote URL, the bundled COG via
-  // fused.rawUrl (hosted → _asset, local → /api/fs/raw — both Range-capable), or the
+  // COG_URL is already resolved (module top): an explicit remote URL, the bundled COG
+  // via the Range-capable _asset route (hosted), a local ?file= over /api/fs/raw, or the
   // remote default. No 127.0.0.1 range daemon — geotiff.js ranges the URL directly.
 
   tiff = await GeoTIFF.fromUrl(COG_URL, { blockSize: BLOCK, cacheSize: 512 });
