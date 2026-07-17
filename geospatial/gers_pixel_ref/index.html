@@ -1,0 +1,1101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A URL for building pixels</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://unpkg.com/proj4@2.15.0/dist/proj4.js"></script>
+<style>
+  :root {
+    --paper:#f6f2e9; --card:#fffdf8; --line:#e4dccb; --line2:#d6cdb8;
+    --ink:#28231a; --dim:#7b7260; --mut:#a89e8a;
+    --gold:#b8860b; --teal:#0e8f7a; --rose:#c9366b; --blue:#3b62d6;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; }
+  body { background:var(--paper); color:var(--ink);
+         font:14px/1.5 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif; }
+  .mono { font-family:"SF Mono",ui-monospace,Menlo,monospace; }
+  b { color:var(--ink); }
+
+  #main { height:100vh; overflow:hidden; display:flex; flex-direction:column;
+          max-width:1560px; margin:0 auto; padding:12px 24px 10px; }
+  #topRow { display:flex; align-items:flex-start; gap:24px; flex:none; }
+  #topRow .titleBlock { flex:1; min-width:0; }
+  h1 { font-family:Georgia,"Iowan Old Style","Times New Roman",serif; font-size:24px;
+       font-weight:600; margin:0; }
+  .lede { color:var(--dim); font-size:13px; margin:3px 0 0; max-width:1150px; }
+  #advToggle { margin-top:4px; font-size:11.5px; cursor:pointer; border-radius:7px;
+               padding:4px 10px; border:1px solid var(--line2); background:var(--card);
+               color:var(--dim); flex:none; }
+
+  #cols { display:grid; grid-template-columns: minmax(430px, 1fr) minmax(470px, 600px); gap:20px;
+          flex:1; min-height:0; margin-top:0; }
+  @media (max-width: 980px) { #cols { grid-template-columns:1fr; } }
+
+  .stage { background:var(--card); border:1px solid var(--line); border-radius:16px;
+           box-shadow:0 2px 10px rgba(90,75,40,.06); padding:12px 14px;
+           display:flex; flex-direction:column; min-height:0; }
+  .stage h2 { font-family:Georgia,serif; font-size:17px; margin:0; font-weight:600; }
+  .stage .hint { color:var(--mut); font-size:12px; margin:1px 0 8px; }
+
+  /* map card */
+  #mapWrap { position:relative; border-radius:11px; overflow:hidden;
+             border:1px solid var(--line2); background:#101418;
+             flex:1; min-height:300px; }
+  #map { position:absolute; inset:0; }
+  .chip { position:absolute; z-index:3; background:rgba(16,20,24,.82); border-radius:7px;
+          padding:4px 9px; font-size:11.5px; color:#e8e2d4; pointer-events:none; }
+  #imgChip { top:10px; left:10px; }
+  #imgChip .sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+                 background:var(--gold); margin-right:6px; }
+  #bldChip { top:38px; left:10px; }
+  #bldChip .sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+                 background:#00e5c0; margin-right:6px; }
+  #loadChip { top:66px; left:10px; display:none; align-items:center; }
+  #loadChip.on { display:flex; gap:7px; }
+  #loadChip .spin { width:10px; height:10px; border-radius:50%; flex:none;
+                    border:2px solid rgba(232,226,212,.25); border-top-color:#00e5c0;
+                    animation:spinrot .7s linear infinite; }
+  @keyframes spinrot { to { transform:rotate(360deg); } }
+  #mapLoading { position:absolute; inset:0; display:flex; flex-direction:column; gap:10px;
+          align-items:center; justify-content:center; background:rgba(16,20,24,.92); z-index:5;
+          transition:opacity .5s; font-size:13.5px; color:#cfc8b8; }
+  #mapLoading.gone { opacity:0; pointer-events:none; }
+  .pulse { width:11px; height:11px; border-radius:50%; background:var(--gold);
+           animation:pu 1s infinite alternate; }
+  @keyframes pu { from {opacity:.3; transform:scale(.8);} to {opacity:1; transform:scale(1.2);} }
+  #narration { margin-top:7px; flex:none; min-height:20px; font-size:12.5px; }
+  #narration .sz { color:var(--gold); font-weight:600; font-variant-numeric:tabular-nums; }
+
+  /* reference card */
+  #refCard { min-height:0; overflow-y:auto; }
+  #refEmpty { color:var(--mut); font-size:13px; padding:30px 10px; text-align:center; }
+  #refBody { display:none; }
+  #refBody.on { display:block; }
+  table.fields { width:100%; border-collapse:collapse; margin-top:6px; }
+  table.fields td { padding:3px 8px 3px 0; border-bottom:1px solid #f0ead9;
+                    vertical-align:top; font-size:12px; }
+  table.fields td.k { color:var(--mut); white-space:nowrap; width:74px;
+                      text-transform:uppercase; font-size:10.5px; letter-spacing:.07em;
+                      padding-top:5px; font-weight:600; }
+  table.fields td.v { font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:11.5px;
+                      word-break:break-all; color:var(--ink); }
+  table.fields td.v .cap { display:block; font-family:-apple-system,"Segoe UI",sans-serif;
+                      font-size:10.5px; color:var(--mut); margin-top:0; word-break:normal; }
+  #refBtns { display:flex; gap:7px; margin-top:6px; flex-wrap:wrap; }
+  button.b { font-size:12.5px; cursor:pointer; border-radius:8px; padding:7px 12px;
+             border:1px solid var(--line2); background:var(--card); color:var(--ink); }
+  button.b:hover { box-shadow:0 1px 6px rgba(90,75,40,.15); }
+  button.b.primary { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  #siteSel { font-size:12px; padding:3px 7px; border:1px solid var(--line2); border-radius:8px;
+             background:var(--card); color:var(--ink); max-width:290px; }
+
+  /* chip result */
+  #chipRow { display:none; gap:16px; margin-top:8px; align-items:flex-start; flex:none; }
+  #chipRow.on { display:flex; }
+  #chipBox { flex:none; position:relative; }
+  #chipCanvas { display:block; image-rendering:pixelated; border-radius:9px;
+                border:1px solid var(--line2); background:
+                  repeating-conic-gradient(#efe9da 0% 25%, #fbf8f0 0% 50%) 0 0/16px 16px; }
+  #chipTag { position:absolute; left:6px; top:6px; background:rgba(16,20,24,.78);
+             color:#e8e2d4; font-size:10.5px; border-radius:6px; padding:2px 7px; }
+  #chipStats { flex:1; min-width:0; font-size:12.5px; color:var(--dim); }
+  #chipStats .big { font-family:Georgia,serif; font-size:22px; line-height:1.1; color:var(--ink);
+                    font-variant-numeric:tabular-nums; }
+  #chipStats .kv { display:flex; justify-content:space-between; gap:8px; margin-top:3px;
+                   font-variant-numeric:tabular-nums; }
+  .badge { display:inline-block; border-radius:6px; padding:1px 7px; font-size:11px; }
+  .badge.ok { background:#e3f2e6; color:#1c7a34; border:1px solid #bfe0c6; }
+  .badge.bad { background:#fbe4e8; color:#b02347; border:1px solid #f0c2cc; }
+  .badge.wait { background:#f2ecdc; color:var(--dim); border:1px solid var(--line2); }
+
+  /* resolve */
+  #resolveBox { margin-top:10px; border-top:1px dashed var(--line2); padding-top:8px; }
+  #resolveBox h3 { margin:0 0 4px; font-size:11.5px; letter-spacing:.09em;
+                   text-transform:uppercase; color:var(--mut); font-weight:600; }
+  #refInput { width:100%; height:44px; resize:vertical; border:1px solid var(--line2);
+              border-radius:9px; background:#fbf8f0; padding:8px 10px; font-size:10.8px;
+              font-family:"SF Mono",ui-monospace,Menlo,monospace; color:var(--ink); }
+  #resolveMsg { font-size:12px; color:var(--dim); margin-top:5px; min-height:18px; }
+
+  /* advanced */
+  #advanced { display:none; max-width:1560px; margin:0 auto; padding:6px 24px 60px; }
+  #advanced.open { display:block; }
+  #advanced .stage { padding:18px; display:block; }
+  #advanced h3 { margin:14px 0 8px; font-size:11.5px; letter-spacing:.09em;
+        text-transform:uppercase; color:var(--mut); font-weight:600; }
+  #advanced h3:first-child { margin-top:0; }
+  #advNote { color:var(--dim); max-width:880px; margin:0; font-size:13px; }
+  #reqLog { max-height:280px; overflow-y:auto; font-size:11.5px; border:1px solid var(--line);
+            border-radius:9px; background:#fbf8f0; }
+  #reqLog table { width:100%; border-collapse:collapse; }
+  #reqLog td { padding:4px 9px; border-bottom:1px solid #efe8d8; white-space:nowrap;
+               font-variant-numeric:tabular-nums; color:var(--dim); }
+  #reqLog td.p { color:var(--ink); }
+  #curl { background:#fbf8f0; border:1px solid var(--line); border-radius:8px; padding:8px 10px;
+          font-size:10.5px; color:var(--dim); word-break:break-all; user-select:all;
+          white-space:pre-wrap; }
+
+  /* ticket anatomy */
+  #ticket { background:#fbf8f0; border:1px solid var(--line); border-radius:10px;
+            padding:7px 11px; font-size:11px; line-height:1.6; word-break:break-all; }
+  .tk { border-radius:5px; padding:1px 5px; margin:0 1px; white-space:nowrap; display:inline-block; }
+  .tk.image { background:#f7ecd2; color:#7a5a08; }
+  .tk.etag { background:#eceadf; color:#5c564a; }
+  .tk.overture { background:#d9f2ec; color:#0b6b5b; }
+  .tk.window { background:#fbe0ea; color:#a12753; }
+  .tk.mask { background:#e9e2f7; color:#5a3fa0; }
+  .tk.ranges { background:#dfe6fa; color:#2b48a8; }
+
+  /* the hero visual chain */
+  #chainHero { display:flex; gap:5px; align-items:flex-start; justify-content:center;
+               margin:6px 0 8px; }
+  .vz { text-align:center; max-width:132px; }
+  .vz canvas { display:block; margin:0 auto; width:100px; height:100px; border-radius:9px;
+               border:2px solid var(--line2); image-rendering:pixelated;
+               background:repeating-conic-gradient(#efe9da 0% 25%, #fbf8f0 0% 50%) 0 0/12px 12px; }
+  .vz .vcap { font-family:Georgia,serif; font-size:13px; margin-top:5px; font-weight:600; }
+  .vz .vsub { display:inline-block; border-radius:6px; padding:3px 7px; margin-top:3px;
+              font-size:10px; line-height:1.4; }
+  .vz .vsub b { display:block; font-family:"SF Mono",ui-monospace,Menlo,monospace;
+                font-size:10px; color:inherit; }
+  .vz.image canvas { border-color:var(--gold); } .vz.image .vcap { color:#7a5a08; }
+  .vz.window canvas { border-color:var(--rose); } .vz.window .vcap { color:#a12753; }
+  .vz.mask canvas { border-color:#8a6fd1; } .vz.mask .vcap { color:#5a3fa0; }
+  .vz.result canvas { border-color:var(--teal); } .vz.result .vcap { color:#0b6b5b; }
+  .vzArrow.big { color:var(--mut); font-size:20px; align-self:flex-start; margin-top:40px; }
+  #fieldDetails { margin-top:8px; }
+  #fieldDetails summary { font-size:11.5px; letter-spacing:.07em; text-transform:uppercase;
+      color:var(--dim); font-weight:600; cursor:pointer; user-select:none; }
+  #fieldDetails summary:hover { color:var(--ink); }
+  /* cross-hover: string field <-> chain panel */
+  #heroCard .vz, #ticket .tk { transition:opacity .16s; }
+  #heroCard .vz canvas { transition:transform .16s, box-shadow .16s, opacity .16s; }
+  #heroCard [data-g], #ticket [data-f] { cursor:pointer; }
+  #heroCard.focused .vz:not(.hl) { opacity:.28; }
+  #heroCard.focused #ticket .tk:not(.hl) { opacity:.3; }
+  #heroCard.focused .vz.hl canvas { transform:scale(1.06);
+      box-shadow:0 5px 16px rgba(90,75,40,.35); }
+  #ticket .tk.hl { box-shadow:0 0 0 1.5px currentColor; }
+  .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+              background:#2f9e57; margin:0 4px 1px 8px; animation:pu 1.2s infinite alternate; }
+  .live-lbl { font-size:11px; color:var(--mut); font-weight:400; font-family:-apple-system,"Segoe UI",sans-serif;
+              text-transform:none; letter-spacing:0; }
+
+
+  #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+           background:var(--ink); color:var(--paper); border-radius:9px; padding:8px 16px;
+           font-size:12.5px; z-index:99; opacity:0; transition:opacity .3s; pointer-events:none; }
+  #toast.on { opacity:1; }
+</style>
+</head>
+<body>
+<div id="main">
+  <div id="topRow">
+    <div class="titleBlock">
+      <h1>A URL for building pixels</h1>
+      <p class="lede">
+        <b>eopix references</b> address one entity's pixels inside versioned satellite imagery,
+        the way a URL addresses a page: image version + Overture GERS&nbsp;ID + pixel window +
+        footprint mask + <b>the exact byte ranges</b>. <b>Mint</b> one by clicking a building;
+        <b>resolve</b> one from anywhere with plain HTTP range requests; <b>verify</b> it against
+        the Overture release it names.
+      </p>
+    </div>
+    <button id="advToggle">Nerdy details ▾</button>
+  </div>
+
+  <div id="cols">
+    <div class="stage">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">
+        <h2>Mint — click a building</h2>
+        <select id="siteSel" title="pick a different area of the world"></select>
+      </div>
+      <p class="hint" id="mapHint">—</p>
+      <div id="mapWrap">
+        <div id="map"></div>
+        <div class="chip" id="imgChip"><span class="sw"></span><span id="imgChipTxt">—</span></div>
+        <div class="chip" id="bldChip"><span class="sw"></span>Overture buildings (GERS)</div>
+  <div class="chip" id="loadChip"><span class="spin"></span>buildings streaming in…</div>
+        <div id="mapLoading"><div class="pulse"></div><div id="mapLoadingText">Contacting the server…</div></div>
+      </div>
+      <div id="narration">Waking up…</div>
+      <div id="chipRow">
+        <div id="chipBox">
+          <canvas id="chipCanvas" width="10" height="10"></canvas>
+          <div id="chipTag">—</div>
+        </div>
+        <div id="chipStats"></div>
+      </div>
+    </div>
+
+    <div class="stage" id="refCard">
+      <h2>The reference</h2>
+      <p class="hint">image → window ∧ footprint = one building's pixels · <b>hover any field</b> in the string to see which step it is</p>
+      <div id="refEmpty">← click a building on the map</div>
+      <div id="refBody">
+        <div id="heroCard">
+          <div id="chainHero">
+            <div class="vz image" data-g="image"><canvas id="vzScene" width="110" height="110"></canvas>
+              <div class="vcap">the image</div>
+              <div class="vsub tk image"><b>image= etag=</b>which file,<br>which exact version</div></div>
+            <div class="vzArrow big">→</div>
+            <div class="vz window" data-g="window"><canvas id="vzWindow" width="110" height="110"></canvas>
+              <div class="vcap">cut a window</div>
+              <div class="vsub tk window"><b>ifd= window=</b>level + rectangle ·
+                <span style="color:#2b48a8"><b style="color:#2b48a8">ranges=</b>its bytes<br>(blue lines = tile edges)</span></div></div>
+            <div class="vzArrow big">∧</div>
+            <div class="vz mask" data-g="mask"><canvas id="vzMask" width="110" height="110"></canvas>
+              <div class="vcap">keep the footprint</div>
+              <div class="vsub tk mask"><b>mask=</b>its fingerprint (sha-256)<br>— proof, not payload</div></div>
+            <div class="vzArrow big">=</div>
+            <div class="vz result" data-g="result"><canvas id="vzResult" width="110" height="110"></canvas>
+              <div class="vcap">one building's pixels</div>
+              <div class="vsub tk overture"><b>overture=</b>who owns them:<br>release + GERS id</div></div>
+          </div>
+          <div id="ticket" class="mono">…</div>
+        </div>
+        <div id="refBtns">
+          <button class="b primary" id="copyRef">Copy reference</button>
+          <button class="b" id="copyCurl">Copy as curl</button>
+        </div>
+        <details id="fieldDetails">
+          <summary>Field-by-field details</summary>
+          <table class="fields"><tbody id="fieldRows"></tbody></table>
+        </details>
+        <div id="resolveBox">
+          <h3>Resolve one yourself</h3>
+          <p class="hint" style="margin:0 0 5px">a reference is a URL for pixels — this box is one
+          browser for it (curl or <span class="mono">resolve.py</span> work just as well)</p>
+          <textarea id="refInput" class="mono" spellcheck="false"
+            placeholder="paste an eopix reference…"></textarea>
+          <div style="display:flex; gap:7px; margin-top:6px;">
+            <button class="b primary" id="btnResolve">Resolve it</button>
+            <button class="b" id="btnPasteLast">Use the one above</button>
+          </div>
+          <div id="resolveMsg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="advanced">
+  <div class="stage">
+    <h3>What just happened</h3>
+    <p id="advNote">
+      The image is a <b>Cloud-Optimized GeoTIFF</b>: a table of contents up front, pixels stored as
+      512×512 JPEG tiles at known byte offsets. Image IDs are too big to pass around — but
+      <b>entity + pixel window + byte ranges</b> is tiny. The <span class="mono">mask</span> field is a
+      SHA-256 of the building-footprint bitmap inside the window: the resolver re-derives the footprint
+      from the Overture release named in the reference and checks the hash, proving the pixels and the
+      entity still agree. Two honest footnotes: the <span class="mono">etag</span> is pinned from the
+      catalog (this S3 bucket doesn't expose <span class="mono">ETag</span> to browser JavaScript), and
+      the image-id → URL mapping here is a one-entry registry standing in for a STAC catalog lookup.
+    </p>
+    <h3>Every HTTP request against the file (newest first)</h3>
+    <div id="reqLog" class="mono"><table><tbody id="reqRows"></tbody></table></div>
+    <h3>The same fetch, from your terminal</h3>
+    <div id="curl" class="mono">select a building first…</div>
+    <p style="font-size:12px;color:var(--dim);margin:8px 0 0">Or resolve a full reference outside any
+    browser: <span class="mono">python3 resolve.py 'eopix:v1:…'</span> — a ~90-line stdlib+Pillow
+    script that ships next to this page. It fetches the table of contents + the referenced ranges
+    and writes the building chip as a PNG.</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   GERS pixel reference — mint + resolve an entity-anchored pixel
+   reference (Sean's "eopix" sketch) against a real Maxar Open Data COG
+   and real Overture buildings. Every byte number is a real request.
+   ===================================================================== */
+
+// Three sites, three building fabrics. etag/fileSize pinned from the catalog
+// (S3 CORS hides ETag/Content-Length details from browser JS).
+const SITES = {
+  santa_monica: {
+    key: "santa_monica", label: "Santa Monica, USA — dense city grid",
+    place: "Santa Monica", sensor: "WorldView-3", date: "2025-01-14",
+    event: "LA wildfires event",
+    id: "WV03_20250114_10400100A06B8000/ard11-031311102320/visual",
+    url: "https://maxar-opendata.s3.amazonaws.com/events/WildFires-LosAngeles-Jan-2025/ard/11/031311102320/2025-01-14/10400100A06B8000-visual.tif",
+    etag: "e3bbf3f44567457edd526e5e1cefd9c6-8", fileSize: 65177985,
+    demoPoint: [-118.4930, 34.0225], zoom: 15.6,
+  },
+  ingram_tx: {
+    key: "ingram_tx", label: "Ingram, Texas — small town, sparse",
+    place: "Ingram, Texas", sensor: "WorldView-2", date: "2025-07-08",
+    event: "Texas floods event",
+    id: "WV02_20250708_1030010116430E00/ard14-031313311231/visual",
+    url: "https://maxar-opendata.s3.amazonaws.com/events/Texas-Flooding-July-2025/ard/14/031313311231/2025-07-08/1030010116430E00-visual.tif",
+    etag: "191f4cd32855276bd9267d915b3e0f8e-2", fileSize: 66535364,
+    demoPoint: [-99.235, 30.077], zoom: 15.3,
+  },
+  cebu_ph: {
+    key: "cebu_ph", label: "Cebu City, Philippines — dense, irregular",
+    place: "Cebu City", sensor: "WorldView-3", date: "2025-03-04",
+    event: "Typhoon Kalmaegi event",
+    id: "WV03_20250304_10400100A1616C00/ard51-122200032211/visual",
+    url: "https://maxar-opendata.s3.amazonaws.com/events/Typhoon-Kalmaegi-Nov-2025/ard/51/122200032211/2025-03-04/10400100A1616C00-visual.tif",
+    etag: "b281aa15f92744c5d34449b75e648e67-2", fileSize: 76824016,
+    demoPoint: [123.897, 10.295], zoom: 15.8,
+  },
+};
+const QSP = new URLSearchParams(location.search);
+const SITE = SITES[QSP.get("site")] || SITES.santa_monica;
+const COG = SITE;                               // current image
+const REGISTRY = Object.fromEntries(Object.values(SITES).map(t => [t.id, t]));
+const PENDING_REF = QSP.get("ref") || "";       // auto-resolve after boot (cross-site hop)
+const OVERTURE_RELEASE = "2026-04-15-0";        // release served by the Fused Overture UDF
+const MVT_TILES = "https://www.fused.io/server/v1/realtime-shared/UDF_Overture_Maps_Example/run/tiles/{z}/{x}/{y}?dtype_out_vector=mvt";
+const DEMO_POINT = SITE.demoPoint;              // auto-selected building lives near here
+const PAD = 6;                                  // px of context around the footprint
+
+const $ = id => document.getElementById(id);
+const fmtB = n => n >= 1e6 ? (n/1e6).toFixed(n >= 1e7 ? 0 : 2)+" MB"
+             : n >= 1000 ? (n/1000).toFixed(1)+" KB" : n+" B";
+const esc = s => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+/* ---------------- fetch accounting (all requests to the COG) ---------------- */
+const nativeFetch = window.fetch.bind(window);
+let purpose = "header";
+const log = [];   // {i, purpose, range, bytes, ms}
+let totalBytes = 0, totalReqs = 0;
+window.fetch = async function(input, init) {
+  const url = typeof input === "string" ? input : (input && input.url) || "";
+  if (!url.startsWith(COG.url)) return nativeFetch(input, init);
+  let range = null;
+  const h = (init && init.headers) || (typeof input === "object" && input.headers) || null;
+  if (h) {
+    if (typeof h.get === "function") range = h.get("Range") || h.get("range");
+    else if (Array.isArray(h)) { for (const [k,v] of h) if (String(k).toLowerCase()==="range") range = v; }
+    else range = h.Range || h.range || null;
+  }
+  const p = purpose, t0 = performance.now();
+  const res = await nativeFetch(input, init);
+  try {
+    const spans = parseRanges(range);
+    const n = spans.reduce((s,[a,b]) => s+(b-a), 0) || +(res.headers.get("content-length")||0);
+    totalReqs++; totalBytes += n;
+    log.unshift({ i: totalReqs, purpose: p, range: range||"(whole?)", bytes: n,
+                  ms: Math.round(performance.now()-t0) });
+    if (log.length > 200) log.pop();
+    renderLog();
+  } catch (e) { console.warn("[acct]", e); }
+  return res;
+};
+function parseRanges(rangeHeader) {
+  if (!rangeHeader) return [];
+  const out = [];
+  for (const part of rangeHeader.replace(/^bytes=/,"").split(",")) {
+    const m = part.trim().match(/^(\d+)-(\d+)$/);
+    if (m) out.push([+m[1], +m[2]+1]);
+  }
+  return out;
+}
+function renderLog() {
+  const rows = log.slice(0, 120).map(e =>
+    `<tr><td>#${e.i}</td><td class="p">${e.purpose}</td><td>${esc(e.range)}</td>` +
+    `<td>${fmtB(e.bytes)}</td><td>${e.ms} ms</td></tr>`).join("");
+  $("reqRows").innerHTML = rows;
+}
+
+/* ---------------- sha256 (subtle when available, pure-JS fallback) ---------------- */
+async function sha256hex(bytes) {
+  if (crypto && crypto.subtle) {
+    try {
+      const d = await crypto.subtle.digest("SHA-256", bytes);
+      return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2,"0")).join("");
+    } catch (e) { /* fall through */ }
+  }
+  return sha256js(bytes);
+}
+function sha256js(m) { // compact pure-JS SHA-256
+  const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  let H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const l = m.length, L = ((l + 8) >> 6 << 6) + 64, b = new Uint8Array(L);
+  b.set(m); b[l] = 0x80;
+  const dv = new DataView(b.buffer);
+  dv.setUint32(L-4, l << 3); dv.setUint32(L-8, l / 536870912 | 0);
+  const w = new Int32Array(64);
+  const rr = (x,n) => (x >>> n) | (x << (32-n));
+  for (let off = 0; off < L; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i*4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rr(w[i-15],7) ^ rr(w[i-15],18) ^ (w[i-15] >>> 3);
+      const s1 = rr(w[i-2],17) ^ rr(w[i-2],19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) | 0;
+    }
+    let [a,bb,c,d,e,f,g,hh] = H;
+    for (let i = 0; i < 64; i++) {
+      const S1 = rr(e,6) ^ rr(e,11) ^ rr(e,25), ch = (e & f) ^ (~e & g);
+      const t1 = (hh + S1 + ch + K[i] + w[i]) | 0;
+      const S0 = rr(a,2) ^ rr(a,13) ^ rr(a,22), mj = (a & bb) ^ (a & c) ^ (bb & c);
+      const t2 = (S0 + mj) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0;
+    }
+    H = [H[0]+a|0, H[1]+bb|0, H[2]+c|0, H[3]+d|0, H[4]+e|0, H[5]+f|0, H[6]+g|0, H[7]+hh|0];
+  }
+  return H.map(x => (x >>> 0).toString(16).padStart(8,"0")).join("");
+}
+
+/* ---------------- COG structure ---------------- */
+const G = {};    // filled by boot: img, W,H,tw,th,cols, offsets, counts, jpegTables, projDef, ox,oy,rx,ry, levels
+function utmDef(epsg) {
+  const z = epsg % 100, south = Math.floor(epsg/100) === 327;
+  return `+proj=utm +zone=${z}${south ? " +south" : ""} +datum=WGS84 +units=m +no_defs`;
+}
+const llToPx = (lon, lat) => {
+  const [X, Y] = proj4("EPSG:4326", G.projDef, [lon, lat]);
+  return [(X - G.ox) / G.rx, (Y - G.oy) / G.ry];
+};
+const pxToLL = (px, py) => {
+  const X = G.ox + px * G.rx, Y = G.oy + py * G.ry;
+  return proj4(G.projDef, "EPSG:4326", [X, Y]);
+};
+
+async function bootCog() {
+  purpose = "header";
+  const tiff = await GeoTIFF.fromUrl(COG.url, { blockSize: 65536, cacheSize: 256 });
+  const n = await tiff.getImageCount();
+  const levels = [];
+  let full = null;
+  for (let i = 0; i < n; i++) {
+    const im = await tiff.getImage(i);
+    if (im.getSamplesPerPixel() < 3) continue;          // skip 1-bit mask IFDs
+    if (i === 0) full = im;
+    levels.push(im);
+  }
+  if (!full) full = levels[0];
+  levels.sort((a, b) => a.getWidth() - b.getWidth());   // smallest first
+  const fd = full.fileDirectory;
+  G.img = full; G.levels = levels;
+  G.W = full.getWidth(); G.H = full.getHeight();
+  G.tw = full.getTileWidth(); G.th = full.getTileHeight();
+  G.cols = Math.ceil(G.W / G.tw); G.rows = Math.ceil(G.H / G.th);
+  G.offsets = Array.from(fd.TileOffsets, Number);
+  G.counts = Array.from(fd.TileByteCounts, Number);
+  G.jpegTables = fd.JPEGTables ? new Uint8Array(fd.JPEGTables) : null;
+  const epsg = (full.geoKeys && full.geoKeys.ProjectedCSTypeGeoKey) || 32611;
+  G.projDef = utmDef(epsg); G.epsg = epsg;
+  const [ox, oy] = full.getOrigin();
+  const res = full.getResolution();
+  G.ox = ox; G.oy = oy; G.rx = res[0]; G.ry = res[1];   // ry is negative
+  const bb = full.getBoundingBox();                     // UTM [minx,miny,maxx,maxy]
+  const c = [[bb[0],bb[3]],[bb[2],bb[3]],[bb[2],bb[1]],[bb[0],bb[1]]]
+    .map(([x,y]) => proj4(G.projDef, "EPSG:4326", [x,y]));
+  G.cornersLL = c;
+}
+
+/* decode one 512px tile straight from its ranged bytes: JPEGTables + tile stream */
+async function decodeTile(bytes) {
+  const t = G.jpegTables;
+  const merged = new Uint8Array(t.length - 2 + bytes.length - 2);
+  merged.set(t.subarray(0, t.length - 2), 0);           // tables without EOI
+  merged.set(bytes.subarray(2), t.length - 2);          // tile without SOI
+  return createImageBitmap(new Blob([merged], { type: "image/jpeg" }));
+}
+
+/* ---------------- map ---------------- */
+let map, mapReady = false;
+function bootMap() {
+  map = new maplibregl.Map({
+    container: "map",
+    style: { version: 8, sources: {}, layers: [
+      { id: "bg", type: "background", paint: { "background-color": "#101418" } } ] },
+    center: DEMO_POINT, zoom: SITE.zoom, attributionControl: { compact: true },
+  });
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  map.on("error", e => console.warn("[map]", e.error && e.error.message || e));
+  map.on("load", () => {
+    map.addSource("esri", { type: "raster", tileSize: 256, maxzoom: 19,
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      attribution: "Esri World Imagery · Maxar Open Data · Overture Maps" });
+    map.addLayer({ id: "esri", type: "raster", source: "esri" });
+
+    map.addSource("cogFrame", { type: "geojson", data: poly(G.cornersLL) });
+    map.addLayer({ id: "cog-frame", type: "line", source: "cogFrame",
+      paint: { "line-color": "#b8860b", "line-width": 2.5 } });
+
+    map.addSource("overture", { type: "vector", minzoom: 13, maxzoom: 15,
+      tiles: [MVT_TILES] });
+    map.addLayer({ id: "ovt-fill", type: "fill", source: "overture", "source-layer": "udf",
+      minzoom: 13, paint: { "fill-color": "#00e5c0", "fill-opacity": 0.07 } });
+    map.addLayer({ id: "ovt-line", type: "line", source: "overture", "source-layer": "udf",
+      minzoom: 13, paint: { "line-color": "#00e5c0", "line-opacity": 0.85,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.4, 16, 1.4] } });
+
+    map.addSource("sel", { type: "geojson", data: fc([]) });
+    map.addLayer({ id: "sel-win", type: "line", source: "sel",
+      filter: ["==", ["get", "kind"], "window"],
+      paint: { "line-color": "#c9366b", "line-width": 2, "line-dasharray": [2,1.5] } });
+    map.addLayer({ id: "sel-fp", type: "line", source: "sel",
+      filter: ["==", ["get", "kind"], "footprint"],
+      paint: { "line-color": "#ffb454", "line-width": 2.5 } });
+
+    // spinner while Overture MVT tiles are still streaming in (they can lag on fresh areas)
+    let ovtT = null;
+    function ovtSpin() {
+      let loading = false;
+      try { loading = !map.isSourceLoaded("overture"); } catch (e) {}
+      if (loading) {
+        if (!ovtT) ovtT = setTimeout(() => $("loadChip").classList.add("on"), 250);
+      } else {
+        clearTimeout(ovtT); ovtT = null;
+        $("loadChip").classList.remove("on");
+      }
+    }
+    for (const evn of ["sourcedataloading", "sourcedata", "idle", "moveend"])
+      map.on(evn, ovtSpin);
+
+    map.on("click", "ovt-fill", e => { if (e.features.length) selectFeature(e.features[0]); });
+    map.on("mouseenter", "ovt-fill", () => map.getCanvas().style.cursor = "pointer");
+    map.on("mouseleave", "ovt-fill", () => map.getCanvas().style.cursor = "");
+    mapReady = true;
+    addCogOverlay();
+  });
+}
+const fc = f => ({ type: "FeatureCollection", features: f });
+const poly = ring => ({ type: "Feature", properties: {},
+  geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] } });
+
+/* the COG itself rendered onto the map (overview level, real range reads) */
+async function addCogOverlay() {
+  purpose = "preview";
+  try {
+    let img = G.levels[G.levels.length - 1];
+    for (const im of G.levels) { if (im.getWidth() >= 2048) { img = im; break; } }
+    const w = img.getWidth(), h = img.getHeight();
+    const scale = Math.min(1, 2048 / Math.max(w, h));
+    const ow = Math.round(w * scale), oh = Math.round(h * scale);
+    let data;
+    try { data = await img.readRGB({ width: ow, height: oh, interleave: true, enableAlpha: false }); }
+    catch (e) { data = await img.readRasters({ width: ow, height: oh, interleave: true }); }
+    const cv = document.createElement("canvas"); cv.width = ow; cv.height = oh;
+    const cx = cv.getContext("2d"), id = cx.createImageData(ow, oh), d = id.data;
+    for (let i = 0, j = 0; i < ow*oh; i++, j += 3) {
+      const r = data[j], g = data[j+1], b = data[j+2];
+      d[i*4] = r; d[i*4+1] = g; d[i*4+2] = b; d[i*4+3] = (r||g||b) ? 255 : 0;
+    }
+    cx.putImageData(id, 0, 0);
+    G.previewCanvas = cv;                       // reused by the anatomy visual chain
+    if (lastRef) updateAnatomyViz(lastRef);
+    map.addSource("cog", { type: "image", url: cv.toDataURL("image/png"),
+      coordinates: G.cornersLL });
+    map.addLayer({ id: "cog", type: "raster", source: "cog",
+      paint: { "raster-opacity": 1, "raster-fade-duration": 200 } }, "ovt-fill");
+    narrate(`The gold frame is the real image — its overview cost <span class="sz">${fmtB(sumPurpose("preview"))}</span> of range reads. Now click a building.`);
+  } catch (e) {
+    console.warn("overlay failed", e);
+    narrate("Couldn't draw the image overlay (basemap still shows the area) — clicks still work.");
+  }
+  $("mapLoading").classList.add("gone");
+  if (PENDING_REF) {
+    $("refInput").value = PENDING_REF;
+    $("refEmpty").style.display = "none"; $("refBody").classList.add("on");
+    resolveRef(PENDING_REF);
+  } else {
+    autoSelect();
+  }
+}
+function sumPurpose(p) { return log.filter(e => e.purpose === p).reduce((s,e) => s+e.bytes, 0); }
+function narrate(html) { $("narration").innerHTML = html; }
+
+/* pick a demo building automatically so the page never starts empty */
+async function autoSelect() {
+  if (new URLSearchParams(location.search).get("noauto") === "1") return;
+  let feats = [];
+  for (let tries = 0; tries < 20 && !feats.length; tries++) {   // MVT endpoint can be slow when cold
+    await waitIdle();
+    const pt = map.project(DEMO_POINT);
+    feats = map.queryRenderedFeatures(
+      [[pt.x-80, pt.y-80],[pt.x+80, pt.y+80]], { layers: ["ovt-fill"] });
+    if (!feats.length) await new Promise(r => setTimeout(r, 1500));
+    if (lastRef) return;                                        // user clicked meanwhile
+  }
+  if (!feats.length) { narrate("Buildings are taking a while to stream in — they'll appear shortly; click one when they do."); return; }
+  let best = null, bestD = Infinity;
+  for (const f of feats) {
+    const c = centroidLL(f.geometry);
+    const d = (c[0]-DEMO_POINT[0])**2 + (c[1]-DEMO_POINT[1])**2;
+    if (d < bestD) { bestD = d; best = f; }
+  }
+  if (best) selectFeature(best, true);
+}
+function waitIdle() { return new Promise(r => map.idle ? map.once("idle", r) : map.once("idle", r)); }
+function centroidLL(geom) {
+  const ring = geom.type === "Polygon" ? geom.coordinates[0] : geom.coordinates[0][0];
+  let x = 0, y = 0;
+  for (const p of ring) { x += p[0]; y += p[1]; }
+  return [x / ring.length, y / ring.length];
+}
+function ringsOf(geom) {
+  return geom.type === "Polygon" ? geom.coordinates
+       : geom.type === "MultiPolygon" ? geom.coordinates.flat() : [];
+}
+
+/* ---------------- mask (deterministic scanline, shared by mint + resolve) ---------------- */
+function pointInRings(x, y, rings) {
+  let inside = false;
+  for (const r of rings)
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const [xi, yi] = r[i], [xj, yj] = r[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+  return inside;
+}
+/* bits packed row-major, MSB first — this exact byte array is what gets hashed */
+function maskBits(win, ringsPx) {
+  const { x, y, w, h } = win;
+  const bits = new Uint8Array((w * h + 7) >> 3);
+  for (let r = 0; r < h; r++)
+    for (let c = 0; c < w; c++)
+      if (pointInRings(x + c + 0.5, y + r + 0.5, ringsPx)) {
+        const k = r * w + c;
+        bits[k >> 3] |= 0x80 >> (k & 7);
+      }
+  return bits;
+}
+function maskCanvas(win, bits) {
+  const cv = document.createElement("canvas"); cv.width = win.w; cv.height = win.h;
+  const cx = cv.getContext("2d"), id = cx.createImageData(win.w, win.h);
+  for (let k = 0; k < win.w * win.h; k++)
+    if (bits[k >> 3] & (0x80 >> (k & 7))) id.data[k*4+3] = 255;
+  cx.putImageData(id, 0, 0);
+  return cv;
+}
+
+/* ---------------- mint ---------------- */
+let lastRef = null;   // {str, obj, win, ranges, tiles}
+async function selectFeature(f, isAuto) {
+  const gers = f.properties && f.properties.id;
+  if (!gers) { toast("This feature has no GERS id"); return; }
+  const rings = ringsOf(f.geometry);
+  if (!rings.length) return;
+  const ringsPx = rings.map(r => r.map(([lon,lat]) => llToPx(lon, lat)));
+
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const r of ringsPx) for (const [x,y] of r) {
+    minx = Math.min(minx,x); maxx = Math.max(maxx,x);
+    miny = Math.min(miny,y); maxy = Math.max(maxy,y);
+  }
+  if (maxx < 0 || maxy < 0 || minx > G.W || miny > G.H) {
+    toast("That building is outside the gold frame — pick one inside the image"); return;
+  }
+  const x = Math.max(0, Math.floor(minx) - PAD), y = Math.max(0, Math.floor(miny) - PAD);
+  const w = Math.min(G.W, Math.ceil(maxx) + PAD) - x, h = Math.min(G.H, Math.ceil(maxy) + PAD) - y;
+  const win = { x, y, w, h };
+
+  // tiles + byte ranges
+  const tiles = [];
+  for (let tr = Math.floor(y / G.th); tr <= Math.floor((y+h-1) / G.th); tr++)
+    for (let tc = Math.floor(x / G.tw); tc <= Math.floor((x+w-1) / G.tw); tc++) {
+      const t = tr * G.cols + tc;
+      tiles.push({ t, tc, tr, off: G.offsets[t], cnt: G.counts[t] });
+    }
+  tiles.sort((a,b) => a.off - b.off);
+  const ranges = [];
+  for (const tl of tiles) {
+    const last = ranges[ranges.length-1];
+    if (last && tl.off <= last[1] + 1) last[1] = Math.max(last[1], tl.off + tl.cnt - 1);
+    else ranges.push([tl.off, tl.off + tl.cnt - 1]);
+  }
+
+  const bits = maskBits(win, ringsPx);
+  const hash = await sha256hex(bits);
+
+  const obj = {
+    image: COG.id, etag: COG.etag,
+    overture: `${OVERTURE_RELEASE}/${gers}`,
+    ifd: 0, window: `${x},${y},${w},${h}`,
+    mask: `sha256:${hash}`,
+    ranges: ranges.map(([a,b]) => `${a}-${b}`).join(","),
+  };
+  const str = "eopix:v1:" + Object.entries(obj).map(([k,v]) => `${k}=${v}`).join(";");
+  lastRef = { str, obj, win, ranges, tiles, ringsPx, bits, gers };
+
+  renderReference(lastRef, isAuto);
+  highlightOnMap(f.geometry, win);
+  await streamChip(lastRef, "chip");
+}
+
+function highlightOnMap(geom, win) {
+  const rect = [ pxToLL(win.x, win.y), pxToLL(win.x+win.w, win.y),
+                 pxToLL(win.x+win.w, win.y+win.h), pxToLL(win.x, win.y+win.h) ];
+  map.getSource("sel").setData(fc([
+    { type:"Feature", properties:{ kind:"footprint" }, geometry: geom },
+    { ...poly(rect), properties:{ kind:"window" } },
+  ]));
+}
+
+function renderReference(ref, isAuto) {
+  $("refEmpty").style.display = "none";
+  $("refBody").classList.add("on");
+  const o = ref.obj;
+  const bytesTotal = ref.ranges.reduce((s,[a,b]) => s + (b-a+1), 0);
+  const rows = [
+    ["image", o.image, "which picture — a catalog resolves this id to the file's URL"],
+    ["etag", o.etag, "exact file version (S3 entity tag) — if the file changes, this breaks, loudly"],
+    ["overture", o.overture, "Overture release + GERS id — the entity these pixels belong to"],
+    ["ifd", o.ifd, "zoom level inside the file (0 = full resolution, 0.3 m/px)"],
+    ["window", o.window, `pixel rectangle x,y,w,h — ${ref.win.w}×${ref.win.h} px of a ${G.W}×${G.H} image`],
+    ["mask", o.mask.slice(0,19) + "…", "SHA-256 of the footprint bitmap in the window — ties pixels to entity"],
+    ["ranges", o.ranges, `the exact bytes: ${ref.ranges.length} range${ref.ranges.length>1?"s":""}, ${fmtB(bytesTotal)} of a ${fmtB(COG.fileSize)} file`],
+  ];
+  $("fieldRows").innerHTML = rows.map(([k,v,cap]) =>
+    `<tr><td class="k">${k}</td><td class="v">${esc(v)}<span class="cap">${cap}</span></td></tr>`).join("");
+  $("curl").textContent = curlFor(ref);
+  $("ticket").innerHTML = "eopix:v1:" +
+    `<span class="tk image" data-f="image">image=${esc(o.image)}</span>;` +
+    `<span class="tk etag" data-f="etag">etag=${esc(o.etag.slice(0,10))}…</span>;` +
+    `<span class="tk overture" data-f="overture">overture=${esc(o.overture)}</span>;` +
+    `<span class="tk window" data-f="ifd">ifd=0</span>;` +
+    `<span class="tk window" data-f="window">window=${esc(o.window)}</span>;` +
+    `<span class="tk mask" data-f="mask">mask=sha256:${esc(o.mask.slice(7,17))}…</span>;` +
+    `<span class="tk ranges" data-f="ranges">ranges=${esc(o.ranges)}</span>`;
+  $("chipTag").textContent = "minted here";
+  if (isAuto) narrate(`Auto-picked a building to start — <b>click any other</b> and watch the ticket rebuild.`);
+}
+function curlFor(ref) {
+  return ref.ranges.map(([a,b]) =>
+    `curl -s -r ${a}-${b} "${COG.url}" -o part_${a}.bin`).join("\n") +
+    `\n# ${ref.ranges.length} request(s) → the JPEG tiles covering window ${ref.obj.window}`;
+}
+
+/* ---------------- stream the chip from exactly the referenced ranges ---------------- */
+async function streamChip(ref, tag) {
+  purpose = "chip";
+  const { win, ranges, tiles } = ref;
+  let cv = ref._chipCanvas, ms = ref._chipMs;
+  if (!cv) {                                   // fetch + decode once per reference
+    const t0 = performance.now();
+    const bufs = await Promise.all(ranges.map(([a,b]) =>
+      window.fetch(COG.url, { cache: "no-store", headers: { Range: `bytes=${a}-${b}` } })
+        .then(r => { if (!(r.ok || r.status === 206)) throw new Error("HTTP "+r.status);
+                     return r.arrayBuffer(); })));
+    ms = Math.round(performance.now() - t0);
+    cv = document.createElement("canvas"); cv.width = win.w; cv.height = win.h;
+    const cx = cv.getContext("2d");
+    for (const tl of tiles) {
+      const ri = ranges.findIndex(([a,b]) => tl.off >= a && tl.off + tl.cnt - 1 <= b);
+      if (ri < 0) continue;
+      const bytes = new Uint8Array(bufs[ri], tl.off - ranges[ri][0], tl.cnt);
+      try {
+        const bm = await decodeTile(bytes);
+        cx.drawImage(bm, tl.tc * G.tw - win.x, tl.tr * G.th - win.y);
+      } catch (e) { console.warn("tile decode", tl.t, e); }
+    }
+    ref._chipCanvas = cv; ref._chipMs = ms;
+  }
+  injectChipOnMap(ref);
+
+  // masked composite: faint full window underneath, footprint pixels on top
+  const mcv = maskCanvas(win, ref.bits);
+  const masked = document.createElement("canvas"); masked.width = win.w; masked.height = win.h;
+  const mx = masked.getContext("2d");
+  mx.drawImage(cv, 0, 0);
+  mx.globalCompositeOperation = "destination-in";
+  mx.drawImage(mcv, 0, 0);
+
+  $("chipRow").classList.add("on");
+  const out = $("chipCanvas");
+  out.width = win.w; out.height = win.h;
+  const ox = out.getContext("2d");
+  ox.globalAlpha = 0.22; ox.drawImage(cv, 0, 0);
+  ox.globalAlpha = 1; ox.drawImage(masked, 0, 0);
+  const disp = Math.min(170, Math.max(120, win.w * 2));
+  out.style.width = disp + "px";
+  out.style.height = Math.round(disp * win.h / win.w) + "px";
+
+  const bytesTotal = ranges.reduce((s,[a,b]) => s + (b-a+1), 0);
+  $("chipTag").textContent = tag === "resolved" ? "resolved from the reference" : "minted + streamed";
+  $("chipStats").innerHTML =
+    `<div class="big">${fmtB(bytesTotal)}</div>
+     <div>streamed in ${ranges.length} range request${ranges.length>1?"s":""} · ${ms} ms</div>
+     <div class="kv"><span>whole file</span><b>${fmtB(COG.fileSize)}</b></div>
+     <div class="kv"><span>this chip</span><b>${(100*bytesTotal/COG.fileSize).toFixed(2)}%</b></div>
+     <div class="kv"><span>window</span><b>${win.w}×${win.h} px · ${(win.w*0.305).toFixed(0)}×${(win.h*0.305).toFixed(0)} m</b></div>
+     <div style="margin-top:6px" id="verifySlot"></div>`;
+  updateAnatomyViz(ref);
+  narrate(`Streamed <span class="sz">${fmtB(bytesTotal)}</span> — ${(100*bytesTotal/COG.fileSize).toFixed(2)}% of the file — in ${ranges.length} plain HTTP range request${ranges.length>1?"s":""}. <b>Zoom into the dashed window</b> — it's now full resolution, drawn from those very bytes.`);
+}
+
+/* the streamed full-res window, placed back onto the map — the ticket's own
+   bytes sharpen the exact spot they describe (the rest stays the cheap overview) */
+function injectChipOnMap(ref) {
+  if (!map || !map.getStyle) return;
+  try {
+    const { win } = ref;
+    const coordinates = [ pxToLL(win.x, win.y), pxToLL(win.x + win.w, win.y),
+                          pxToLL(win.x + win.w, win.y + win.h), pxToLL(win.x, win.y + win.h) ];
+    const url = ref._chipCanvas.toDataURL("image/png");
+    if (map.getSource("chipHD")) map.getSource("chipHD").updateImage({ url, coordinates });
+    else {
+      map.addSource("chipHD", { type: "image", url, coordinates });
+      map.addLayer({ id: "chipHD", type: "raster", source: "chipHD",
+        paint: { "raster-fade-duration": 150 } },
+        map.getLayer("ovt-fill") ? "ovt-fill" : undefined);
+    }
+  } catch (e) { console.warn("chipHD", e); }
+}
+
+/* ---------------- anatomy visual chain (what each field looks like) ---------------- */
+function fitRect(w, h, box) {
+  const k = Math.min(box / w, box / h);
+  const dw = Math.max(1, Math.round(w * k)), dh = Math.max(1, Math.round(h * k));
+  return { dw, dh, dx: Math.round((box - dw) / 2), dy: Math.round((box - dh) / 2) };
+}
+function vzCtx(id) {
+  const c = $(id), x = c.getContext("2d");
+  x.clearRect(0, 0, c.width, c.height);
+  x.imageSmoothingEnabled = false;
+  return x;
+}
+function updateAnatomyViz(ref) {
+  if (!ref || !ref._chipCanvas) return;
+  const { win, bits } = ref, B = $("vzScene").width;
+
+  // 1. the whole image, window marked
+  const sx = vzCtx("vzScene");
+  sx.imageSmoothingEnabled = true; sx.imageSmoothingQuality = "high";
+  if (G.previewCanvas) sx.drawImage(G.previewCanvas, 0, 0, B, B);
+  else { sx.fillStyle = "#e8e0cc"; sx.fillRect(0, 0, B, B); }
+  const mw = Math.max(6, win.w / G.W * B), mh = Math.max(6, win.h / G.H * B);
+  const mxx = win.x / G.W * B - (mw - win.w / G.W * B) / 2;
+  const myy = win.y / G.H * B - (mh - win.h / G.H * B) / 2;
+  sx.strokeStyle = "rgba(255,255,255,.9)"; sx.lineWidth = 3.5;
+  sx.strokeRect(mxx, myy, mw, mh);
+  sx.strokeStyle = "#c9366b"; sx.lineWidth = 1.8;
+  sx.strokeRect(mxx, myy, mw, mh);
+
+  // 2. the window crop, with 512-px tile edges (= where the byte ranges split)
+  const wx = vzCtx("vzWindow");
+  const f = fitRect(win.w, win.h, B);
+  wx.drawImage(ref._chipCanvas, f.dx, f.dy, f.dw, f.dh);
+  wx.strokeStyle = "#3b62d6"; wx.lineWidth = 1.5; wx.setLineDash([3, 2.5]);
+  for (let gx = Math.ceil(win.x / G.tw) * G.tw; gx < win.x + win.w; gx += G.tw) {
+    const X = f.dx + (gx - win.x) / win.w * f.dw;
+    wx.beginPath(); wx.moveTo(X, f.dy); wx.lineTo(X, f.dy + f.dh); wx.stroke();
+  }
+  for (let gy = Math.ceil(win.y / G.th) * G.th; gy < win.y + win.h; gy += G.th) {
+    const Y = f.dy + (gy - win.y) / win.h * f.dh;
+    wx.beginPath(); wx.moveTo(f.dx, Y); wx.lineTo(f.dx + f.dw, Y); wx.stroke();
+  }
+  wx.setLineDash([]);
+
+  // 3. the mask bitmap
+  const kx = vzCtx("vzMask");
+  kx.fillStyle = "#fbf8f0"; kx.fillRect(f.dx, f.dy, f.dw, f.dh);
+  kx.drawImage(maskTint(win, bits, "#8a6fd1"), f.dx, f.dy, f.dw, f.dh);
+
+  // 4. window ∧ mask = the entity's pixels
+  const rx = vzCtx("vzResult");
+  const masked = document.createElement("canvas"); masked.width = win.w; masked.height = win.h;
+  const mk = masked.getContext("2d");
+  mk.drawImage(ref._chipCanvas, 0, 0);
+  mk.globalCompositeOperation = "destination-in";
+  mk.drawImage(maskCanvas(win, bits), 0, 0);
+  rx.drawImage(masked, f.dx, f.dy, f.dw, f.dh);
+}
+function maskTint(win, bits, color) {
+  const cv = maskCanvas(win, bits), x = cv.getContext("2d");
+  x.globalCompositeOperation = "source-in";
+  x.fillStyle = color; x.fillRect(0, 0, cv.width, cv.height);
+  return cv;
+}
+
+/* ---------------- resolve a pasted reference ---------------- */
+function parseRef(str) {
+  const s = str.replace(/\s+/g, "");
+  if (!s.startsWith("eopix:v1:")) throw new Error("expected eopix:v1:…");
+  const o = {};
+  for (const part of s.slice(9).split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0) o[part.slice(0,i)] = part.slice(i+1);
+  }
+  for (const k of ["image","overture","window","ranges"])
+    if (!o[k]) throw new Error("missing field: " + k);
+  return o;
+}
+async function resolveRef(str) {
+  const msg = $("resolveMsg");
+  try {
+    const o = parseRef(str);
+    const entry = REGISTRY[o.image];
+    if (!entry) throw new Error(`unknown image id — the registry knows: ${Object.keys(REGISTRY).join(" · ")}`);
+    if (entry.key !== SITE.key) {              // reference belongs to another site: hop there
+      msg.textContent = `this reference is from ${entry.place} — switching site…`;
+      const p = new URLSearchParams(location.search);
+      p.set("site", entry.key); p.set("ref", str.replace(/\s+/g, ""));
+      location.search = p.toString();
+      return;
+    }
+    const etagOk = !o.etag || o.etag === entry.etag;
+    const [x,y,w,h] = o.window.split(",").map(Number);
+    if (!(w > 0 && h > 0)) throw new Error("bad window");
+    const win = { x, y, w, h };
+    const ranges = o.ranges.split(",").map(r => r.split("-").map(Number));
+    // map ranges back to tiles via the TOC
+    const tiles = [];
+    for (let t = 0; t < G.offsets.length; t++) {
+      const off = G.offsets[t], cnt = G.counts[t];
+      if (ranges.some(([a,b]) => off >= a && off + cnt - 1 <= b)) {
+        tiles.push({ t, tc: t % G.cols, tr: Math.floor(t / G.cols), off, cnt });
+      }
+    }
+    if (!tiles.length) throw new Error("ranges match no tiles in this file's table of contents");
+    const [rel, gers] = (o.overture || "/").split("/");
+
+    msg.textContent = "streaming the referenced bytes…";
+    // temporary all-ones mask (shown until the Overture check re-derives the real one)
+    const onesLen = (w * h + 7) >> 3;
+    const ref = { str, obj: o, win, ranges, tiles,
+                  bits: new Uint8Array(onesLen).fill(255), gers };
+    await streamChip(ref, "resolved");
+
+    const slot = $("verifySlot");
+    slot.innerHTML = `<span class="badge ${etagOk?"ok":"bad"}">etag ${etagOk?"✓ matches catalog":"✗ MISMATCH"}</span> ` +
+                     `<span class="badge wait">mask: re-deriving from Overture…</span>`;
+
+    // fly to the window, find the entity, re-derive the mask, verify the hash
+    const cLL = pxToLL(x + w/2, y + h/2);
+    map.flyTo({ center: cLL, zoom: Math.max(map.getZoom(), 16), speed: 1.6 });
+    await waitIdle();
+    const pt = map.project(cLL);
+    const feats = map.queryRenderedFeatures([[pt.x-120,pt.y-120],[pt.x+120,pt.y+120]],
+      { layers: ["ovt-fill"] });
+    const f = feats.find(q => q.properties && q.properties.id === gers);
+    if (!f) {
+      slot.innerHTML = `<span class="badge ${etagOk?"ok":"bad"}">etag ${etagOk?"✓":"✗"}</span> ` +
+        `<span class="badge bad">entity ${esc(gers.slice(0,13))}… not found here — mask unverified</span>`;
+      msg.textContent = "resolved pixels, but couldn't find that GERS id on the map to verify the mask.";
+      return;
+    }
+    const ringsPx = ringsOf(f.geometry).map(r => r.map(([lon,lat]) => llToPx(lon,lat)));
+    const bits = maskBits(win, ringsPx);
+    const hash = "sha256:" + await sha256hex(bits);
+    const maskOk = !o.mask || hash === o.mask;
+    ref.bits = bits; ref.ringsPx = ringsPx;
+    await streamChip(ref, "resolved");         // redraw with the real mask (bytes now cached)
+    $("verifySlot").innerHTML =
+      `<span class="badge ${etagOk?"ok":"bad"}">etag ${etagOk?"✓ matches catalog":"✗ MISMATCH"}</span> ` +
+      `<span class="badge ${maskOk?"ok":"bad"}">mask ${maskOk?"✓ re-derived from Overture, hash matches":"✗ hash mismatch — footprint changed"}</span>`;
+    highlightOnMap(f.geometry, win);
+    msg.textContent = maskOk
+      ? "resolved: pixels streamed from the referenced ranges; footprint re-derived from Overture and verified."
+      : "resolved, but the re-derived footprint does not hash to the reference's mask.";
+  } catch (e) {
+    msg.textContent = "✗ " + e.message;
+  }
+}
+
+/* ---------------- UI wiring ---------------- */
+$("advToggle").onclick = () => {
+  const adv = $("advanced");
+  adv.classList.toggle("open");
+  $("advToggle").textContent = adv.classList.contains("open") ? "Nerdy details ▴" : "Nerdy details ▾";
+  if (adv.classList.contains("open")) adv.scrollIntoView({ behavior: "smooth" });
+};
+$("copyRef").onclick = () => { if (lastRef) copy(lastRef.str, "reference copied"); };
+$("copyCurl").onclick = () => { if (lastRef) copy(curlFor(lastRef), "curl copied"); };
+$("btnPasteLast").onclick = () => { if (lastRef) $("refInput").value = lastRef.str; };
+$("btnResolve").onclick = () => {
+  const v = $("refInput").value.trim();
+  if (v) resolveRef(v); else $("resolveMsg").textContent = "paste a reference first (or press “Use the one above”).";
+};
+function copy(text, note) {
+  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+    .then(() => toast(note))
+    .catch(() => { const ta = document.createElement("textarea"); ta.value = text;
+      document.body.appendChild(ta); ta.select(); document.execCommand("copy");
+      ta.remove(); toast(note); });
+}
+let toastT = null;
+function toast(t) {
+  const el = $("toast"); el.textContent = t; el.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("on"), 2200);
+}
+
+/* site dropdown + site-dependent copy */
+(function initSite() {
+  const sel = $("siteSel");
+  for (const t of Object.values(SITES)) {
+    const o = document.createElement("option");
+    o.value = t.key; o.textContent = t.label; o.selected = t.key === SITE.key;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => {
+    // preserve existing query params — the hosting app may rely on its own
+    const p = new URLSearchParams(location.search);
+    p.set("site", sel.value); p.delete("ref");
+    location.search = p.toString();
+  };
+  const short = SITE.sensor.replace("WorldView-", "WV0");
+  $("imgChipTxt").textContent = `${short} · ${SITE.date} · ${fmtB(SITE.fileSize)} COG`;
+  $("mapHint").innerHTML =
+    `a <b>${fmtB(SITE.fileSize)} ${SITE.sensor} image</b> of ${SITE.place} (Maxar Open Data,
+     ${SITE.event}) + Overture buildings — the gold frame is the edge of the file`;
+})();
+
+/* cross-hover between ticket-string fields and chain panels */
+const heroEl = $("heroCard");
+const FIELD_GROUP = { image:"image", etag:"image", ifd:"window", window:"window",
+                      ranges:"window", mask:"mask", overture:"result" };
+function heroFocus(g) {
+  heroEl.classList.toggle("focused", !!g);
+  heroEl.querySelectorAll(".vz,[data-f]").forEach(n => {
+    const ng = n.dataset.g || FIELD_GROUP[n.dataset.f];
+    n.classList.toggle("hl", !!g && ng === g);
+  });
+}
+heroEl.addEventListener("pointerover", e => {
+  const el = e.target.closest("[data-g],[data-f]");
+  heroFocus(el ? (el.dataset.g || FIELD_GROUP[el.dataset.f]) : null);
+});
+heroEl.addEventListener("pointerleave", () => heroFocus(null));
+
+/* ---------------- boot ---------------- */
+(async function() {
+  try {
+    $("mapLoadingText").textContent = "Reading the file's table of contents…";
+    await bootCog();
+    narrate(`Table of contents fetched — <span class="sz">${fmtB(sumPurpose("header"))}</span> tells us where all ${G.offsets.length.toLocaleString()} tiles live in the ${fmtB(COG.fileSize)} file.`);
+    $("mapLoadingText").textContent = "Drawing the image + buildings…";
+    bootMap();
+  } catch (e) {
+    console.error(e);
+    $("mapLoadingText").textContent = "Failed to load: " + e.message;
+  }
+})();
+
+/* test hooks (headless verification) */
+window.__test = {
+  G, log,
+  get lastRef() { return lastRef; },
+  ready: () => mapReady && !!map.getSource("cog"),
+  selectAt: async (lng, lat) => {
+    const pt = map.project([lng, lat]);
+    const feats = map.queryRenderedFeatures([[pt.x-40,pt.y-40],[pt.x+40,pt.y+40]], { layers: ["ovt-fill"] });
+    if (!feats.length) return null;
+    await selectFeature(feats[0]);
+    return lastRef && lastRef.str;
+  },
+  resolve: resolveRef,
+};
+</script>
+</body>
+</html>

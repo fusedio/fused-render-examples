@@ -31,20 +31,21 @@ were built from Overture building footprints.
 
 This page can be deployed. Both the client (baked extracts) and `h3_ingest.py`
 (live H3 aggregation) load the bundled `data/` files, and both resolve them
-portably: the page maps each file through a build-time `fused.rawUrl("./data/…")`
-literal (`RAW_URLS` in `index.html`) and `h3_ingest.py` uses
-`openfused.asset_path("data", …)` when served (a read-only bundle exposes no
-`/api/fs/raw` and no writable `data/` path). Local behaviour is unchanged (the
-app reads via `/api/fs/raw`).
+portably: the page loads each through a single `fused.rawUrl("data/" + name)`
+(resolved against the page dir locally, and against the bundled asset map when
+served) and `h3_ingest.py` uses `openfused.asset_path("data", …)` when served
+(a read-only bundle has no `/api/fs/raw` and no writable `data/` path). Local
+behaviour is unchanged.
 
 Notes for deploying:
 
-1. **The `data/` files bundle automatically.** A hosted page can only fetch paths
-   the exporter saw as string literals at build time, so every file is registered
-   as a literal in the `RAW_URLS` manifest in `index.html` — that both bundles it
-   (~17 MB total; within the inline-upload cap) and lets the client look it up by
-   its computed name. **Add a row to `RAW_URLS` whenever you add a data file**, or
-   it won't be exported.
+1. **The `data/` files bundle automatically** via the bundle manifest at the top
+   of `index.html`:
+   `<script type="application/fused-bundle">{ "include": ["data/*.json"] }</script>`.
+   The exporter can't see the computed `fused.rawUrl("data/" + name)` path, so the
+   glob is what ships the files (~17 MB total; within the inline-upload cap) and
+   the hosted `_asset` route resolves the computed name by key. **Add a file to
+   `data/` and it ships** — no per-file table to maintain.
 2. **Bake DuckDB + the H3 community extension into the serve image**, and allow
    outbound HTTPS on first use so DuckDB can fetch the `h3` community extension —
    `h3_ingest.py`'s live-compute steps run on the serve interpreter. Static steps

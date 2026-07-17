@@ -15,7 +15,7 @@ key, noted in their README).
 
 <table>
   <tr>
-    <td width="50%"><a href="geospatial/buildings_to_hexagons/"><img src="assets/buildings_to_hexagons.png" alt="Buildings to hexagons"></a><br><b>Buildings → hexagons</b><br>2.6B buildings in a 0.4 MB file — an interactive explainer.</td>
+    <td width="50%"><a href="geospatial/hexagon_lab/"><img src="assets/hexagon_lab.png" alt="Hexagon lab"></a><br><b>Hexagon lab</b><br>Buildings, rasters and release diffs poured into H3 cells — <a href="https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e">live</a>.</td>
     <td width="50%"><a href="local-tools/visual_claude/"><img src="assets/visual_claude.png" alt="visual-claude"></a><br><b>visual-claude</b><br>A visual settings page for Claude Code, writing to <code>~/.claude</code>.</td>
   </tr>
   <tr>
@@ -31,6 +31,7 @@ key, noted in their README).
 | Example | What it does |
 |---|---|
 | [buildings_to_hexagons](geospatial/buildings_to_hexagons/) | Interactive explainer: every building on Earth as H3 hexes |
+| [hexagon_lab](geospatial/hexagon_lab/) | Three-tab H3 sandbox: buildings, terrain rasters, release diffs ([live](https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e)) |
 | [cog_range_viewer](geospatial/cog_range_viewer/) | Stream a huge COG with HTTP range requests, no download |
 | [cog_overview_pyramid](geospatial/cog_overview_pyramid/) | Every resolution level of a COG as an interactive 3D pyramid |
 | [overture_census_isochrone](geospatial/overture_census_isochrone/) | Isochrone + Overture POIs + Census income on H3 hexes |
@@ -39,6 +40,7 @@ key, noted in their README).
 | [forest_carbon_monitor](geospatial/forest_carbon_monitor/) | Deforestation inside protected areas via Global Forest Watch |
 | [locker_network_simulator](geospatial/locker_network_simulator/) | Parcel-locker route optimization on real road networks |
 | [disaster_response_dashboard](geospatial/disaster_response_dashboard/) | Imagery + storm track + buildings fused for a disaster event |
+| [gers_pixel_ref](geospatial/gers_pixel_ref/) | eopix: "a URL for building pixels" — mint/resolve GERS-anchored byte-range references ([live](https://open.fused.io/kmubo2djxutwzc3tuyf3kfvs2y)) |
 
 ## Local tools
 
