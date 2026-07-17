@@ -367,21 +367,28 @@ def main(file: str = "", asset: str = "", action: str = "analyze", resampling: s
     import sys
     import tempfile
 
-    # `asset` is set only by a hosted page (fused.env === "hosted"): the .tif ships in
-    # the deploy bundle and is materialized as a real local file under the project root,
-    # reachable via openfused.asset_path(). In that mode we trust the serve image's deps
-    # (rasterio/tifffile/…) instead of building the local uv venv, and refuse the
-    # in-place write actions — a hosted artifact is read-only.
-    hosted = bool(asset)
+    # Hosted vs local is a RUNTIME fact — gate on the env var the serve Lambda sets
+    # (the same signal openfused's shim keys on), NOT on which param the caller sent.
+    # Keying off bool(asset) let a hosted caller omit `asset`, pass an arbitrary
+    # `file`, and slip past the read-only guards below into filesystem .tif reads /
+    # in-place writes. A caller can't set the Lambda's environment, so this can't be
+    # spoofed; locally the var is absent, so the local `file` path stays intact.
+    hosted = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
     if hosted:
+        # A served page has no local filesystem: it reads ONLY a bundled asset, so an
+        # arbitrary `file` path is refused outright. The .tif ships in the deploy
+        # bundle (reached via openfused.asset_path()); we trust the serve image's
+        # deps (rasterio/tifffile/…) instead of building the local uv venv, and
+        # refuse the in-place write actions — a hosted artifact is read-only.
+        if not asset:
+            return {"error": "a hosted page can only read a bundled asset — pass `asset`, not `file`"}
         try:
             import openfused
         except ImportError:
             return {"error": "asset mode needs the hosted runtime (openfused shim unavailable)"}
-        # `asset` is a caller-influenced runPython route param — treat it as
-        # untrusted. Confine it to a plain relative path *inside* the bundle so a
-        # crafted value ("../…", an absolute path, or empty/odd segments) can't
-        # make asset_path() resolve outside the assets dir (path traversal).
+        # `asset` is a caller-influenced route param — confine it to a plain relative
+        # path *inside* the bundle so a crafted value ("../…", an absolute path, or
+        # empty/odd segments) can't make asset_path() resolve outside the assets dir.
         parts = asset.split("/")
         if (os.path.isabs(asset) or asset.startswith(("/", "\\"))
                 or any(p in ("", ".", "..") or "\\" in p or "\x00" in p for p in parts)):
