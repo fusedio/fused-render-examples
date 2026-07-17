@@ -39,6 +39,7 @@ key, noted in their README).
 | [forest_carbon_monitor](geospatial/forest_carbon_monitor/) | Deforestation inside protected areas via Global Forest Watch |
 | [locker_network_simulator](geospatial/locker_network_simulator/) | Parcel-locker route optimization on real road networks |
 | [disaster_response_dashboard](geospatial/disaster_response_dashboard/) | Imagery + storm track + buildings fused for a disaster event |
+| [gers_pixel_ref](geospatial/gers_pixel_ref/) | eopix: "a URL for building pixels" — mint/resolve GERS-anchored byte-range references ([live](https://open.fused.io/kmubo2djxutwzc3tuyf3kfvs2y)) |
 
 ## Local tools
 
