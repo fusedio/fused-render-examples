@@ -139,7 +139,17 @@ def disk_cache(fn):
 
 
 def _boundary(park: str) -> dict:
-    with open(os.path.join(_HERE, "boundaries", f"{park}.json"), encoding="utf-8") as fh:
+    # Hosted, the bundle is a read-only exec dir that holds only the entrypoint
+    # code — sibling data like boundaries/ isn't next to __file__, so resolve it
+    # through the bundle asset map instead (the files are bundled via the
+    # _bundleBoundaries() literals in index.html). Locally read beside the script.
+    if _HOSTED:
+        import openfused
+
+        path = openfused.asset_path("boundaries", f"{park}.json")
+    else:
+        path = os.path.join(_HERE, "boundaries", f"{park}.json")
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 

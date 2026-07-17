@@ -147,6 +147,22 @@
 
 <script>
 "use strict";
+
+// Deploy-only, never called. forest.py reads these park-boundary polygons
+// server-side via openfused.asset_path when hosted; they're never fetched from
+// the browser. The exporter bundles only files it sees as build-time rawUrl calls
+// with a literal path, so listing them here (in a function that never runs, to
+// avoid a local rawUrl call) is what gets boundaries/ into the bundle.
+// Add a line here when you add a park to forest.py PARKS.
+function _bundleBoundaries() {
+  fused.rawUrl("./boundaries/bwindi_uganda.json");
+  fused.rawUrl("./boundaries/corcovado_cr.json");
+  fused.rawUrl("./boundaries/gunung_leuser_id.json");
+  fused.rawUrl("./boundaries/manu_peru.json");
+  fused.rawUrl("./boundaries/masoala_mg.json");
+  fused.rawUrl("./boundaries/virunga_drc.json");
+}
+
 const YR_MIN = 2001, YR_MAX = 2025;
 const $ = id => document.getElementById(id);
 const fmt = n => n == null ? "–" : Number(n).toLocaleString("en-US", {maximumFractionDigits: n < 10 ? 1 : 0});

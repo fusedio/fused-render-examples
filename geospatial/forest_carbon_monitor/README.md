@@ -35,9 +35,17 @@ subprocess isolation, so the background warm-up daemon can't work — this is wh
 made the page hang at "0/6 parks" when served. `forest.py` detects the hosted
 runtime (the `openfused` shim is present only when served) and **skips the
 daemon**, running the per-park GFW zonal queries inline when the catalog/detail
-is requested. Local behaviour is unchanged.
+is requested. The park-boundary polygons in `boundaries/` are read server-side
+via `openfused.asset_path()` when served (a hosted bundle holds only the
+entrypoint code next to `__file__`, not sibling data). Local behaviour is
+unchanged.
 
-Requirement: **allow outbound HTTPS** to `data-api.globalforestwatch.org` (the
-GFW API key is a public literal baked into the source — no secret to provision).
-The map's basemap/loss tiles are fetched client-side from GFW/Carto. Confirm the
-per-call timeout accommodates the cold catalog (~12 GFW queries).
+Requirements:
+- **The `boundaries/` files bundle automatically** — each is registered as a
+  build-time `rawUrl` literal in the never-called `_bundleBoundaries()` in
+  `index.html` (they're read server-side, not fetched from the browser). Add a
+  line there whenever you add a park to `PARKS`, or its polygon won't be exported.
+- **Allow outbound HTTPS** to `data-api.globalforestwatch.org` (the GFW API key
+  is a public literal baked into the source — no secret to provision). The map's
+  basemap/loss tiles are fetched client-side from GFW/Carto. Confirm the per-call
+  timeout accommodates the cold catalog (~12 GFW queries).
