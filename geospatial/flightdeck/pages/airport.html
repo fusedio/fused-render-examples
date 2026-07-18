@@ -299,7 +299,7 @@ iataIn.addEventListener("keydown", e => {
 
 /* ---------------- fetch loop ---------------- */
 async function load() {
-  if (busy) { pending = true; return; }   // coalesce: rerun after the in-flight fetch
+  if (busy) { pending = true; reqCounter++; return; }   // coalesce + invalidate the in-flight render
   busy = true;
   const my = ++reqCounter;
   const code = (fused.params.get("iata") || "DEL").trim().toUpperCase();
@@ -625,6 +625,7 @@ function renderError(msg, known) {
   $("#hero").innerHTML = `<div class="errbox">${esc(msg)}${knownHTML}</div>`;
   if (miniMap) { miniMap.remove(); miniMap = null; miniLayer = null; }
   $("#approach").innerHTML = "";
+  $("#boards").innerHTML = "";
 }
 
 /* ---------------- refresh ring + clock ---------------- */
@@ -647,7 +648,7 @@ load();
 
 /* ---------- watch strip: global emergencies + resume-last-flight (all pages share this) ---------- */
 (function watchStrip() {
-  const PAGE = location.pathname.split("/").pop().replace(".html", "") || "view";
+  const PAGE = "airport";  // literal: path-derived broke on hosted mounts
   const el = document.createElement("div");
   el.id = "watch";
   document.body.appendChild(el);

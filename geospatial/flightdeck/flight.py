@@ -93,11 +93,14 @@ def main(flight: str = "", vs: str = "", live: bool = True) -> dict:
             return types["turboprop"]
         if distance_km < 1200:
             return types.get("short")
-        if distance_km < max(nb_below, 1200):
+        # Cap the narrowbody window at the long-haul threshold: an
+        # "all-narrowbody" sentinel (e.g. 99999) must not swallow
+        # intercontinental routes when the airline has widebody types.
+        if distance_km < min(max(nb_below, 1200), 7000):
             return types.get("medium")
         if distance_km < 7000:
-            return types.get("long")
-        return types.get("ultra_long") or types.get("long")
+            return types.get("long") or types.get("medium")
+        return types.get("ultra_long") or types.get("long") or types.get("medium")
 
     def airport(node):
         return {

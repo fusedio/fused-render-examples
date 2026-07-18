@@ -581,7 +581,7 @@ window.addEventListener("resize", () => {
 
 /* ---------- watch strip: global emergencies + resume-last-flight (all pages share this) ---------- */
 (function watchStrip() {
-  const PAGE = location.pathname.split("/").pop().replace(".html", "") || "view";
+  const PAGE = "pulse";  // literal: path-derived broke on hosted mounts
   const el = document.createElement("div");
   el.id = "watch";
   document.body.appendChild(el);
