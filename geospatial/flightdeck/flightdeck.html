@@ -1361,6 +1361,7 @@ async function load() {
     res = await fused.runPython("./flight.py", { flight: flight || vs, vs: flight ? vs : "" });
   } catch (err) {
     if (my !== reqCounter) return;
+    lastLoadedKey = null;  // error state on screen: a repeat of the old key must refetch
     renderError([[flight || vs, "Lookup failed: " + err.message]]);
     return;
   }
@@ -1371,6 +1372,7 @@ async function load() {
   if (res.compare) { res.compare._slot = "b"; (res.compare.ok ? list : errs).push(res.compare); }
 
   if (!list.length) {
+    lastLoadedKey = null;  // error state on screen: a repeat of the old key must refetch
     renderError(errs.map(e => [e.query, e.error]));
     setRoutes(null);
     return;

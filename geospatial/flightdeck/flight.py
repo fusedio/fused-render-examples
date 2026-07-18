@@ -287,6 +287,14 @@ def main(flight: str = "", vs: str = "", live: bool = True) -> dict:
         fr = (route_resp or {}).get("response", {})
         fr = fr.get("flightroute") if isinstance(fr, dict) else None
         if not fr:
+            # suffix-letter callsigns (IGO323E) often resolve without the letter,
+            # same fallback as radar.py/airport.py route mode
+            m = re.match(r"^([A-Z]{3}\d{1,4})[A-Z]$", q)
+            if m:
+                route_resp = cached_fetch("route", m.group(1), f"{ADSBDB}/callsign/{m.group(1)}")
+                fr = (route_resp or {}).get("response", {})
+                fr = fr.get("flightroute") if isinstance(fr, dict) else None
+        if not fr:
             return {
                 "ok": False,
                 "query": query,
