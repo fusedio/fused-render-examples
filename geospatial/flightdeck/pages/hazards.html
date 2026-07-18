@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flightdeck Earth Ops</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script>
+/* Fleet link map: in the local explorer, links stay path-derived; on a hosted
+   mount (no .html in the pathname) they jump to the sibling pages' mount URLs. */
+const FLEET = {
+  flightdeck: "https://unstable.open.fused.io/wihwz3nnlet3avpsr3qa22ywrm",
+  radar: "https://unstable.open.fused.io/rxinluszcawhiuqq3q6yudzq7i",
+  sky: "https://unstable.open.fused.io/haqkwfhssniuf5bnbrk7djcuy4",
+  hazards: "https://unstable.open.fused.io/ay5cnfvfsztxf3qexrlkydrepi",
+  airport: "https://unstable.open.fused.io/g7vo3aqk7omoe5ghiikwzb2sga",
+  pulse: "https://unstable.open.fused.io/eakvgokukg2xxfbq5zejbwsqaa",
+  tour: "https://unstable.open.fused.io/ryd4kokg5siosfnxaqwfhzhc4q",
+};
+function FD(view) {
+  const m = String(view).match(/^([^.?]+)(?:\.html)?(\?.*)?$/);
+  const name = m ? m[1] : String(view);
+  const qs = (m && m[2]) || "";
+  let base = null;
+  try {
+    const p = window.top.location.pathname;
+    if (/\.html/.test(p)) base = p.replace(/\/[^/]*\.html.*$/, "");
+  } catch (e) {}
+  if (base === null && /\.html/.test(location.pathname))
+    base = location.pathname.replace(/\/[^/]*\.html.*$/, "");
+  const FD_PATHS = {
+    flightdeck: "flightdeck.html", radar: "pages/radar.html", sky: "pages/sky.html",
+    hazards: "pages/hazards.html", airport: "pages/airport.html",
+    pulse: "pages/pulse.html", tour: "pages/tour.html",
+  };
+  if (base !== null) base = base.replace(/\/pages$/, "");
+  return base !== null ? `${base}/${FD_PATHS[name] || name + ".html"}${qs}` : (FLEET[name] || "#") + qs;
+}
+</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: oklch(0.16 0.015 250);
+    --surface: oklch(0.19 0.018 250);
+    --surface-2: oklch(0.23 0.02 250);
+    --border: oklch(0.28 0.02 250);
+    --ink: oklch(0.93 0.01 250);
+    --muted: oklch(0.62 0.02 250);
+    --faint: oklch(0.60 0.02 250);
+    --accent: oklch(0.78 0.14 75);
+    --accent-dim: oklch(0.78 0.14 75 / 0.35);
+    --sel: oklch(0.72 0.09 230);
+    --ok: oklch(0.75 0.14 150);
+    --bad: oklch(0.68 0.18 25);
+    --ember: oklch(0.62 0.19 33);
+    --volc: oklch(0.72 0.10 15);
+    --display: "Space Grotesk", sans-serif;
+    --sans: -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 var(--sans); overflow: hidden; }
+
+  #map { position: absolute; inset: 48px 0 0 0; background: var(--bg); }
+  .leaflet-container { background: var(--bg); font-family: var(--sans); }
+  .leaflet-bar a { background: var(--surface) !important; color: var(--ink) !important; border-bottom: 1px solid var(--border) !important; }
+  .leaflet-bar a:hover { background: var(--surface-2) !important; }
+  .leaflet-control-attribution { background: oklch(0.16 0.015 250 / 0.7) !important; color: var(--faint) !important; font-size: 10px !important; }
+  .leaflet-control-attribution a { color: var(--muted) !important; }
+
+  /* ---------- top bar ---------- */
+  header {
+    position: absolute; top: 0; left: 0; right: 0; height: 48px; z-index: 1200;
+    display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    background: oklch(0.14 0.014 250 / 0.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
+  .brand span { color: var(--accent); }
+  .hspacer { flex: 1; }
+  #ring { width: 22px; height: 22px; transform: rotate(-90deg); flex: none; }
+  #ring circle { fill: none; stroke-width: 3; }
+  #ring .bgc { stroke: var(--border); }
+  #ring .fgc { stroke: var(--accent); stroke-linecap: round; }
+
+  /* ---------- layer chips ---------- */
+  .chips { display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; }
+  .chip {
+    all: unset; cursor: pointer; white-space: nowrap;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em;
+    color: var(--faint); border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 10px; transition: color 160ms, border-color 160ms, background 160ms;
+  }
+  .chip:hover { color: var(--muted); }
+  .chip b { font-weight: 700; margin-left: 5px; color: var(--muted); }
+  .chip.on { color: var(--ink); border-color: var(--accent-dim); background: oklch(0.78 0.14 75 / 0.08); }
+  .chip.on b { color: var(--accent); }
+
+  .xnav { display: flex; gap: 6px; }
+  a.home { color: var(--muted); font-family: var(--mono); font-size: 11px; text-decoration: none; border: 1px solid var(--border); padding: 4px 10px; border-radius: 7px; white-space: nowrap; }
+  a.home:hover { color: var(--ink); background: var(--surface-2); }
+  @media (max-width: 1280px) { .xnav a:not(#to-deck) { display: none; } }
+  @media (max-width: 1120px) { .chip b { display: none; } }
+
+  /* ---------- markers ---------- */
+  .hz-storm svg, .hz-volc svg { display: block; overflow: visible; }
+  .hz-storm svg { filter: drop-shadow(0 0 4px oklch(0.72 0.09 230 / 0.5)); }
+  .hz-tip {
+    background: oklch(0.14 0.014 250 / 0.92) !important; border: 1px solid var(--border) !important;
+    color: var(--ink) !important; font: 10.5px var(--mono) !important; padding: 3px 7px !important;
+    border-radius: 6px !important; box-shadow: none !important; white-space: nowrap;
+  }
+  .hz-tip::before { display: none !important; }
+  .hz-tip.storm { color: var(--sel) !important; }
+
+  /* quake pulse ring (mag >= 5.5) */
+  .hz-pulse { display: block; width: 12px; height: 12px; }
+  .hz-pulse::after {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 12px;
+    transform: translate(-50%, -50%); border-radius: 50%;
+    border: 1.5px solid var(--bad); opacity: 0;
+    animation: qpulse 2.6s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+  @keyframes qpulse {
+    0% { transform: translate(-50%, -50%) scale(0.4); opacity: 0.7; }
+    70% { opacity: 0; }
+    100% { transform: translate(-50%, -50%) scale(3.2); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .hz-pulse::after { animation: none; display: none; } }
+
+  /* ---------- legend chip (bottom-left) ---------- */
+  #legend {
+    position: absolute; left: 12px; bottom: 14px; z-index: 1100;
+    background: oklch(0.14 0.014 250 / 0.9); backdrop-filter: blur(8px);
+    border: 1px solid var(--border); border-radius: 999px; padding: 6px 13px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #legend .amb { color: var(--accent); font-weight: 700; }
+  #legend .sw { display: inline-block; width: 16px; height: 2px; border-radius: 2px; vertical-align: middle; }
+
+  /* ---------- side panel ---------- */
+  #panel {
+    position: absolute; top: 60px; right: 12px; bottom: 12px; width: 300px; z-index: 1100;
+    background: oklch(0.155 0.015 250 / 0.96); backdrop-filter: blur(10px);
+    border: 1px solid var(--border); border-radius: 14px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .p-scroll { overflow-y: auto; flex: 1; padding: 16px 16px 14px; }
+  .p-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
+  .p-title .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 7px; vertical-align: 1px; animation: live 1.8s ease-out infinite; }
+  @keyframes live { 0% { box-shadow: 0 0 0 0 oklch(0.75 0.14 150 / 0.5); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { .p-title .dot { animation: none; } }
+
+  .p-hero { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 2px; }
+  .p-hero .big { font-family: var(--display); font-size: 46px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .p-hero .unit { font-size: 12px; color: var(--muted); }
+
+  .p-sec { border-top: 1px solid var(--border); padding: 13px 0 3px; }
+  .p-sec .k { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); margin-bottom: 8px; }
+  .row {
+    all: unset; cursor: pointer; display: flex; align-items: baseline; gap: 8px;
+    width: 100%; padding: 6px 8px; margin: 0 -8px; border-radius: 8px;
+    transition: background 140ms;
+  }
+  .row:hover { background: var(--surface-2); }
+  .row .tag { width: 8px; height: 8px; border-radius: 2px; flex: none; align-self: center; }
+  .row .nm { font-size: 12.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .row .nm small { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+  .row .v { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .row .v.red { color: var(--bad); }
+  .p-empty { font-family: var(--mono); font-size: 11px; color: var(--faint); padding: 4px 0; }
+
+  .p-foot { border-top: 1px solid var(--border); padding: 12px 16px; font-family: var(--mono); font-size: 9.5px; color: var(--faint); line-height: 1.6; }
+  .p-foot b { color: var(--muted); font-weight: 600; }
+
+  #toast {
+    position: absolute; left: 50%; top: 60px; transform: translateX(-50%); z-index: 1300;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding: 7px 14px;
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+
+  @media (max-width: 720px) {
+    #panel { width: calc(100vw - 24px); top: auto; bottom: 12px; height: 42vh; }
+    #legend { bottom: calc(42vh + 22px); }
+  }
+
+  /* fade panes on stagger-in / crossfade */
+  .leaflet-pane.hz-fade { transition: opacity 600ms ease; }
+
+  /* ---------- watch strip (cross-page) ---------- */
+  #watch {
+    position: fixed; left: 50%; bottom: 14px; transform: translate(-50%, 70px); z-index: 1400;
+    display: flex; gap: 8px; align-items: center;
+    transition: transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  #watch.show { transform: translate(-50%, 0); }
+  #watch .wpill {
+    display: flex; align-items: center; gap: 8px; text-decoration: none;
+    background: oklch(0.14 0.014 250 / 0.94); backdrop-filter: blur(10px);
+    border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap;
+  }
+  #watch .wpill:hover { color: var(--ink); border-color: oklch(0.45 0.02 250); }
+  #watch .wpill.emg { border-color: oklch(0.68 0.18 25 / 0.6); color: oklch(0.72 0.16 25); }
+  #watch .wpill.emg b { color: oklch(0.78 0.18 25); }
+  #watch .wpill .wdot { width: 6px; height: 6px; border-radius: 50%; background: oklch(0.68 0.18 25); animation: wblink 1s steps(2) infinite; }
+  #watch .wpill b { color: var(--ink); font-weight: 700; }
+  @keyframes wblink { 50% { opacity: 0.2; } }
+  @media (prefers-reduced-motion: reduce) { #watch { transition: none; } #watch .wpill .wdot { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">✈ FLIGHTDECK <span>EARTH OPS</span></div>
+  <div class="chips" id="chips">
+    <button class="chip" data-layer="quakes">QUAKES <b>0</b></button>
+    <button class="chip" data-layer="fires">FIRES <b>0</b></button>
+    <button class="chip" data-layer="storms">STORMS <b>0</b></button>
+    <button class="chip" data-layer="volcanoes">VOLCANOES <b>0</b></button>
+    <button class="chip" data-layer="jet">JET STREAM <b>0</b></button>
+    <button class="chip" data-layer="traffic">TRAFFIC <b>0</b></button>
+  </div>
+  <div class="hspacer"></div>
+  <svg id="ring" viewBox="0 0 22 22"><circle class="bgc" cx="11" cy="11" r="8.5"/><circle class="fgc" cx="11" cy="11" r="8.5" stroke-dasharray="53.4" stroke-dashoffset="0"/></svg>
+  <nav class="xnav">
+    <a class="home" target="_top" href="#" data-view="radar.html">RADAR →</a>
+    <a class="home" target="_top" href="#" data-view="airport.html">AIRPORT →</a>
+    <a class="home" target="_top" href="#" data-view="pulse.html">PULSE →</a>
+    <a class="home" target="_top" href="#" data-view="sky.html">SKY →</a>
+    <a class="home" target="_top" href="#" data-view="flightdeck.html" id="to-deck">FLIGHT LOOKUP →</a>
+  </nav>
+</header>
+<div id="map"></div>
+<div id="toast"></div>
+
+<div id="legend">
+  <span class="sw" style="background:var(--faint)"></span><span class="sw" style="background:var(--muted)"></span><span class="sw" style="background:var(--accent)"></span>
+  JET 250hPa · <span class="amb">amber ≥ 100 kt</span>
+</div>
+
+<div id="panel">
+  <div class="p-scroll">
+    <div class="p-title"><span class="dot"></span>Planet Now</div>
+    <div class="p-hero"><span class="big" id="q-total">—</span><span class="unit">earthquakes today (M ≥ 2.5)</span></div>
+
+    <div class="p-sec">
+      <div class="k">Strongest quake</div>
+      <div id="q-big"><div class="p-empty">loading…</div></div>
+    </div>
+
+    <div class="p-sec">
+      <div class="k">Active storms</div>
+      <div id="s-list"><div class="p-empty">loading…</div></div>
+    </div>
+
+    <div class="p-sec">
+      <div class="k">Volcanoes &amp; wildfires</div>
+      <div id="vf-list"></div>
+    </div>
+
+    <div class="p-sec">
+      <div class="k">Jet stream &amp; traffic</div>
+      <div id="jt-list"></div>
+    </div>
+  </div>
+  <div class="p-foot">
+    Sources: <b>USGS</b> earthquakes · <b>NASA EONET</b> events · <b>open-meteo</b> 250 hPa winds · <b>airplanes.live</b> ADS-B
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (s, el) => (el || document).querySelector(s);
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const REFRESH_MS = 90000;
+
+/* colors resolved as literals (SVG stroke can't read CSS vars) */
+const RED = "oklch(0.68 0.18 25)";
+const EMBER = "oklch(0.62 0.19 33)";
+const STEEL = "oklch(0.72 0.09 230)";
+const VOLC = "oklch(0.72 0.10 15)";
+const AMBER = "oklch(0.78 0.14 75)";
+const C_FAINT = "oklch(0.45 0.02 250)";
+const C_MUTED = "oklch(0.62 0.02 250)";
+
+function embedBase() {
+  // this view runs inside an iframe at /render — links must be built from the OUTER url
+  try { return window.top.location.pathname.replace(/\/[^/]*\.html.*$/, ""); } catch (e) {}
+  return location.pathname.replace(/\/hazards\.html.*/, "");
+}
+for (const a of document.querySelectorAll(".xnav a")) a.href = FD(a.dataset.view);
+
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+const nf = n => (n == null ? "—" : Number(n).toLocaleString("en-US"));
+
+/* ---------------- map ---------------- */
+const map = L.map("map", {
+  zoomControl: true, attributionControl: true, worldCopyJump: true,
+  minZoom: 2, maxZoom: 10, zoomSnap: 0.1, zoomDelta: 0.5,
+}).setView([22, 20], 2.4);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: "© OpenStreetMap © CARTO · USGS · NASA EONET · open-meteo · airplanes.live",
+  subdomains: "abcd", maxZoom: 19,
+}).addTo(map);
+
+/* stacked panes: traffic (bottom) → jet → quakes → fires → volcanoes → storms (top) */
+const PANE_Z = { traffic: 410, jet: 420, quakes: 430, fires: 440, volcanoes: 450, storms: 460 };
+for (const [id, z] of Object.entries(PANE_Z)) {
+  const name = "p-" + id;
+  map.createPane(name);
+  const el = map.getPane(name);
+  el.style.zIndex = String(z);
+  el.classList.add("hz-fade");
+  el.style.opacity = REDUCED ? "1" : "0";
+}
+
+/* ---------------- layers ---------------- */
+const LAYERS = {
+  quakes:    { group: L.layerGroup(), on: true,  pane: "p-quakes" },
+  fires:     { group: L.layerGroup(), on: false, pane: "p-fires" },
+  storms:    { group: L.layerGroup(), on: true,  pane: "p-storms" },
+  volcanoes: { group: L.layerGroup(), on: true,  pane: "p-volcanoes" },
+  jet:       { group: L.layerGroup(), on: true,  pane: "p-jet" },
+  traffic:   { group: L.layerGroup(), on: true,  pane: "p-traffic" },
+};
+// hydrate on-state from URL (FIRES defaults off — crowded)
+for (const id of Object.keys(LAYERS)) {
+  const p = fused.params.get(id);
+  if (p === "1") LAYERS[id].on = true;
+  else if (p === "0") LAYERS[id].on = false;
+}
+for (const id of Object.keys(LAYERS)) if (LAYERS[id].on) LAYERS[id].group.addTo(map);
+
+function setLayer(id, on) {
+  const L_ = LAYERS[id];
+  L_.on = on;
+  if (on) L_.group.addTo(map); else map.removeLayer(L_.group);
+  const chip = document.querySelector(`.chip[data-layer="${id}"]`);
+  if (chip) chip.classList.toggle("on", on);
+  fused.params.set(id, on ? "1" : "0");
+}
+for (const chip of document.querySelectorAll(".chip")) {
+  const id = chip.dataset.layer;
+  chip.classList.toggle("on", LAYERS[id].on);
+  chip.addEventListener("click", () => setLayer(id, !LAYERS[id].on));
+}
+function setCount(id, n) {
+  const b = document.querySelector(`.chip[data-layer="${id}"] b`);
+  if (b) b.textContent = n;
+}
+
+/* ---------------- markers ---------------- */
+let quakeMarkers = [];   // parallel to data.quakes (index 0 = biggest)
+let stormMarkers = [];
+let volcMarkers = [];
+
+function fly(lat, lon, z) { map.flyTo([lat, lon], z || 4, { duration: 0.8 }); }
+
+function buildQuakes(list) {
+  const g = LAYERS.quakes.group; g.clearLayers(); quakeMarkers = [];
+  for (const q of list) {
+    const m = L.circleMarker([q.lat, q.lon], {
+      pane: "p-quakes", radius: 2 + q.mag * 1.6,
+      color: RED, weight: 1.5, opacity: 0.85, fillColor: RED, fillOpacity: 0.25,
+    });
+    const age = q.age_hr < 1 ? "just now" : (q.age_hr < 24 ? Math.round(q.age_hr) + "h ago" : Math.round(q.age_hr / 24) + "d ago");
+    m.bindTooltip(`M${q.mag.toFixed(1)} — ${esc(q.place)} · ${age}`, { className: "hz-tip", direction: "top", offset: [0, -4] });
+    if (q.url) m.on("click", () => { try { window.open(q.url, "_blank"); } catch (e) {} });
+    m.addTo(g);
+    if (q.mag >= 5.5 && !REDUCED) {
+      L.marker([q.lat, q.lon], {
+        pane: "p-quakes", interactive: false,
+        icon: L.divIcon({ className: "hz-pulse", html: "", iconSize: [12, 12], iconAnchor: [6, 6] }),
+      }).addTo(g);
+    }
+    quakeMarkers.push(m);
+  }
+}
+
+function buildFires(list) {
+  const g = LAYERS.fires.group; g.clearLayers();
+  for (const f of list) {
+    L.circleMarker([f.lat, f.lon], {
+      pane: "p-fires", radius: 2.5, stroke: false,
+      fillColor: EMBER, fillOpacity: 0.7,
+    }).addTo(g);
+  }
+}
+
+function stormIcon() {
+  return L.divIcon({
+    className: "hz-storm", iconSize: [26, 26], iconAnchor: [13, 13],
+    html: `<svg width="26" height="26" viewBox="-13 -13 26 26"><g fill="none" stroke="${STEEL}" stroke-width="2" stroke-linecap="round">
+      <circle cx="0" cy="0" r="2.1" fill="${STEEL}" stroke="none"/>
+      <path d="M0,-2.6 C7,-9.5 11.5,-3.5 6,0.4"/>
+      <path d="M0,2.6 C-7,9.5 -11.5,3.5 -6,-0.4"/>
+    </g></svg>`,
+  });
+}
+function volcanoIcon() {
+  return L.divIcon({
+    className: "hz-volc", iconSize: [16, 16], iconAnchor: [8, 11],
+    html: `<svg width="16" height="16" viewBox="0 0 16 16"><path d="M1.5,14 L6,4 L10,4 L14.5,14 Z" fill="${VOLC}" stroke="oklch(0.2 0.02 40)" stroke-width="0.8" stroke-linejoin="round"/></svg>`,
+  });
+}
+
+function buildStorms(list) {
+  const g = LAYERS.storms.group; g.clearLayers(); stormMarkers = [];
+  for (const s of list) {
+    const m = L.marker([s.lat, s.lon], { pane: "p-storms", icon: stormIcon() });
+    m.bindTooltip(esc(s.title), { className: "hz-tip storm", permanent: true, direction: "top", offset: [0, -12] });
+    m.addTo(g);
+    stormMarkers.push(m);
+  }
+}
+function buildVolcanoes(list) {
+  const g = LAYERS.volcanoes.group; g.clearLayers(); volcMarkers = [];
+  for (const v of list) {
+    const m = L.marker([v.lat, v.lon], { pane: "p-volcanoes", icon: volcanoIcon() });
+    m.bindTooltip(esc(v.title), { className: "hz-tip", direction: "top", offset: [0, -10] });
+    m.addTo(g);
+    volcMarkers.push(m);
+  }
+}
+
+function jetColor(kt) { return kt > 100 ? AMBER : (kt >= 60 ? C_MUTED : C_FAINT); }
+function buildJet(list) {
+  const g = LAYERS.jet.group; g.clearLayers();
+  for (const j of list) {
+    const kt = j.kt || 0;
+    const brg = ((j.dir || 0) + 180) * Math.PI / 180;  // wind blows TOWARD dir+180
+    const len = Math.min(9, kt * 0.05);                 // degrees, ∝ speed
+    const dLat = len * Math.cos(brg);
+    const dLon = len * Math.sin(brg) / Math.max(0.3, Math.cos(j.lat * Math.PI / 180));
+    const tip = [j.lat + dLat, j.lon + dLon];
+    const col = jetColor(kt);
+    L.polyline([[j.lat, j.lon], tip], { pane: "p-jet", color: col, weight: 1.6, opacity: 0.8, interactive: false }).addTo(g);
+    // small arrowhead
+    const ah = 0.32 * len, spread = 0.5;
+    for (const s of [-1, 1]) {
+      const a = brg + Math.PI + s * spread;
+      const bLat = tip[0] + ah * Math.cos(a);
+      const bLon = tip[1] + ah * Math.sin(a) / Math.max(0.3, Math.cos(j.lat * Math.PI / 180));
+      L.polyline([tip, [bLat, bLon]], { pane: "p-jet", color: col, weight: 1.6, opacity: 0.8, interactive: false }).addTo(g);
+    }
+  }
+}
+
+function buildTraffic(list) {
+  const g = LAYERS.traffic.group; g.clearLayers();
+  for (const t of list) {
+    L.circleMarker([t[0], t[1]], {
+      pane: "p-traffic", radius: 1.5, stroke: false, fillColor: AMBER, fillOpacity: 0.35,
+    }).addTo(g);
+  }
+}
+
+/* ---------------- side panel ---------------- */
+function jetRegion(lat, lon) {
+  const N = {
+    "-120": "the N Pacific", "-90": "North America", "-60": "the N Atlantic", "-30": "the N Atlantic",
+    "0": "W Europe", "30": "E Europe", "60": "Central Asia", "90": "Asia", "120": "E Asia", "150": "the NW Pacific",
+  };
+  const S = {
+    "-120": "the S Pacific", "-90": "South America", "-60": "the S Atlantic", "-30": "the S Atlantic",
+    "0": "the S Atlantic", "30": "southern Africa", "60": "the Indian Ocean", "90": "the Indian Ocean", "120": "Australia", "150": "the S Pacific",
+  };
+  return (lat >= 0 ? N : S)[String(lon)] || (lat >= 0 ? "the northern band" : "the southern band");
+}
+
+function renderPanel(d) {
+  const q = d.quakes || [], ev = d.events || {}, jet = d.jet || [];
+  $("#q-total").textContent = nf(q.length);
+
+  // biggest quake
+  if (q.length) {
+    const b = q[0];
+    const age = b.age_hr < 1 ? "just now" : (b.age_hr < 24 ? Math.round(b.age_hr) + "h ago" : Math.round(b.age_hr / 24) + "d ago");
+    $("#q-big").innerHTML = `<button class="row" data-fly="quake"><span class="tag" style="background:${RED}"></span><span class="nm">${esc(b.place)}<br><small>${esc(age)} · ${b.depth_km != null ? b.depth_km + " km deep" : "depth —"}</small></span><span class="v red">M${b.mag.toFixed(1)}</span></button>`;
+  } else {
+    $("#q-big").innerHTML = `<div class="p-empty">none in the last day</div>`;
+  }
+
+  // storms
+  const storms = ev.storms || [];
+  $("#s-list").innerHTML = storms.length
+    ? storms.map((s, i) => `<button class="row" data-fly="storm" data-i="${i}"><span class="tag" style="background:${STEEL}"></span><span class="nm">${esc(s.title)}</span><span class="v">↗</span></button>`).join("")
+    : `<div class="p-empty">no active tropical storms</div>`;
+
+  // volcanoes + wildfires
+  const volc = ev.volcanoes || [], fires = ev.wildfires || [];
+  $("#vf-list").innerHTML =
+    `<button class="row" data-fly="volc"><span class="tag" style="background:${VOLC}"></span><span class="nm">Active volcanoes</span><span class="v">${nf(volc.length)}</span></button>` +
+    `<button class="row" data-fly="fire"><span class="tag" style="background:${EMBER}"></span><span class="nm">Wildfire hotspots<br><small>toggle FIRES to show</small></span><span class="v">${nf(fires.length)}</span></button>`;
+
+  // jet + traffic
+  let strong = null;
+  for (const j of jet) if (!strong || j.kt > strong.kt) strong = j;
+  const strongHtml = strong
+    ? `<button class="row" data-fly="jet"><span class="tag" style="background:${AMBER}"></span><span class="nm">Strongest jet<br><small>over ${esc(jetRegion(strong.lat, strong.lon))}</small></span><span class="v">${strong.kt} kt</span></button>`
+    : "";
+  $("#jt-list").innerHTML = strongHtml +
+    `<button class="row" data-fly="traffic"><span class="tag" style="background:${AMBER};opacity:0.5"></span><span class="nm">Aircraft sampled<br><small>6 hubs · airplanes.live</small></span><span class="v">${nf((d.traffic || []).length)}</span></button>`;
+
+  // wire rows
+  panelData = { q, storms, volc, fires, strong };
+  for (const row of document.querySelectorAll(".row")) row.onclick = () => panelClick(row.dataset.fly, +row.dataset.i || 0);
+}
+
+let panelData = null;
+function panelClick(kind, i) {
+  if (!panelData) return;
+  if (kind === "quake" && panelData.q.length) {
+    const b = panelData.q[0]; fly(b.lat, b.lon, 5);
+    if (quakeMarkers[0]) setTimeout(() => quakeMarkers[0].openTooltip(), 850);
+  } else if (kind === "storm" && panelData.storms[i]) {
+    const s = panelData.storms[i]; fly(s.lat, s.lon, 5);
+    if (!LAYERS.storms.on) setLayer("storms", true);
+  } else if (kind === "volc" && panelData.volc.length) {
+    const v = panelData.volc[0]; fly(v.lat, v.lon, 4);
+    if (!LAYERS.volcanoes.on) setLayer("volcanoes", true);
+  } else if (kind === "fire" && panelData.fires.length) {
+    if (!LAYERS.fires.on) setLayer("fires", true);
+    const f = panelData.fires[0]; fly(f.lat, f.lon, 4);
+    toast("FIRES layer on");
+  } else if (kind === "jet" && panelData.strong) {
+    const s = panelData.strong; fly(s.lat, s.lon, 3.5);
+    if (!LAYERS.jet.on) setLayer("jet", true);
+  } else if (kind === "traffic") {
+    if (!LAYERS.traffic.on) setLayer("traffic", true);
+    map.flyTo([28.6, 55], 3, { duration: 0.8 });
+  }
+}
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2000);
+}
+
+/* ---------------- fetch loop ---------------- */
+let busy = false, reqCounter = 0, firstLoad = true, lastFetchAt = performance.now();
+
+async function refresh() {
+  if (busy) return;
+  busy = true;
+  const my = ++reqCounter;
+  try {
+    const d = await fused.runPython("./hazards.py", {});
+    if (my !== reqCounter) return;
+    if (!d || !d.ok) { if (firstLoad) toast("could not reach hazard feeds — retrying"); return; }
+    const c = d.counts || {};
+    setCount("quakes", c.quakes || 0); setCount("fires", c.wildfires || 0);
+    setCount("storms", c.storms || 0); setCount("volcanoes", c.volcanoes || 0);
+    setCount("jet", c.jet || 0); setCount("traffic", c.traffic || 0);
+
+    buildQuakes(d.quakes || []);
+    buildFires((d.events || {}).wildfires || []);
+    buildStorms((d.events || {}).storms || []);
+    buildVolcanoes((d.events || {}).volcanoes || []);
+    buildJet(d.jet || []);
+
+    // traffic crossfade on refresh
+    const tPane = map.getPane("p-traffic");
+    if (!firstLoad && !REDUCED && tPane) { tPane.style.opacity = "0"; }
+    buildTraffic(d.traffic || []);
+    if (!firstLoad && !REDUCED && tPane) { requestAnimationFrame(() => { tPane.style.opacity = "1"; }); }
+
+    renderPanel(d);
+
+    if (firstLoad) { firstLoad = false; reveal(); }
+  } catch (e) {
+    console.warn("hazards fetch failed", e);
+    if (my === reqCounter && firstLoad) toast("could not reach hazard feeds — retrying");
+  } finally {
+    busy = false;
+  }
+}
+
+/* stagger the layers in on first load: quakes pop → jet draws → fires/others fade */
+function reveal() {
+  const seq = [["p-quakes", 0], ["p-jet", 300], ["p-fires", 600], ["p-traffic", 600], ["p-volcanoes", 600], ["p-storms", 600]];
+  for (const [pane, delay] of seq) {
+    const el = map.getPane(pane); if (!el) continue;
+    if (REDUCED) { el.style.opacity = "1"; continue; }
+    setTimeout(() => { el.style.opacity = "1"; }, delay);
+  }
+}
+
+/* refresh ring */
+(function ring() {
+  requestAnimationFrame(ring);
+  const k = Math.min(1, (performance.now() - lastFetchAt) / REFRESH_MS);
+  const el = $("#ring .fgc");
+  if (el) el.style.strokeDashoffset = String(53.4 * (1 - k));
+})();
+
+refresh();
+setInterval(() => { lastFetchAt = performance.now(); refresh(); }, REFRESH_MS);
+
+/* ---------- watch strip: global emergencies + resume-last-flight (all pages share this) ---------- */
+(function watchStrip() {
+  const PAGE = location.pathname.split("/").pop().replace(".html", "") || "view";
+  const el = document.createElement("div");
+  el.id = "watch";
+  document.body.appendChild(el);
+  function wbase() {
+    try { return window.top.location.pathname.replace(/\/[^/]*\.html.*$/, ""); } catch (e) {}
+    return "";
+  }
+  function paint(emergencies) {
+    const bits = [];
+    for (const e of (emergencies || []).slice(0, 2)) {
+      bits.push(`<a class="wpill emg" target="_top" href="${FD("radar")}?lat=${(+e.lat).toFixed(3)}&lon=${(+e.lon).toFixed(3)}&z=8&sel=${e.hex}"><span class="wdot"></span>SQUAWK ${e.squawk} — <b>${e.cs}</b>${e.type ? " · " + e.type : ""} · follow ↗</a>`);
+    }
+    let last = null;
+    try { last = JSON.parse(localStorage.getItem("fd:lastFlight") || "null"); } catch (err) {}
+    if (last && last.flight && Date.now() - (last.ts || 0) < 86400000 && PAGE !== "flightdeck") {
+      bits.push(`<a class="wpill" target="_top" href="${FD("flightdeck")}?flight=${encodeURIComponent(last.flight)}">resume <b>${last.flight}</b> →</a>`);
+    }
+    el.innerHTML = bits.join("");
+    el.classList.toggle("show", bits.length > 0);
+  }
+  async function sweep() {
+    try {
+      const r = await fused.runPython("./radar.py", { mode: "watch" });
+      paint(r && r.ok ? r.emergencies : []);
+    } catch (e) { paint([]); }
+  }
+  paint([]);
+  sweep();
+  setInterval(sweep, 90000);
+})();
+</script>
+</body>
+</html>

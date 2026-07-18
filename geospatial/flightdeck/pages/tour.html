@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flightdeck — Tour</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: oklch(0.16 0.015 250);
+    --border: oklch(0.28 0.02 250);
+    --ink: oklch(0.93 0.01 250);
+    --muted: oklch(0.62 0.02 250);
+    --accent: oklch(0.78 0.14 75);
+    --display: "Space Grotesk", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); overflow: hidden; font-family: var(--display); }
+
+  #stage { position: absolute; inset: 0; }
+  #stage iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+    opacity: 0; transition: opacity 900ms ease-out;
+  }
+  #stage iframe.on { opacity: 1; }
+
+  /* letterbox caption band */
+  #caption {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 50; pointer-events: none;
+    padding: 90px 6vw 34px;
+    background: linear-gradient(180deg, transparent, oklch(0.10 0.012 250 / 0.97) 40%);
+    transform: translateY(30px); opacity: 0;
+    transition: transform 700ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 700ms ease-out;
+  }
+  #caption.show { transform: none; opacity: 1; }
+  #cap-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; }
+  #cap-line { font-size: clamp(22px, 3.4vw, 40px); font-weight: 700; letter-spacing: -0.015em; line-height: 1.12; max-width: 26ch; text-wrap: balance; }
+  #cap-sub { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+
+  /* progress + controls */
+  #hud {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 60;
+    display: flex; align-items: center; gap: 12px;
+    background: oklch(0.14 0.014 250 / 0.9); backdrop-filter: blur(8px);
+    border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px;
+  }
+  #hud .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); transition: background 0.3s, transform 0.3s; }
+  #hud .dot.done { background: oklch(0.45 0.02 250); }
+  #hud .dot.now { background: var(--accent); transform: scale(1.35); }
+  #hud button {
+    all: unset; cursor: pointer; font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    padding: 2px 8px; border-radius: 6px; letter-spacing: 0.06em;
+  }
+  #hud button:hover { color: var(--ink); background: oklch(0.23 0.02 250); }
+  #timebar { position: absolute; top: 0; left: 0; height: 2px; background: var(--accent); z-index: 70; width: 0%; }
+
+  /* intro card */
+  #intro {
+    position: absolute; inset: 0; z-index: 100; display: grid; place-items: center;
+    background: var(--bg); transition: opacity 800ms ease-out;
+  }
+  #intro.gone { opacity: 0; pointer-events: none; }
+  #intro .in { text-align: center; padding: 24px; }
+  #intro h1 { font-size: clamp(38px, 6vw, 72px); font-weight: 700; letter-spacing: -0.03em; margin: 0 0 10px; }
+  #intro h1 span { color: var(--accent); }
+  #intro p { font-family: var(--mono); font-size: 13px; color: var(--muted); margin: 0 0 30px; }
+  #intro button {
+    all: unset; cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 15px;
+    background: var(--accent); color: oklch(0.17 0.02 75); padding: 13px 34px; border-radius: 11px;
+  }
+  #intro button:hover { filter: brightness(1.08); }
+  #intro .skip { display: block; margin-top: 16px; font-family: var(--mono); font-size: 11px; color: var(--muted); cursor: pointer; }
+  @media (prefers-reduced-motion: reduce) {
+    #stage iframe, #caption { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="timebar"></div>
+<div id="stage">
+  <iframe id="fa" title="tour scene"></iframe>
+  <iframe id="fb" title="tour scene"></iframe>
+</div>
+<div id="caption">
+  <div id="cap-kicker"></div>
+  <div id="cap-line"></div>
+  <div id="cap-sub"></div>
+</div>
+<div id="hud"></div>
+<div id="intro">
+  <div class="in">
+    <h1>FLIGHT<span>DECK</span></h1>
+    <p>a live tour — every number on screen is real, right now</p>
+    <button id="go">Begin the tour</button>
+    <span class="skip" id="skip">or skip to the flight lookup →</span>
+  </div>
+</div>
+
+<script>
+/* Fleet link map: in the local explorer, links stay path-derived; on a hosted
+   mount (no .html in the pathname) they jump to the sibling pages' mount URLs. */
+const FLEET = {
+  flightdeck: "https://unstable.open.fused.io/wihwz3nnlet3avpsr3qa22ywrm",
+  radar: "https://unstable.open.fused.io/rxinluszcawhiuqq3q6yudzq7i",
+  sky: "https://unstable.open.fused.io/haqkwfhssniuf5bnbrk7djcuy4",
+  hazards: "https://unstable.open.fused.io/ay5cnfvfsztxf3qexrlkydrepi",
+  airport: "https://unstable.open.fused.io/g7vo3aqk7omoe5ghiikwzb2sga",
+  pulse: "https://unstable.open.fused.io/eakvgokukg2xxfbq5zejbwsqaa",
+  tour: "https://unstable.open.fused.io/ryd4kokg5siosfnxaqwfhzhc4q",
+};
+function FD(view) {
+  const m = String(view).match(/^([^.?]+)(?:\.html)?(\?.*)?$/);
+  const name = m ? m[1] : String(view);
+  const qs = (m && m[2]) || "";
+  let base = null;
+  try {
+    const p = window.top.location.pathname;
+    if (/\.html/.test(p)) base = p.replace(/\/[^/]*\.html.*$/, "");
+  } catch (e) {}
+  if (base === null && /\.html/.test(location.pathname))
+    base = location.pathname.replace(/\/[^/]*\.html.*$/, "");
+  const FD_PATHS = {
+    flightdeck: "flightdeck.html", radar: "pages/radar.html", sky: "pages/sky.html",
+    hazards: "pages/hazards.html", airport: "pages/airport.html",
+    pulse: "pages/pulse.html", tour: "pages/tour.html",
+  };
+  if (base !== null) base = base.replace(/\/pages$/, "");
+  return base !== null ? `${base}/${FD_PATHS[name] || name + ".html"}${qs}` : (FLEET[name] || "#") + qs;
+}
+</script>
+<script>
+const $ = s => document.querySelector(s);
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function base() {
+  try { return window.top.location.pathname.replace(/\/[^/]*\.html.*$/, ""); } catch (e) {}
+  return location.pathname.replace(/\/tour\.html.*/, "");
+}
+const B = base();
+
+/* Each scene: url, dwell ms, caption, optional drive(iframe) hook that scripts the view */
+const SCENES = [
+  {
+    url: `${FD("pulse")}`, dwell: 15000,
+    kicker: "RIGHT NOW", line: "Thousands of aircraft are in the sky.",
+    sub: "live ADS-B · 12 hub regions · counted as you watch",
+  },
+  {
+    url: `${FD("hazards")}`, dwell: 17000,
+    kicker: "EARTH OPS", line: "And this is the planet they're flying over.",
+    sub: "earthquakes · storms · volcanoes · the jet stream — all live",
+  },
+  {
+    url: `${FD("sky")}?lat=22&lon=78&z=4&layers=flights,wind,rain`, dwell: 16000,
+    kicker: "SKY", line: "Wind, storms and traffic — one living sky.",
+    sub: "live wind particles \u00b7 precipitation radar \u00b7 every flight in view",
+  },
+  {
+    url: `${FD("radar")}?lat=28.56&lon=77.10&z=8`, dwell: 16000,
+    kicker: "RADAR", line: "Every one of them broadcasts. We listen.",
+    sub: "Delhi airspace · refreshed every 9 seconds",
+    drive: driveRadarSelect,
+  },
+  {
+    url: `${FD("airport")}?iata=DEL`, dwell: 15000,
+    kicker: "APPROACH", line: "Delhi. The next hour, before it happens.",
+    sub: "arrivals inferred from live descent vectors · aviation weather",
+  },
+  {
+    url: `${FD("flightdeck")}?flight=AI302`, dwell: 16000,
+    kicker: "FLIGHT LOOKUP", line: "Any flight. One question deep.",
+    sub: "aircraft · cabin · route · weather both ends",
+  },
+];
+
+/* the embed shell nests the actual view one iframe deeper — descend to the window that owns `planes` */
+function viewWindow(iframe, key) {
+  const walk = (w, depth) => {
+    if (!w || depth > 3) return null;
+    try { if (typeof w[key] !== "undefined") return w; } catch (e) { return null; }
+    try {
+      for (let i = 0; i < w.frames.length; i++) {
+        const hit = walk(w.frames[i], depth + 1);
+        if (hit) return hit;
+      }
+    } catch (e) {}
+    return null;
+  };
+  return walk(iframe.contentWindow, 0);
+}
+
+/* reach into the same-origin radar iframe and click a real airliner */
+async function driveRadarSelect(iframe) {
+  for (let tries = 0; tries < 24; tries++) {
+    await sleep(1000);
+    try {
+      const w = viewWindow(iframe, "planes");
+      if (w && w.planes.size) {
+        for (const [hex, p] of w.planes) {
+          if (/^(AIC|IGO|UAE|SIA|QTR|AXB|VTI|BAW|DLH)/.test(p.data.cs || "")) {
+            p.marker.fire("click");
+            return;
+          }
+        }
+        const first = w.planes.values().next().value;
+        if (first) { first.marker.fire("click"); return; }
+      }
+    } catch (e) { /* keep trying */ }
+  }
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const frames = [$("#fa"), $("#fb")];
+let front = 0, idx = -1, timer = null, tourToken = 0, sceneStart = 0, dwellNow = 1;
+
+function hud() {
+  $("#hud").innerHTML = SCENES.map((s, i) =>
+    `<div class="dot ${i < idx ? "done" : i === idx ? "now" : ""}"></div>`).join("") +
+    `<button id="hud-skip">SKIP ›</button><button id="hud-exit">EXIT</button>`;
+  $("#hud-skip").onclick = () => next(true);
+  $("#hud-exit").onclick = exit;
+}
+
+function exit() {
+  tourToken++;
+  try { window.top.location.href = FD("flightdeck"); }
+  catch (e) { location.href = FD("flightdeck"); }
+}
+
+async function next(manual) {
+  const my = ++tourToken;
+  idx = (idx + 1);
+  if (idx >= SCENES.length) { exit(); return; }
+  const sc = SCENES[idx];
+  hud();
+
+  const inF = frames[1 - front], outF = frames[front];
+  inF.src = sc.url;
+  $("#caption").classList.remove("show");
+
+  await sleep(REDUCED ? 100 : 1400); // let the incoming page paint
+  if (my !== tourToken) return;
+  inF.classList.add("on");
+  outF.classList.remove("on");
+  front = 1 - front;
+  setTimeout(() => { if (my === tourToken) outF.src = "about:blank"; }, 1000);
+
+  $("#cap-kicker").textContent = sc.kicker;
+  $("#cap-line").textContent = sc.line;
+  $("#cap-sub").textContent = sc.sub;
+  await sleep(REDUCED ? 50 : 500);
+  if (my !== tourToken) return;
+  $("#caption").classList.add("show");
+
+  if (sc.drive) sc.drive(frames[front]).catch(() => {});
+
+  sceneStart = performance.now();
+  dwellNow = sc.dwell;
+  clearTimeout(timer);
+  // reduced-motion: the auto-advancing sequence is itself motion — require manual SKIP
+  if (!REDUCED) timer = setTimeout(() => { if (my === tourToken) next(); }, sc.dwell);
+}
+
+(function bar() {
+  requestAnimationFrame(bar);
+  const k = Math.min(1, (performance.now() - sceneStart) / dwellNow);
+  $("#timebar").style.width = (idx < 0 ? 0 : k * 100) + "%";
+})();
+
+$("#go").addEventListener("click", () => {
+  $("#intro").classList.add("gone");
+  next();
+});
+$("#skip").addEventListener("click", exit);
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight") next(true);
+  if (e.key === "Escape") exit();
+});
+</script>
+</body>
+</html>
