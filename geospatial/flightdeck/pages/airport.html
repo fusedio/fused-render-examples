@@ -284,7 +284,7 @@ $("#to-deck").href = FD("flightdeck");
 /* ---------------- state ---------------- */
 const routeCache = new Map();   // callsign -> {origin, destination} | null
 let reqCounter = 0;             // stale-response guard
-let busy = false;
+let busy = false, pending = false;
 let firstRender = true;
 let lastFetchAt = 0;
 let refreshTimer = null;
@@ -299,7 +299,7 @@ iataIn.addEventListener("keydown", e => {
 
 /* ---------------- fetch loop ---------------- */
 async function load() {
-  if (busy) return;
+  if (busy) { pending = true; return; }   // coalesce: rerun after the in-flight fetch
   busy = true;
   const my = ++reqCounter;
   const code = (fused.params.get("iata") || "DEL").trim().toUpperCase();
@@ -320,6 +320,7 @@ async function load() {
     if (my === reqCounter) renderError("Could not reach the flight data service: " + (e && e.message ? e.message : e));
   } finally {
     busy = false;
+    if (pending) { pending = false; load(); }
   }
 }
 

@@ -290,6 +290,7 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 
 /* ---------------- state ---------------- */
 const planes = new Map();   // hex -> {marker, data, trail:[[lat,lon,alt,ts]], anim}
+window.planes = planes;     // exposed for the tour's scripted radar drive
 let selHex = fused.params.get("sel") || null;
 let scanTimer = null, scanBusy = false, lastScanAt = 0;
 let trailLine = null;
