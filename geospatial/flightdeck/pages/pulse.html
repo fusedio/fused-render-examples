@@ -290,11 +290,11 @@ const base = (() => {
   try { return window.top.location.pathname.replace(/\/[^/]*\.html.*$/, ""); } catch (e) {}
   return location.pathname.replace(/\/pulse\.html.*/, "");
 })();
-$("#to-radar").href = base + "/radar.html";
-$("#to-airport").href = base + "/airport.html";
-$("#to-hazards").href = base + "/hazards.html";
-$("#to-sky").href = base + "/sky.html";
-$("#to-deck").href = base + "/flightdeck.html";
+$("#to-radar").href = FD("radar");
+$("#to-airport").href = FD("airport");
+$("#to-hazards").href = FD("hazards");
+$("#to-sky").href = FD("sky");
+$("#to-deck").href = FD("flightdeck");
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -423,7 +423,7 @@ function emgBanner(d) {
   const list = d.emergencies || [];
   if (!list.length) return "";
   const e = list[0];
-  const href = base + `/radar.html?lat=${(+e.lat).toFixed(3)}&lon=${(+e.lon).toFixed(3)}&z=8&sel=${esc(e.hex)}`;
+  const href = FD("radar") + `?lat=${(+e.lat).toFixed(3)}&lon=${(+e.lon).toFixed(3)}&z=8&sel=${esc(e.hex)}`;
   const more = list.length > 1 ? ` <span style="opacity:0.7">+${list.length - 1} more</span>` : "";
   return `<div class="emgbanner"><a target="_top" href="${href}"><span class="edot"></span>⚠ SQUAWK <span class="sq">${esc(e.squawk)}</span> — <span class="cs">${esc(e.cs)}</span> (${esc(e.type)}) · follow on radar${more}<span class="arr">↗</span></a></div>`;
 }
@@ -434,7 +434,7 @@ function militarySection(d) {
   if (!m.count) return "";
   const types = (m.types || []).map(t => `<b>${esc(t.code)}</b> ×${t.n}`).join(" · ");
   const rows = (m.sample || []).map(s => {
-    const href = base + `/radar.html?lat=${(+s.lat).toFixed(3)}&lon=${(+s.lon).toFixed(3)}&z=8&sel=${esc(s.hex)}`;
+    const href = FD("radar") + `?lat=${(+s.lat).toFixed(3)}&lon=${(+s.lon).toFixed(3)}&z=8&sel=${esc(s.hex)}`;
     const alt = s.alt == null ? "—" : nf(s.alt) + " ft";
     return `<a class="mil-row" target="_top" href="${href}">
       <span class="mcs">${esc(s.cs)}</span>

@@ -1394,9 +1394,7 @@ async function load() {
 
 /* ============================== boot ============================== */
 $("#tour-link").href = FD("tour");
-for (const a of document.querySelectorAll(".xnav a")) {
-  a.href = (() => { try { return window.top.location.pathname.replace(/\/[^/]*\.html.*$/, ""); } catch (e) { return location.pathname.replace(/\/flightdeck\.html.*/, ""); } })() + "/" + a.dataset.view;
-}
+for (const a of document.querySelectorAll(".xnav a")) a.href = FD(a.dataset.view);
 initMap();
 fused.params.onChange(load);
 load();
