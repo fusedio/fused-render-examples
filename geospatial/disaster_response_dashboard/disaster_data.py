@@ -39,11 +39,28 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE = os.path.join(_HERE, ".cache")
+
+
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. A runtime fact, not an
+# import probe — `import openfused` also succeeds on the local built-in executor,
+# so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), which is why the resumable poll loop is collapsed to a
+# single call hosted; see main().
+_CACHE = (
+    os.path.join(tempfile.gettempdir(), "fr-disaster-response-dashboard-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 CATALOG_URL = "https://maxar-opendata.s3.amazonaws.com/events/{event}/collection.json"
 IBTRACS_CSV = (
@@ -56,6 +73,11 @@ IBTRACS_CSV = (
 # at 6 s so the worst-case tail (budget + one in-flight task of 2 requests)
 # stays under the timeout even on a cold cache.
 TIME_BUDGET_S = 14.0
+# Hosted has no cross-call cache (per-call isolation), so the resumable poll
+# strategy can't accumulate — the fan-out must finish in ONE call. The hosted
+# per-call budget is far larger than the local 30 s bridge (Lambda-class), so
+# run the whole fan-out inline. Kept comfortably under a 300 s Lambda timeout.
+HOSTED_BUDGET_S = 240.0
 REQ_TIMEOUT_S = 6
 POOL_WORKERS = 24
 
@@ -327,6 +349,13 @@ def _assemble(rows, track, event_name):
     rows = [r for r in rows
             if r.get("date") not in (None, "unknown")
             and None not in (r.get("w"), r.get("s"), r.get("e"), r.get("n"))]
+    if not rows:
+        # Every fetched acquisition was missing a date/bbox — nothing to place on
+        # the globe. Fail clearly instead of letting the extent min()/max() below
+        # crash on an empty sequence (matters on the hosted partial-assembly path,
+        # which can reach here with only unusable rows).
+        raise RuntimeError("no usable acquisition footprints (all were missing a "
+                           "date or bounding box)")
     rows.sort(key=lambda r: r["date"])
 
     features = []
@@ -393,14 +422,26 @@ def _assemble(rows, track, event_name):
 
 
 def main(event_name: str = "Hurricane-Melissa-Oct-2025") -> dict:
-    deadline = time.monotonic() + TIME_BUDGET_S
+    # Hosted: one long call (no cross-call cache to resume from). Local: the 14 s
+    # per-poll budget with the page polling until complete.
+    deadline = time.monotonic() + (HOSTED_BUDGET_S if _HOSTED else TIME_BUDGET_S)
 
     track = _track()  # disk-cached after the first successful poll
 
     rows, done, total, complete = _footprints(event_name, deadline)
     if not complete:
-        print(f"footprints partial: {done}/{total} — page will poll again")
-        return {"ready": False, "stage": "acquisition footprints", "done": done, "total": total}
+        if not _HOSTED:
+            # Local: resumable — the page polls and each call continues the fan-out.
+            print(f"footprints partial: {done}/{total} — page will poll again")
+            return {"ready": False, "stage": "acquisition footprints", "done": done, "total": total}
+        # Hosted: no cross-call cache to resume from, so returning ready:False would
+        # make the page re-poll and restart the fan-out from zero, never converging.
+        # Render whatever completed within the budget (a partial map beats an
+        # un-resumable poll); only fail if nothing came back at all.
+        if not rows:
+            raise RuntimeError("footprint fetch exceeded the hosted time budget "
+                               "before any acquisition completed — reload to retry.")
+        print(f"hosted: assembling partial {done}/{total} footprints (budget hit)")
 
     payload = _assemble(rows, track, event_name)
     print(f"payload ready: {len(payload['fc']['features'])} footprints, "

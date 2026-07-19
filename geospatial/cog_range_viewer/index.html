@@ -377,9 +377,10 @@ async function boot() {
   if (LOCAL_FILE) {
     if (!window.fused || !fused.runPython)
       throw new Error("local files need the FusedRender app (open via /view/…)");
-    const sp = location.pathname.replace(/^\/view/, "").replace(/[^/]+$/, "");
-    const RANGE_SERVER = sp + "range_server.py";
-    const r = await fused.runPython(RANGE_SERVER, { action: "ensure", self_path: RANGE_SERVER });
+    // Literal path so the hosted exporter can bundle + route it (fused-render EXPORT.md);
+    // locally the server resolves it relative to this page, and the daemon self-locates
+    // via __file__ (range_server.py _me()), so no self_path is needed.
+    const r = await fused.runPython("./range_server.py", { action: "ensure" });
     if (!r || r.error) throw new Error((r && r.error) || "range daemon failed");
     COG_URL = `http://127.0.0.1:${r.port}/raw?file=${encodeURIComponent(LOCAL_FILE)}`;
   }

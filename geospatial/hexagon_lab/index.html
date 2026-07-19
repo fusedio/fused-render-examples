@@ -225,7 +225,7 @@ function callPy(params){
   if (!HAS_FUSED) return Promise.reject(new Error("no local Python (open via the fused-render app)"));
   const key = JSON.stringify(params);
   if (!pyCache.has(key))
-    // hosted: no data_dir — the bundled h3_ingest.py finds data/ via openfused.asset_path
+    // hosted: no data_dir — the bundled h3_ingest.py reads data/ beside the script
     pyCache.set(key, fused.runPython("./h3_ingest.py", HOSTED ? params : { ...params, data_dir: DATA_DIR })
       .catch(e => { pyCache.delete(key); throw e; }));
   return pyCache.get(key);

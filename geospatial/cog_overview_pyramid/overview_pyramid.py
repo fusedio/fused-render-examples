@@ -359,22 +359,61 @@ def _venv_python():
     return vpy
 
 
-def main(file: str = "", action: str = "analyze", resampling: str = "",
+def main(file: str = "", asset: str = "", action: str = "analyze", resampling: str = "",
          profile: str = "", out: str = "", overwrite: str = ""):
     import json
     import os
     import subprocess
+    import sys
     import tempfile
 
-    if not file:
-        return {"error": "no file selected — pass a .tif/.tiff path"}
-    file = os.path.abspath(os.path.expanduser(file))
-    if not os.path.isfile(file):
-        return {"error": f"not a file: {file}"}
+    # Hosted vs local is a RUNTIME fact — gate on OPENFUSED_DEPLOYED, the env var
+    # the serve backend injects on the compute (values "aws"/"fused"; unset
+    # locally), NOT on which param the caller sent. Keying off bool(asset) let a
+    # hosted caller omit `asset`, pass an arbitrary `file`, and slip past the
+    # read-only guards below into filesystem .tif reads / in-place writes. A caller
+    # can't set the compute's environment, so this can't be spoofed; locally the
+    # var is absent, so the local `file` path stays intact.
+    hosted = bool(os.environ.get("OPENFUSED_DEPLOYED"))
+    if hosted:
+        # A served page has no local filesystem: it reads ONLY a bundled asset, so an
+        # arbitrary `file` path is refused outright. The .tif ships in the deploy
+        # bundle beside this script — bundle v2 lands every bundled file at its real
+        # page-relative path under the project root — and we trust the serve image's
+        # deps (rasterio/tifffile/…) instead of building the local uv venv, and
+        # refuse the in-place write actions — a hosted artifact is read-only.
+        if not asset:
+            return {"error": "a hosted page can only read a bundled asset — pass `asset`, not `file`"}
+        # `asset` is a caller-influenced route param — confine it to a plain relative
+        # path *inside* the bundle so a crafted value ("../…", an absolute path, or
+        # empty/odd segments) can't resolve outside this script's directory.
+        parts = asset.split("/")
+        if (os.path.isabs(asset) or asset.startswith(("/", "\\"))
+                or any(p in ("", ".", "..") or "\\" in p or "\x00" in p for p in parts)):
+            return {"error": f"invalid asset path {asset!r}"}
+        # With "..", absolute, and empty segments rejected, this only joins the
+        # components *under* the bundle root — no traversal possible. No asset_path:
+        # it anchors under an assets/ prefix the fused-render bundle doesn't use.
+        base = (os.path.dirname(os.path.abspath(__file__))
+                if "__file__" in globals() else os.getcwd())
+        file = os.path.join(base, *parts)
+        if not os.path.isfile(file):
+            return {"error": f"bundled asset {asset!r} not found — add it to the deploy's "
+                             "publish list (Deploy → Will publish → Add files)"}
+    else:
+        if not file:
+            return {"error": "no file selected — pass a .tif/.tiff path"}
+        file = os.path.abspath(os.path.expanduser(file))
+        if not os.path.isfile(file):
+            return {"error": f"not a file: {file}"}
     if os.path.splitext(file)[1].lower() not in (".tif", ".tiff"):
         return {"error": "the overview pyramid only reads .tif/.tiff files"}
     if action not in ("analyze", "build", "cogify", "predict", "status"):
         return {"error": f"unknown action: {action}"}
+    if hosted and action in ("build", "cogify"):
+        return {"error": "adding overviews / writing a COG rewrites the file in place, which "
+                         "isn't possible on a read-only hosted page — use the local "
+                         "fused-render app for that."}
     opts = {k: v for k, v in [("resampling", resampling), ("profile", profile),
                               ("out", out), ("overwrite", overwrite)] if v}
 
@@ -405,13 +444,20 @@ def main(file: str = "", action: str = "analyze", resampling: str = "",
                 st["error"] = "worker process died without reporting a result"
         return st
 
-    try:
-        vpy = _venv_python()
-    except RuntimeError as e:
-        return {"error": str(e)}
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"venv setup failed: {type(e).__name__}: {e}"}
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONHOME", "PYTHONPATH")}
+    if hosted:
+        # Deps are baked into the serve image — run the worker on the ambient
+        # interpreter and inherit its env (site-packages visibility); no venv build,
+        # which needs uv + network + writable cache and won't run in the sandbox.
+        vpy = sys.executable
+        env = None
+    else:
+        try:
+            vpy = _venv_python()
+        except RuntimeError as e:
+            return {"error": str(e)}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"venv setup failed: {type(e).__name__}: {e}"}
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONHOME", "PYTHONPATH")}
 
     if action in ("build", "cogify"):
         # too slow for the app's 30s runPython budget → detach and poll

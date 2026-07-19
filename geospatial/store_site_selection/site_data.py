@@ -19,12 +19,33 @@ import json
 import math
 import os
 import sys
+import tempfile
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
 
-OVERTURE_RELEASE = "2026-05-20.0"
+
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. A runtime fact, not an
+# import probe — `import openfused` also succeeds on the local built-in executor,
+# so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see _warm.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-store-site-selection-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
+
+# Kept in step with the other Overture examples (locker/overture) on a release the
+# public STAC catalog still serves — _cafes resolves place files through STAC, and
+# only recent releases stay on that endpoint. The Places schema is stable across
+# these releases, so the query below is unaffected.
+OVERTURE_RELEASE = "2026-06-17.0"
 ACS_URL = "https://api.census.gov/data/2022/acs/acs5"
 TIGERWEB = ("https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/"
             "Tracts_Blocks/MapServer/0/query")
@@ -156,18 +177,44 @@ def _acs_demand(state: str, county: str):
     return out
 
 
+def _s3_to_https(href: str) -> str:
+    """Rewrite an ``s3://`` Overture href to its public HTTPS URL so DuckDB's HTTP
+    reader fetches it UNSIGNED (anonymous). Reading ``s3://`` makes httpfs sign the
+    request with whatever ambient AWS credentials exist — on a hosted Lambda those
+    are the execution role, which the public Overture bucket rejects with HTTP 403.
+    The bucket is us-west-2; the region-qualified host avoids a redirect."""
+    if not href.startswith("s3://"):
+        return href
+    bucket, _, key = href[len("s3://"):].partition("/")
+    # `=` in the key (theme=…/type=…) is percent-encoded, matching S3's own URL form.
+    return f"https://{bucket}.s3.us-west-2.amazonaws.com/{key.replace('=', '%3D')}"
+
+
 @disk_cache
 def _cafes(west: float, south: float, east: float, north: float):
     """Coffee-shop POIs from the Overture Maps public S3 release via DuckDB."""
     import duckdb
     con = duckdb.connect()
     con.sql("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';")
-    path = (f"s3://overturemaps-us-west-2/release/{OVERTURE_RELEASE}"
-            f"/theme=places/type=place/*")
+    # Resolve the place parquet files intersecting the bbox from the STAC catalog,
+    # then read them over public HTTPS (unsigned). A direct s3:// glob makes DuckDB
+    # sign the request with the Lambda's execution role, which the public bucket
+    # 403s — and it also scanned every global place file; the STAC bbox prefilter
+    # reads only the tiles this city needs.
+    stac = f"https://stac.overturemaps.org/{OVERTURE_RELEASE}/collections.parquet"
+    files = con.execute(
+        f"SELECT assets.aws.alternate.s3.href h FROM '{stac}' "
+        f"WHERE collection='place' "
+        f"AND bbox.xmax >= {west} AND bbox.xmin <= {east} "
+        f"AND bbox.ymax >= {south} AND bbox.ymin <= {north}"
+    ).fetchdf()["h"].dropna().tolist()
+    if not files:
+        return []
+    flist = ", ".join(f"'{_s3_to_https(f)}'" for f in files)
     df = con.sql(f"""
         SELECT names.primary AS name,
                bbox.xmin AS lon, bbox.ymin AS lat
-        FROM read_parquet('{path}', hive_partitioning=1)
+        FROM read_parquet([{flist}])
         WHERE bbox.xmin BETWEEN {west} AND {east}
           AND bbox.ymin BETWEEN {south} AND {north}
           AND categories.primary IN ('coffee_shop', 'cafe')
@@ -253,6 +300,14 @@ def _warm(city: str):
     if os.path.exists(_fetch_city.cache_path(city)):
         return {"ready": True}
 
+    if _HOSTED:
+        # No detached daemon or cross-call cache hosted (per-call subprocess
+        # isolation, read-only bundle). Skip the background warmer and report
+        # ready — the step="view" call runs _fetch_city inline within the larger
+        # hosted budget (the local ~30s bridge is the only reason the daemon
+        # exists).
+        return {"ready": True}
+
     lock, err = _warmer_paths(city)
     if os.path.exists(lock):
         try:
@@ -274,6 +329,15 @@ def _warm(city: str):
 def main(city: str = "austin", radius_km: float = RADIUS_KM, step: str = "view") -> dict:
     if city not in CITIES:
         raise ValueError(f"city must be one of {sorted(CITIES)}, got {city!r}")
+    if _HOSTED and not os.environ.get("CENSUS_API_KEY"):
+        # Hosted has no sibling .env (read-only bundle), so the key must be a
+        # provisioned secret. Fail fast at every step with an actionable, hosted-
+        # accurate message instead of raising deep in _fetch_city -> _census_key
+        # (whose "add it to .env" hint doesn't apply on a served page).
+        raise RuntimeError(
+            "CENSUS_API_KEY is not set. Provision it as a hosted secret / env var "
+            "(free key: https://api.census.gov/data/key_signup.html)."
+        )
     if step == "warm":
         return _warm(city)
 

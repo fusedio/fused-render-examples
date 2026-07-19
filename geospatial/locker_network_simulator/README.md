@@ -29,3 +29,19 @@ routing is cached.
 | `tour_data.py` | Overture address/shop warm-up daemon |
 | `_common.py` | OSRM matrices, TSP heuristics, caching |
 | `index.html` | Map, controls, before/after KPIs |
+
+## Deploying (hosted)
+
+This page can be deployed. Hosted there is no local filesystem, no reachable
+`127.0.0.1`, and per-call subprocess isolation — so the background warm-up daemon
+can't work (a detached warmer can't outlive the call and its `./.cache` wouldn't
+survive to the next one). `_common.py` detects the hosted runtime (the
+`openfused` shim is present only when served) and **skips the daemon**, computing
+the Overture pool/shops inline in a single, longer call; the larger hosted budget
+absorbs the cold fetch the daemon existed to hide locally. Local behaviour is
+unchanged.
+
+Requirement: **allow outbound HTTPS** from the serve environment to
+`router.project-osrm.org` and Overture (`stac.overturemaps.org` + its S3 in
+`us-west-2`, via DuckDB `httpfs`). No secrets. Confirm the per-call timeout
+accommodates the cold Overture scan.

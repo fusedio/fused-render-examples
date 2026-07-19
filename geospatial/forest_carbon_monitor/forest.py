@@ -22,10 +22,27 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
+
+
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. A runtime fact, not an
+# import probe — `import openfused` also succeeds on the local built-in executor,
+# so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see _warm.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-forest-carbon-monitor-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 _GFW_API = "https://data-api.globalforestwatch.org"
 # Public key embedded in globalforestwatch.org's own frontend bundle.
@@ -114,7 +131,13 @@ def disk_cache(fn):
 
 
 def _boundary(park: str) -> dict:
-    with open(os.path.join(_HERE, "boundaries", f"{park}.json"), encoding="utf-8") as fh:
+    # boundaries/ sits beside this script in both runtimes: locally it's part of
+    # the example, and hosted bundle v2 lands every bundled file at its real
+    # page-relative path under the project root (_HERE). The files ship via the
+    # fused-bundle manifest glob in index.html — no asset_path (that anchors under
+    # an assets/ prefix the fused-render bundle doesn't use).
+    path = os.path.join(_HERE, "boundaries", f"{park}.json")
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -170,6 +193,14 @@ def _warm(threshold: int):
     missing = [p for p in PARKS
                if not os.path.exists(_park_stats.cache_path(p, threshold))]
     if not missing:
+        return {"ready": True, "done": len(PARKS), "total": len(PARKS)}
+
+    if _HOSTED:
+        # No detached daemon or cross-call cache hosted (per-call subprocess
+        # isolation, read-only bundle) — the reason the page hung at "0/6 parks".
+        # Skip the background warmer and report ready; step="catalog"/"detail"
+        # run _park_stats inline within the larger hosted budget (the local ~30s
+        # bridge is the only reason the daemon exists).
         return {"ready": True, "done": len(PARKS), "total": len(PARKS)}
 
     os.makedirs(_CACHE_DIR, exist_ok=True)

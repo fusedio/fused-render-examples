@@ -14,7 +14,9 @@ import os
 import sys
 
 if "__file__" in globals():
-    # The fused-render runner already puts the script dir at sys.path[0].
+    # fused-render runs this file as its real path both locally and hosted
+    # (bundle v2), so the sibling _common.py is in this dir. The runner already
+    # puts it on sys.path[0]; add it explicitly so `import _common` resolves.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common as C  # noqa: E402
 
@@ -36,17 +38,6 @@ def _after_order(scenario_key, coords, init):
     return order
 
 
-def _parse_lockers(lockers: str):
-    out = []
-    for part in (lockers or "").split(";"):
-        part = part.strip()
-        if not part:
-            continue
-        lat, lon = part.split(",")
-        out.append({"lat": round(float(lat), 5), "lon": round(float(lon), 5)})
-    return out
-
-
 def _tour_stats(order, dur, dist):
     return (C.tour_cost(order, dist) / 1000.0, C.tour_cost(order, dur) / 60.0)
 
@@ -59,7 +50,7 @@ def main(
 ) -> dict:
     parcels = C.make_parcels(seed)
     n = len(parcels)
-    lks = _parse_lockers(lockers)
+    lks = C._parse_lockers(lockers)
 
     # --- capture assignment -------------------------------------------------
     for p in parcels:

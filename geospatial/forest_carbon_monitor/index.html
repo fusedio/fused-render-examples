@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>Protected Forest Monitor</title>
+<!-- Bundle manifest: when this page is exported for hosted serving, ship every
+     park-boundary polygon as a bundled file. forest.py reads them server-side by
+     a computed path (_HERE/boundaries/<park>.json) the HTML scan can't see, so the
+     glob is what gets boundaries/ into the bundle. Add a park to forest.py PARKS,
+     drop its GeoJSON in boundaries/, and it ships — no per-file list to maintain. -->
+<script type="application/fused-bundle">
+{ "include": ["boundaries/*.json"] }
+</script>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
@@ -147,6 +155,11 @@
 
 <script>
 "use strict";
+
+// Park-boundary polygons ship via the fused-bundle manifest glob at the top of
+// this page; forest.py reads them server-side (boundaries/<park>.json beside the
+// script). They're never fetched from the browser.
+
 const YR_MIN = 2001, YR_MAX = 2025;
 const $ = id => document.getElementById(id);
 const fmt = n => n == null ? "–" : Number(n).toLocaleString("en-US", {maximumFractionDigits: n < 10 ? 1 : 0});
@@ -429,10 +442,14 @@ let opT = null;
       `Fetching GFW zonal stats (${w.done}/${w.total} parks, ${Math.round((Date.now() - t0) / 1000)}s)…`;
     await new Promise(r => setTimeout(r, 2000));
   }
-  $("loading").textContent = "Loading park…";
+  // catalog is the slow step when the warmer was skipped (hosted: no cross-call
+  // cache, so it fetches every park's GFW stats inline here) — say so, since the
+  // warm poll above never runs in that mode.
+  $("loading").textContent = "Fetching GFW zonal stats…";
   catalog = await fused.runPython("./forest.py", { action: "catalog" });
   $("park").innerHTML = catalog.parks.map(p =>
     `<option value="${p.id}">${p.name} (${p.country})</option>`).join("");
+  $("loading").textContent = "Loading park…";
   fused.params.onChange(() => draw());
   await draw();
 })();

@@ -27,3 +27,27 @@ stats for six parks via a detached warmer; then cached.
 | `forest.py` | GFW zonal queries per boundary + warm-up daemon |
 | `index.html` | MapLibre loss/cover tiles + KPIs + annual-loss chart |
 | `boundaries/` | Six park boundaries (OSM, simplified GeoJSON) |
+
+## Deploying (hosted)
+
+This page can be deployed. Hosted there is no local filesystem and per-call
+subprocess isolation, so the background warm-up daemon can't work — this is what
+made the page hang at "0/6 parks" when served. `forest.py` detects the hosted
+runtime (the `OPENFUSED_DEPLOYED` env var the backend injects on the compute) and
+**skips the daemon**, running the per-park GFW zonal queries inline when the
+catalog/detail is requested. The park-boundary polygons in `boundaries/` are read
+server-side beside the script (`boundaries/<park>.json`) — bundle v2 lands every
+bundled file at its real page-relative path under the project root, so the same
+path works locally and hosted. Local behaviour is unchanged.
+
+Requirements:
+- **The `boundaries/` files bundle automatically** via the bundle manifest at the
+  top of `index.html`:
+  `<script type="application/fused-bundle">{ "include": ["boundaries/*.json"] }</script>`.
+  They're read server-side by a computed path the HTML scan can't see, so the glob
+  is what ships them. Add a park to `PARKS`, drop its polygon in `boundaries/`, and
+  it ships — no per-file list to maintain.
+- **Allow outbound HTTPS** to `data-api.globalforestwatch.org` (the GFW API key
+  is a public literal baked into the source — no secret to provision). The map's
+  basemap/loss tiles are fetched client-side from GFW/Carto. Confirm the per-call
+  timeout accommodates the cold catalog (~12 GFW queries).

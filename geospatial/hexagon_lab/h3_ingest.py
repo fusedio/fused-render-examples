@@ -28,9 +28,9 @@ written to memory, zstd-compressed, both sides measured the same way).
                                   (dataset = a RASTERS key, e.g. "fuji")
 
 The local client passes data_dir (absolute path to the page's data/ folder,
-derived from the page URL) because the runner exposes no __file__. On a
-hosted deploy no data_dir is sent and the bundled data files are resolved
-via openfused.asset_path("data", ...).
+derived from the page URL). On a hosted deploy no data_dir is sent; bundle v2
+lands every bundled file at its real page-relative path under the project root,
+so the data files are read beside this script (data/<name>).
 """
 
 import json
@@ -69,12 +69,6 @@ def _duck():
     if _con is None:
         import duckdb
         con = duckdb.connect()
-        try:
-            # sandboxes (e.g. the hosted serve plane) may have no $HOME, and
-            # duckdb refuses to resolve its extension dir without one
-            con.sql("SET home_directory='/tmp';")
-        except Exception:
-            pass
         try:
             con.sql("LOAD h3;")
         except Exception:
@@ -118,18 +112,16 @@ def _h3():
 
 
 def _data_path(data_dir, fname):
-    """Local runs pass data_dir; hosted runs resolve the bundled asset; a bare
-    local call (no data_dir, no openfused) looks beside this file."""
+    """Local runs pass an absolute data_dir. Hosted (bundle v2) every bundled file
+    lands at its real page-relative path under the project root, so data/ sits
+    beside this script — read it there. No asset_path: it anchors under an assets/
+    prefix the fused-render bundle doesn't use."""
     if data_dir:
         return f"{data_dir}/{fname}"
-    try:
-        import openfused
-        return openfused.asset_path("data", fname)
-    except ImportError:
-        import os
-        base = os.path.dirname(os.path.abspath(__file__)) \
-            if "__file__" in globals() else os.getcwd()
-        return os.path.join(base, "data", fname)
+    import os
+    base = os.path.dirname(os.path.abspath(__file__)) \
+        if "__file__" in globals() else os.getcwd()
+    return os.path.join(base, "data", fname)
 
 
 def _load(data_dir, dataset):

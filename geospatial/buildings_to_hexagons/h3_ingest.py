@@ -24,12 +24,22 @@ written to memory, zstd-compressed, both sides measured the same way).
                                   (dataset = a RASTERS key, e.g. "fuji")
 
 The client passes data_dir (absolute path to this episode's data/ folder,
-derived from the page URL) because the runner exposes no __file__.
+derived from the page URL) for local runs. Hosted, the deploy bundle
+materializes every bundled file at its real page-relative path under the
+project root (the runtime's cwd + sys.path[0]), so this script and its data/
+folder sit side by side and a __file__-relative read resolves them.
 """
 
 import json
+import os
 import struct
 import time
+
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. This is a runtime fact,
+# not an import probe: `import openfused` also succeeds on the local built-in
+# executor, so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
 
 DATASETS = {
     "ams": "ams_2025-05-21-0.json",
@@ -64,12 +74,29 @@ def _duck():
     return _con
 
 
+def _data_path(data_dir, filename):
+    """Resolve a bundled data file. Locally the page passes an absolute data_dir
+    (derived from its URL). Hosted, that data_dir ("/data") isn't a real path — but
+    bundle v2 lands every bundled file at its real page-relative path under the
+    project root (the runtime's cwd + sys.path[0]), so data/ sits beside this
+    script. Prefer the __file__-relative copy when it exists — that resolves hosted
+    no matter how the runtime signals deployment, and locally too — else fall back
+    to the page's data_dir. (No asset_path: it anchors under an assets/ prefix the
+    fused-render bundle doesn't use, which produced the old "assets/data/…" miss.)"""
+    if "__file__" in globals():
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "data", filename)
+        if os.path.isfile(here):
+            return here
+    return f"{data_dir}/{filename}"
+
+
 def _load(data_dir, dataset):
     if dataset not in DATASETS:
         raise ValueError(f"unknown dataset {dataset!r}")
     key = (data_dir, dataset)
     if key not in _cache:
-        with open(f"{data_dir}/{DATASETS[dataset]}") as f:
+        with open(_data_path(data_dir, DATASETS[dataset])) as f:
             _cache[key] = json.load(f)
     return _cache[key]
 
@@ -130,7 +157,7 @@ def _load_raster(data_dir, dataset):
         raise ValueError(f"unknown raster {dataset!r}")
     key = (data_dir, "raster:" + dataset)
     if key not in _cache:
-        with open(f"{data_dir}/{RASTERS[dataset]}") as f:
+        with open(_data_path(data_dir, RASTERS[dataset])) as f:
             _cache[key] = json.load(f)
     return _cache[key]
 
@@ -164,7 +191,7 @@ def main(
     t0 = time.monotonic()
     res = max(3, min(12, int(res)))
     n = int(n)
-    if not data_dir:
+    if not data_dir and not _HOSTED:
         raise ValueError("data_dir is required (absolute path to the episode's data/ folder)")
 
     out = {}

@@ -22,12 +22,29 @@ import math
 import os
 import random
 import sys
+import tempfile
 
 import requests
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
+
+
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. A runtime fact, not an
+# import probe — `import openfused` also succeeds on the local built-in executor,
+# so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see warm_via_daemon.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-locker-network-simulator-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 UA = {"User-Agent": "fused-render-locker-network-simulator/1.0"}
 OSRM = "https://router.project-osrm.org"
@@ -83,10 +100,20 @@ def warm_via_daemon(tag: str, target_paths, code: str):
     Spawns a DETACHED process running `code` (which fills the disk cache) and
     returns {"ready": False} until every path in target_paths exists. The page
     polls this every couple of seconds.
+
+    Hosted there is no daemon: a detached warmer can't outlive the call and its
+    cache wouldn't survive per-call isolation, so this returns ready immediately
+    and the caller's data step computes the same @disk_cache work inline.
     """
     import subprocess
 
     if all(os.path.exists(p) for p in target_paths):
+        return {"ready": True}
+
+    if _HOSTED:
+        # Skip the background warmer entirely (see docstring); the local ~30s
+        # bridge budget is the only reason it exists, and the hosted budget fits
+        # the cold fetch inline.
         return {"ready": True}
 
     os.makedirs(_CACHE_DIR, exist_ok=True)
@@ -124,6 +151,21 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def _parse_lockers(lockers: str):
+    """Parse a "lat,lon;lat,lon" string into [{"lat","lon"}]. Lives here (not in
+    simulate.py) so suggest.py can import it without importing a sibling entrypoint
+    — a hosted bundle exposes _common (a bundled asset) but not the other run
+    entrypoints as importable modules."""
+    out = []
+    for part in (lockers or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        lat, lon = part.split(",")
+        out.append({"lat": round(float(lat), 5), "lon": round(float(lon), 5)})
+    return out
+
+
 # --- Overture data ----------------------------------------------------------
 
 def _duck():
@@ -135,6 +177,19 @@ def _duck():
     con.execute("SET s3_region='us-west-2';")
     con.execute("SET http_timeout=30000;")
     return con
+
+
+def _s3_to_https(href: str) -> str:
+    """Rewrite an ``s3://`` Overture href to its public HTTPS URL so DuckDB's HTTP
+    reader fetches it UNSIGNED (anonymous). Reading ``s3://`` makes httpfs sign the
+    request with whatever ambient AWS credentials exist — on a hosted Lambda those
+    are the execution role, which the public Overture bucket rejects with HTTP 403.
+    The bucket is us-west-2; the region-qualified host avoids a redirect."""
+    if not href.startswith("s3://"):
+        return href
+    bucket, _, key = href[len("s3://"):].partition("/")
+    # `=` in the key (theme=…/type=…) is percent-encoded, matching S3's own URL form.
+    return f"https://{bucket}.s3.us-west-2.amazonaws.com/{key.replace('=', '%3D')}"
 
 
 @disk_cache
@@ -153,7 +208,7 @@ def address_pool(bbox=BBOX):
     )
     if not files:
         return []
-    flist = ", ".join(f"'{f}'" for f in files)
+    flist = ", ".join(f"'{_s3_to_https(f)}'" for f in files)
     df = con.execute(f"""
         SELECT ST_Y(geometry) lat, ST_X(geometry) lon, number, street
         FROM read_parquet([{flist}])
@@ -194,7 +249,7 @@ def shop_candidates(bbox=BBOX):
     )
     if not files:
         return []
-    flist = ", ".join(f"'{f}'" for f in files)
+    flist = ", ".join(f"'{_s3_to_https(f)}'" for f in files)
     df = con.execute(f"""
         SELECT names.primary AS name, categories.primary AS category,
                ST_Y(geometry) lat, ST_X(geometry) lon

@@ -19,11 +19,28 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))
          if "__file__" in globals() else os.path.abspath(sys.path[0]))
-_CACHE_DIR = os.path.join(_HERE, ".cache")
+
+
+# True in a deployed executor. The backend injects OPENFUSED_DEPLOYED
+# ("aws"/"fused") on the compute; locally it is unset. A runtime fact, not an
+# import probe — `import openfused` also succeeds on the local built-in executor,
+# so it can't tell local from hosted.
+_HOSTED = bool(os.environ.get("OPENFUSED_DEPLOYED"))
+
+# Hosted the bundle is read-only, so ./.cache next to the script isn't writable —
+# cache into a per-run temp dir instead. Cross-call it won't persist (per-call
+# subprocess isolation), but each hosted call recomputes inline within the larger
+# serve budget; see warm_via_daemon.
+_CACHE_DIR = (
+    os.path.join(tempfile.gettempdir(), "fr-overture-census-isochrone-cache")
+    if _HOSTED
+    else os.path.join(_HERE, ".cache")
+)
 
 # Canvas `costing` values mapped to ORS profiles (same mapping the canvas
 # UDF latlng_isochrone_simplified used).
@@ -38,6 +55,19 @@ PROFILES = set(COSTING_TO_ORS.values())
 # the public STAC endpoint, so the port pins the newest one (see PORT_NOTES).
 OVERTURE_RELEASE = "2026-06-17.0"
 STAC_COLLECTIONS = f"https://stac.overturemaps.org/{OVERTURE_RELEASE}/collections.parquet"
+
+
+def _s3_to_https(href: str) -> str:
+    """Rewrite an ``s3://`` Overture href to its public HTTPS URL so DuckDB's HTTP
+    reader fetches it UNSIGNED (anonymous). Reading ``s3://`` makes httpfs sign the
+    request with whatever ambient AWS credentials exist — on a hosted Lambda those
+    are the execution role, which the public Overture bucket rejects with HTTP 403.
+    The bucket is us-west-2; the region-qualified host avoids a redirect."""
+    if not href.startswith("s3://"):
+        return href
+    bucket, _, key = href[len("s3://"):].partition("/")
+    # `=` in the key (theme=…/type=…) is percent-encoded, matching S3's own URL form.
+    return f"https://{bucket}.s3.us-west-2.amazonaws.com/{key.replace('=', '%3D')}"
 
 # POI categories offered by the canvas widget (overture_poi_selector.json).
 # The canvas filtered with a substring match over the whole `categories`
@@ -102,10 +132,20 @@ def warm_via_daemon(tag: str, target_path: str, code: str):
     Spawns a DETACHED process running `code` (which must end up writing the
     disk-cache file at target_path) and returns {"ready": False} until that
     file exists. Callers poll from the page every couple of seconds.
+
+    Hosted there is no daemon: a detached warmer can't outlive the call and its
+    cache wouldn't survive per-call isolation, so this returns ready immediately
+    and the caller's data step computes the same @disk_cache work inline.
     """
     import subprocess
 
     if os.path.exists(target_path):
+        return {"ready": True}
+
+    if _HOSTED:
+        # Skip the background warmer entirely (see docstring); the local ~30s
+        # bridge budget is the only reason it exists, and the hosted budget fits
+        # the cold fetch inline.
         return {"ready": True}
 
     os.makedirs(_CACHE_DIR, exist_ok=True)
@@ -291,6 +331,9 @@ def overture_pois_bbox(xmin, ymin, xmax, ymax, category: str):
     extra = "AND lower(CAST(categories AS VARCHAR)) NOT LIKE '%parking%'" if category == "park" else ""
 
     con = duckdb.connect()
+    # Hosted (Lambda) has no HOME, so DuckDB can't locate its extension dir to
+    # INSTALL — point it at a writable temp dir. Harmless locally.
+    con.execute(f"SET home_directory='{tempfile.gettempdir()}';")
     con.execute("INSTALL httpfs; LOAD httpfs;")
     con.execute("INSTALL spatial; LOAD spatial;")
     con.execute("SET s3_region='us-west-2';")
@@ -311,7 +354,7 @@ def overture_pois_bbox(xmin, ymin, xmax, ymax, category: str):
         con.close()
         return []
 
-    flist = ", ".join(f"'{f}'" for f in files)
+    flist = ", ".join(f"'{_s3_to_https(f)}'" for f in files)
     df = con.execute(f"""
         SELECT names.primary AS name,
                categories.primary AS category,

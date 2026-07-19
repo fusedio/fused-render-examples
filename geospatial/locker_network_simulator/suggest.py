@@ -12,10 +12,12 @@ import os
 import sys
 
 if "__file__" in globals():
-    # The fused-render runner already puts the script dir at sys.path[0].
+    # fused-render runs this file as its real path both locally and hosted
+    # (bundle v2), so the sibling _common.py is in this dir. The runner already
+    # puts it on sys.path[0]; add it explicitly so `import _common` resolves.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common as C  # noqa: E402
-from simulate import _parse_lockers  # noqa: E402
+from _common import _parse_lockers  # noqa: E402
 
 
 def main(

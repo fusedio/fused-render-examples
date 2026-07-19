@@ -10,8 +10,9 @@ import os
 import sys
 
 if "__file__" in globals():
-    # Running as a plain script; the fused-render runner already puts the
-    # script dir at sys.path[0] and exposes no __file__.
+    # fused-render runs this file as its real path both locally and hosted
+    # (bundle v2), so the sibling _common.py is in this dir. The runner already
+    # puts it on sys.path[0]; add it explicitly so `from _common import …` resolves.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 _HERE = (os.path.dirname(os.path.abspath(__file__))

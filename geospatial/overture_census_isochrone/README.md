@@ -27,3 +27,19 @@ Needs two free API keys — copy `.env.example` to `.env` and fill in:
 | `census_panel.py` | Census ACS income per hex |
 | `_common.py` | Shared caching, DuckDB/H3, key loading, warm-up daemon |
 | `index.html` | Map + KPIs + charts |
+
+## Deploying (hosted)
+
+This page can be deployed. Hosted there is no local filesystem and per-call
+subprocess isolation, so the POI panel's background warm-up daemon can't work.
+`_common.py` detects the hosted runtime (the `openfused` shim is present only
+when served) and **skips the daemon**, running the Overture Places scan inline in
+a single, longer call (the isochrone and census panels already run inline). Local
+behaviour is unchanged.
+
+Requirements: **allow outbound HTTPS** to `nominatim.openstreetmap.org`,
+`valhalla1.openstreetmap.de`, `api.openrouteservice.org`, Overture
+(`stac.overturemaps.org` + S3), `tigerweb.geo.census.gov`, and `www2.census.gov`.
+`ORS_API_KEY` is optional (Valhalla is the keyless primary; ORS is a fallback);
+if you want the ORS fallback, provision it as a hosted secret. Confirm the
+per-call timeout accommodates the cold Overture scan.
