@@ -1,0 +1,3447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>An Interactive guide to Zarr</title>
+<style>
+  :root {
+    /* warm paper + ink (visual-explainers house style) */
+    --paper:#f6f2e9; --card:#fffdf8; --line:#e4dccb; --line2:#d6cdb8;
+    --ink:#28231a; --dim:#7b7260; --mut:#a89e8a;
+    --gold:#b8860b;            /* your selection */
+    --fetch:#1f8fb8;           /* bytes that traveled */
+    --cache:#2f9e57;           /* served free from cache */
+    --miss:#c9366b;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font:14.5px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         display:flex; flex-direction:column; align-items:center; }
+  .mono { font-family:"SF Mono",ui-monospace,Menlo,monospace; }
+  .col { width:100%; max-width:880px; padding:18px 28px 20px; display:flex;
+         flex-direction:column; min-height:100vh; }
+
+  /* ---------- progress ---------- */
+  .prog { display:flex; align-items:center; gap:10px; color:var(--mut); font-size:12px; flex:0 0 auto; }
+  .dots { display:flex; gap:5px; flex:1; justify-content:center; }
+  .dots i { width:7px; height:7px; border-radius:50%; background:var(--line2);
+            transition:background .2s, transform .2s; cursor:pointer; }
+  .dots i.on { background:var(--ink); transform:scale(1.25); }
+  .dots i.past { background:var(--mut); }
+  .prog .n { font-variant-numeric:tabular-nums; min-width:72px; }
+  .prog .n:last-child { text-align:right; }
+
+  /* ---------- step copy ---------- */
+  .head { margin:12px 0 10px; min-height:104px; flex:0 0 auto; position:relative; }
+  .kicker { font-size:11.5px; letter-spacing:1.6px; text-transform:uppercase; color:var(--gold);
+            font-weight:700; margin:0 0 5px; min-height:14px; }
+  a.learn { position:absolute; top:0; right:0; font-size:11.5px; color:var(--gold);
+            text-decoration:none; border-bottom:1px dotted var(--gold); }
+  a.learn:hover { color:#8a6508; }
+  h1 { font-family:Georgia,"Iowan Old Style","Times New Roman",serif; font-size:29px;
+       line-height:1.15; margin:0 0 7px; letter-spacing:-.2px; font-weight:600; }
+  .copy { color:#4d463a; font-size:15px; margin:0; max-width:720px; }
+  .copy b { color:var(--ink); }
+  .copy .k { font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:12.5px;
+             background:#f3edd9; border-radius:4px; padding:0 4px; }
+
+  /* ---------- stage ---------- */
+  .stage { background:var(--card); border:1px solid var(--line); border-radius:18px;
+           height:500px; position:relative; overflow:hidden; flex:0 0 auto;
+           display:flex; align-items:center; justify-content:center;
+           box-shadow:0 2px 10px rgba(90,75,40,.06); }
+  .stage-in { display:flex; flex-direction:column; align-items:center; gap:12px;
+              width:100%; height:100%; padding:18px 22px; justify-content:center; }
+  .caption { color:var(--dim); font-size:12.5px; text-align:center; min-height:18px;
+             font-variant-numeric:tabular-nums; max-width:760px; flex:none; }
+  .caption b { color:var(--ink); }
+  .caption .f { color:var(--fetch); font-weight:600; }
+  .caption .g { color:var(--cache); font-weight:600; }
+  .caption .z { color:var(--gold); font-weight:600; }
+  .fadein { animation:fade .45s ease both; }
+  @keyframes fade { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+
+  /* ---------- nav ---------- */
+  .nav { display:flex; align-items:center; justify-content:space-between; margin-top:12px; flex:0 0 auto; }
+  .nav .hintkeys { color:var(--mut); font-size:12px; }
+  button.b { appearance:none; cursor:pointer; font:600 14px/1 -apple-system,BlinkMacSystemFont,sans-serif;
+             border-radius:10px; padding:10px 20px; border:1px solid var(--line2);
+             background:var(--card); color:var(--ink); transition:box-shadow .15s, opacity .15s; }
+  button.b:hover { box-shadow:0 2px 8px rgba(90,75,40,.12); }
+  button.b.primary { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  button.b[disabled] { opacity:.35; cursor:default; box-shadow:none; }
+  button.small { appearance:none; cursor:pointer; font:600 12.5px/1 -apple-system,sans-serif;
+                 border-radius:8px; padding:8px 14px; border:1px solid var(--line2);
+                 background:var(--card); color:var(--ink); }
+  button.small:hover { box-shadow:0 1px 6px rgba(90,75,40,.15); }
+  button.small.primary { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  button.small[disabled] { opacity:.4; cursor:default; }
+  .foot { color:var(--mut); font-size:11.5px; text-align:center; margin-top:8px; min-height:16px; }
+  .foot .f { color:var(--fetch); font-weight:600; }
+
+  /* ---------- components ---------- */
+  .statrow { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .stat { border:1px solid var(--line2); border-radius:12px; background:#fbf8f0;
+          padding:12px 18px; text-align:center; min-width:150px; cursor:default;
+          transition:opacity .3s, border-color .2s, background .2s, transform .35s; }
+  .stat .v { font-family:Georgia,serif; font-size:24px; font-variant-numeric:tabular-nums; }
+  .stat .l { color:var(--dim); font-size:11.5px; margin-top:3px; }
+  .stat.hidden0 { opacity:0; transform:translateY(10px); pointer-events:none; }
+  .stat.hot { border-color:var(--gold); background:#f9f0d8; }
+  /* the global hover grammar: whatever ISN'T in focus fades away */
+  .dimhov { transition:opacity .3s; }
+  .dimhov.dim, .stat.dim { opacity:.22; }
+  .bigno { font-family:Georgia,serif; font-size:44px; line-height:1.05;
+           font-variant-numeric:tabular-nums; }
+
+  canvas.cube { display:block; }
+
+  /* download dialog (step 1) */
+  .oldwin { border:1px solid #b9ae97; border-radius:10px; overflow:hidden; background:#ece5d4;
+            box-shadow:0 3px 14px rgba(90,75,40,.14); width:480px; }
+  .oldbar { display:flex; align-items:center; gap:8px; padding:7px 10px; background:#ddd4bf;
+            border-bottom:1px solid #c4b99f; font-size:12px; color:#5d5442; font-weight:600; }
+  .oldbar .wdots { display:flex; gap:5px; }
+  .oldbar .wdots i { width:9px; height:9px; border-radius:50%; background:#b7ab8f; }
+  .oldbody { padding:14px 16px 16px; font-size:12.5px; color:#5d5442; }
+  .oldbody .fn { font-family:"SF Mono",Menlo,monospace; font-size:11.5px; color:#4d4535;
+                 margin-bottom:10px; word-break:break-all; }
+  .dlbar { height:14px; border:1px solid #b3a789; border-radius:3px; overflow:hidden; background:#f6f1e4; }
+  .dlbar i { display:block; height:100%; width:0%; background:linear-gradient(#9db7d8,#7d9cc4); }
+  .dlmeta { display:flex; flex-direction:column; gap:2px; margin-top:7px;
+            font-variant-numeric:tabular-nums; font-size:11.5px; }
+
+  /* narration log */
+  .narr { width:100%; max-width:640px; font-size:12.5px; border:1px solid var(--line);
+          border-radius:10px; background:#fbf8f0; padding:8px 12px; min-height:64px;
+          max-height:150px; overflow-y:auto; }
+  .narr .ln { padding:1.5px 0; color:var(--dim); }
+  .narr .ln b { color:var(--ink); }
+  .narr .ln .req { color:var(--fetch); }
+  .narr .ln .sz { color:var(--gold); font-weight:600; font-variant-numeric:tabular-nums; }
+  .narr .ln .key { font-family:"SF Mono",Menlo,monospace; font-size:11px;
+                   background:#f3edd9; border-radius:4px; padding:0 4px; }
+
+  /* the big hover key (naming step) */
+  .bigkey { font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:21px;
+            letter-spacing:.4px; color:var(--ink); white-space:nowrap; }
+  .bigkey .pre { color:var(--dim); }
+  .bigkey .seg { display:inline-block; padding:2px 6px; border-radius:7px;
+                 border:1.5px solid transparent; cursor:default;
+                 transition:background .15s, border-color .15s, color .15s; }
+  .bigkey .seg.glow { background:#f5e3af; border-color:var(--gold); color:#7a5807; }
+  .keylab { font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+            color:var(--mut); font-weight:700; }
+  .keywords { font-size:12.5px; color:var(--dim); line-height:1.6; min-height:66px; }
+  .keywords b { color:var(--ink); }
+  .keywords .ax { display:inline-block; border-radius:5px; padding:0 5px; }
+  .keywords .ax.glow { background:#f5e3af; color:#7a5807; }
+  .tstrip { display:flex; gap:3px; }
+  .tstrip i { width:26px; height:30px; border:1px solid var(--line2); border-radius:5px;
+              background:#fbf8f0; display:flex; flex-direction:column; align-items:center;
+              justify-content:center; gap:0;
+              font:600 9.5px -apple-system,sans-serif; color:var(--dim); cursor:default;
+              font-style:normal; transition:background .12s, border-color .12s; }
+  .tstrip i .ix { font:600 8px "SF Mono",Menlo,monospace; color:var(--mut); }
+  .tstrip i.on { background:#f5e3af; border-color:var(--gold); color:#7a5807; }
+  .tstrip i.on .ix { color:#7a5807; }
+  .tstrip i.band { border-color:var(--gold); }
+
+  /* interactive tree + preview (files step) */
+  .tree2 { background:#fbf8f0; border:1px solid var(--line); border-radius:10px;
+           padding:9px 12px; font-family:"SF Mono",Menlo,monospace; font-size:12px;
+           line-height:1.72; width:352px; flex:none; }
+  .tree2 .tn { white-space:nowrap; color:var(--dim); border-radius:5px; padding:0 5px;
+               margin:0 -5px; transition:opacity .25s; }
+  .tree2 .tn.dim { opacity:.3; }
+  .tree2 .tn.hov { cursor:default; }
+  .tree2 .tn.hov:hover, .tree2 .tn.lit { background:#f3e7c4; color:var(--ink); }
+  .tree2 .sz { color:var(--mut); font-size:10.5px; }
+  .prevcard { border:1px solid var(--line2); border-radius:12px; background:#fbf8f0;
+              width:380px; height:352px; padding:13px 15px; display:flex;
+              flex-direction:column; gap:8px; overflow:hidden; }
+  .prevcard .ph { font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+                  color:var(--mut); font-weight:700; }
+  .prevcard .pt { font-family:Georgia,serif; font-size:16.5px; color:var(--ink); }
+  .prevcard .pb { font-size:12.5px; color:var(--dim); line-height:1.55; }
+  .prevcard .pb b { color:var(--ink); }
+  .fieldrow { display:flex; gap:8px; font-family:"SF Mono",Menlo,monospace; font-size:11.5px;
+              padding:3px 7px; border-radius:6px; cursor:default; }
+  .fieldrow:hover, .fieldrow.on { background:#f3e7c4; }
+  .fieldrow .fk { color:#8a6508; min-width:96px; }
+  .fieldrow .fv { color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fieldexp { font-size:12px; color:var(--dim); min-height:38px; padding:4px 7px;
+              border-top:1px dashed var(--line2); margin-top:2px; }
+  .fieldexp b { color:var(--ink); }
+
+  /* plain-words "ID card" rows (tree step, zarr.json previews) */
+  .idrow { display:flex; gap:10px; font-size:12.5px; padding:5px 9px; border-radius:7px;
+           background:#f7f2e2; align-items:baseline; }
+  .idrow .idk { color:#8a6508; min-width:104px; font-weight:700; font-size:11px;
+                letter-spacing:.05em; text-transform:uppercase; }
+  .idrow .idv { color:var(--ink); }
+  .rawtoggle { align-self:flex-start; appearance:none; border:none; background:none;
+               color:var(--gold); font:600 11.5px -apple-system,sans-serif; cursor:pointer;
+               padding:2px 0; border-bottom:1px dotted var(--gold); }
+  .rawpre { font-family:"SF Mono",Menlo,monospace; font-size:9.5px; line-height:1.45;
+            background:#f3edd9; border-radius:8px; padding:8px 10px; margin:0;
+            white-space:pre; overflow:hidden; color:#4d4535; }
+
+  /* the 16 computed names (reading step) */
+  .keygrid { display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; width:440px; }
+  .keygrid i { font:600 10.5px "SF Mono",Menlo,monospace; font-style:normal;
+               background:#f3edd9; border-radius:4px; padding:3px 0; color:var(--dim);
+               text-align:center; transition:background .2s, color .2s, opacity .2s; }
+  .keygrid i.hot { background:#d9edf5; color:#155f7d; }
+  .keygrid i.done { background:#e2efe0; color:#2c6b3f; }
+
+  /* pinned download panel (real S3 read) — fixed height, never scrolls */
+  .dlpanel { width:100%; max-width:300px; border:1px solid var(--line2); border-radius:12px;
+             background:#fbf8f0; padding:11px 13px; display:flex; flex-direction:column;
+             gap:8px; min-height:150px; overflow:hidden; flex:none; }
+  .dlpanel .dlh { font-size:10.5px; letter-spacing:.08em; text-transform:uppercase;
+                  color:var(--mut); font-weight:700; }
+  .dlpanel .pbar { height:13px; flex:none; border:1px solid var(--line2); border-radius:4px;
+                   background:#efe8d5; overflow:hidden; }
+  .dlpanel .pbar i { display:block; height:100%; width:0%;
+                     background:linear-gradient(#4fa7c9,#1f8fb8); transition:width .25s linear; }
+  .dlpanel .dlstat { font-size:11.5px; color:var(--dim); font-variant-numeric:tabular-nums;
+                     min-height:30px; }
+  .dlpanel .dlstat b { color:var(--ink); }
+  .dlpanel .dlstat .sz { color:var(--fetch); font-weight:600; }
+
+  /* bars (gotcha + receipt) */
+  .cmp { width:100%; max-width:620px; display:flex; flex-direction:column; gap:12px; }
+  .cmp .row { display:grid; grid-template-columns:190px 1fr 90px; gap:12px; align-items:center; }
+  .cmp .lb { font-size:12.5px; color:var(--dim); text-align:right; }
+  .cmp .lb b { color:var(--ink); }
+  .cmp .tr { height:20px; border-radius:5px; background:#efe8d5; border:1px solid var(--line2);
+             position:relative; overflow:hidden; }
+  .cmp .tr i { position:absolute; left:0; top:0; bottom:0; border-radius:4px; }
+  .cmp .val { font-size:12.5px; font-variant-numeric:tabular-nums; font-weight:600; }
+
+  /* format cards (comparison step) — all four on one page */
+  .fmtgrid { display:grid; grid-template-columns:repeat(2, 1fr); gap:12px;
+             width:100%; max-width:800px; }
+  .fmtc { border:1px solid var(--line2); border-radius:13px; background:#fbf8f0;
+          padding:9px 16px 10px; display:flex; flex-direction:column; align-items:center;
+          gap:2px; text-align:center; opacity:0;
+          transition:opacity .3s, border-color .2s; }
+  .fmtc { transform:translateY(8px); transition:opacity .4s, transform .4s, border-color .2s; }
+  .fmtc.in { opacity:1; transform:none; }
+  .fmtc.dim { opacity:.22; }
+  .fmtc.hot { border-color:var(--gold); }
+  .fmtc .fname { font-family:Georgia,serif; font-size:17px; }
+  .fmtc .ftag { font-size:10px; color:var(--gold); font-weight:700;
+                letter-spacing:.08em; text-transform:uppercase; }
+  .fmtc .fline { font-size:11.5px; color:var(--dim); max-width:360px; line-height:1.45; }
+  .fmtc .fline b { color:var(--ink); }
+
+  /* dataset cards */
+  .dsgrid { display:grid; grid-template-columns:repeat(2, 320px); gap:14px; }
+  .dscard { border:1px solid var(--line2); border-radius:13px; background:#fbf8f0;
+            padding:14px 16px; cursor:pointer; text-align:left;
+            transition:box-shadow .15s, border-color .15s; }
+  .dscard:hover { border-color:var(--gold); box-shadow:0 3px 12px rgba(184,134,11,.16); }
+  .dscard .dn { font-family:Georgia,serif; font-size:17px; margin-bottom:2px; }
+  .dscard .dd { font-size:12px; color:var(--dim); line-height:1.5; min-height:36px; }
+  .dscard .dgo { font-size:12px; color:var(--gold); font-weight:700; margin-top:7px; }
+
+  /* playground */
+  .pg { display:flex; gap:18px; width:100%; height:100%; align-items:stretch; }
+  .pgL { flex:0 0 340px; display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .pgR { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .pgR .cwrap { flex:1; position:relative; min-height:0; }
+  .pgR canvas { position:absolute; inset:0; }
+  .pg input[type=text] { width:100%; font-size:11px; padding:7px 9px; border:1px solid var(--line2);
+        border-radius:8px; background:var(--card); color:var(--ink);
+        font-family:"SF Mono",Menlo,monospace; }
+  .pg select { width:100%; font-size:11.5px; padding:6px 8px; border:1px solid var(--line2);
+        border-radius:8px; background:var(--card); color:var(--ink);
+        font-family:"SF Mono",Menlo,monospace; }
+  .chips { display:flex; gap:5px; flex-wrap:wrap; }
+  .chip { font-size:10.5px; cursor:pointer; border-radius:99px; padding:3px 9px;
+          border:1px solid var(--line2); background:var(--card); color:var(--dim); }
+  .chip:hover { color:var(--ink); border-color:var(--mut); }
+  .chip.on { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  .dims { border:1px solid var(--line); border-radius:9px; background:#fbf8f0; padding:6px 9px; }
+  .dimRow { display:grid; grid-template-columns:78px 1fr 96px; gap:7px; align-items:center;
+            padding:3px 0; }
+  .dimRow .dn { font-family:"SF Mono",Menlo,monospace; font-size:10.5px; font-weight:600;
+                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dimRow .dn .tag { font-size:8.5px; letter-spacing:.05em; color:var(--paper);
+        background:var(--gold); border-radius:3px; padding:1px 4px; margin-left:4px;
+        vertical-align:1px; }
+  .dimRow .num { font-size:10px; color:var(--dim); text-align:right;
+                 font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .dimRow .num .cur { color:var(--gold); font-weight:600; }
+  .cbar { position:relative; height:18px; border-radius:4px; overflow:hidden;
+          background:#efe8d5; border:1px solid var(--line2); cursor:ew-resize; touch-action:none; }
+  .cbar .cb { position:absolute; top:0; bottom:0; border-right:1px solid #d8cfb6; pointer-events:none; }
+  .cbar .win { position:absolute; top:0; bottom:0; background:rgba(184,134,11,.35);
+               border:1.5px solid var(--gold); border-radius:3px; pointer-events:none; }
+  .cbar .ix { position:absolute; top:0; bottom:0; width:3px; background:var(--gold); pointer-events:none; }
+  .pgEst { font-size:11.5px; color:var(--dim); min-height:30px; }
+  .pgEst b { color:var(--ink); font-variant-numeric:tabular-nums; }
+  .pgEst .warn { color:var(--miss); font-weight:600; }
+  .pgNarr { font-size:11.5px; border:1px solid var(--line); border-radius:8px;
+            background:#fbf8f0; padding:6px 9px; flex:1; overflow-y:auto; min-height:44px; }
+  .pgNarr .sz { color:var(--gold); font-weight:600; }
+  .pgNarr .key { font-family:"SF Mono",Menlo,monospace; font-size:10px;
+                 background:#f3edd9; border-radius:4px; padding:0 3px; }
+
+  .banner { font-size:12px; color:var(--miss); background:#fdeee9; border:1px solid #eecabc;
+            border-radius:9px; padding:6px 11px; margin-top:8px; display:none; }
+  .banner.show { display:block; }
+</style>
+</head>
+<body>
+<div class="col">
+  <div class="prog">
+    <span class="n" id="pn"></span>
+    <div class="dots" id="pdots"></div>
+    <span class="n" id="pt"></span>
+  </div>
+
+  <div class="head">
+    <p class="kicker" id="kicker"></p>
+    <a class="learn" id="learn" target="_blank" rel="noopener"></a>
+    <h1 id="title"></h1>
+    <p class="copy" id="copy"></p>
+  </div>
+
+  <div class="stage" id="stage"></div>
+
+  <div class="nav">
+    <button class="b" id="back">← Back</button>
+    <span class="hintkeys">use ← → keys</span>
+    <button class="b primary" id="next">Next →</button>
+  </div>
+  <div class="foot" id="foot"></div>
+  <div class="banner" id="banner"></div>
+</div>
+
+<script>
+/* PIXEL_ICONS_INLINE_START — inlined copy of pixel_icons/icons.js.
+   Relative <script src> does not resolve under /render?path=…, so the
+   library is embedded verbatim. To update: re-copy pixel_icons/icons.js
+   between these markers, then escape the literal closing script tag in
+   its header comment as <\/script> (it terminates this block otherwise). */
+/* ============================================================
+   PixelIcons — pixelated / dithered icon library
+   for the Zarr explainer (paper-editorial design system).
+
+   Dependency-free. Attach with:
+     <script src="pixel_icons/icons.js"><\/script>
+     PixelIcons.draw('zarr', canvasEl, { size: 96, palette: 'paper' });
+
+   Every icon is painted on a small logical grid (16 / 24 / 32 px)
+   then blitted up with imageSmoothingEnabled = false, so pixels
+   stay crisp at any size and any devicePixelRatio.
+   Tone is done with a 4x4 ordered-dither (Bayer) matrix — the same
+   checker shading the explainer's world map uses.
+   ============================================================ */
+(function () {
+  "use strict";
+
+  /* ---------- palettes (mirrors explainer.html tokens) ---------- */
+  const PALETTES = {
+    paper: {
+      ink:      "#28231a",
+      dim:      "#7b7260",
+      line:     "#d6cdb8",
+      card:     "#fffdf8",
+      paper:    "#f6f2e9",
+      gold:     "#b8860b",
+      goldSoft: "#e9c869",
+      goldDeep: "#7a5807",
+      land:     "#e8dcc0",
+      landMid:  "#cdbd97",
+      landDark: "#a8966b",
+      ocean:    "#d7e4ea",
+      oceanDeep:"#b9cfd9",
+      fetch:    "#1f8fb8",
+      fetchSoft:"#9fcfe2",
+      cache:    "#2f9e57",
+      cacheSoft:"#b5dcc3"
+    },
+    /* thermal accent — warm check-palette to sanity-check contrast */
+    thermal: {
+      ink:      "#241c14",
+      dim:      "#8a6a52",
+      line:     "#dcc9ae",
+      card:     "#fdf6ec",
+      paper:    "#f6ede0",
+      gold:     "#c4571a",
+      goldSoft: "#f0a468",
+      goldDeep: "#7c3208",
+      land:     "#eedcbe",
+      landMid:  "#d5b487",
+      landDark: "#a97f4e",
+      ocean:    "#e3d3be",
+      oceanDeep:"#cdb694",
+      fetch:    "#b03a12",
+      fetchSoft:"#e8b294",
+      cache:    "#6f7d2c",
+      cacheSoft:"#cdd3a4"
+    }
+  };
+
+  /* 4x4 Bayer ordered-dither matrix (values 0..15) */
+  const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+  const bayer = (x, y) => BAYER[(y & 3) * 4 + (x & 3)];
+
+  /* ---------- 32x16 land mask, downsampled at build time from
+     mock_store/land_mask.json (lat 58°S..86°N, majority filter).
+     Row 0 = north. -------------------------------------------- */
+  const LAND32 = [
+    "00000000000111000000000000000000",
+    "00000000000111000000000111100000",
+    "00111111000000000111111111111111",
+    "00001111011000000111111111110000",
+    "00000111110000001111111111110000",
+    "00000111100000000001111111100000",
+    "00000011000000011111111111100000",
+    "00000000000000111111101111000000",
+    "00000000011000011111000000000000",
+    "00000000011100000111000000000000",
+    "00000000011110000111000000000000",
+    "00000000001110000110000000011000",
+    "00000000001100000110000000111100",
+    "00000000011000000000000000001000",
+    "00000000000000000000000000000000",
+    "00000000000000000000000000000000"
+  ];
+
+  /* ---------- tiny painter over a logical-pixel context ---------- */
+  function painter(ctx, pal) {
+    const p = {
+      pal,
+      px(x, y, c) { ctx.fillStyle = pal[c] || c; ctx.fillRect(x, y, 1, 1); },
+      rect(x, y, w, h, c) { ctx.fillStyle = pal[c] || c; ctx.fillRect(x, y, w, h); },
+      frame(x, y, w, h, c) {
+        p.rect(x, y, w, 1, c); p.rect(x, y + h - 1, w, 1, c);
+        p.rect(x, y, 1, h, c); p.rect(x + w - 1, y, 1, h, c);
+      },
+      /* ordered dither: paint cA where bayer < d (0..16), else cB (or skip) */
+      dither(x, y, w, h, cA, d, cB) {
+        for (let yy = y; yy < y + h; yy++)
+          for (let xx = x; xx < x + w; xx++) {
+            const on = bayer(xx, yy) < d;
+            if (on) p.px(xx, yy, cA);
+            else if (cB) p.px(xx, yy, cB);
+          }
+      },
+      hline(x, y, w, c) { p.rect(x, y, w, 1, c); },
+      vline(x, y, h, c) { p.rect(x, y, 1, h, c); }
+    };
+    return p;
+  }
+
+  /* ---------- ASCII-map painter ----------
+     key: char -> color role, or {c, d, c2} for dithered mix */
+  function paintMap(p, map, key) {
+    for (let y = 0; y < map.length; y++) {
+      const row = map[y];
+      for (let x = 0; x < row.length; x++) {
+        const k = key[row[x]];
+        if (!k) continue;
+        if (typeof k === "string") { p.px(x, y, k); }
+        else {
+          const on = bayer(x, y) < k.d;
+          if (on) p.px(x, y, k.c);
+          else if (k.c2) p.px(x, y, k.c2);
+        }
+      }
+    }
+  }
+
+  /* ============================================================
+     ICON DEFINITIONS
+     each: { grid: N, paint(p, pal) }  — logical square grid NxN
+     ============================================================ */
+  const ICONS = {};
+
+  /* ---- globe : pixel world map, real continents (32 grid) ---- */
+  ICONS.globe = {
+    grid: 32,
+    paint(p) {
+      // ocean field with a soft dithered frame band
+      p.rect(0, 7, 32, 18, "ocean");
+      p.dither(0, 7, 32, 1, "oceanDeep", 8);
+      p.dither(0, 24, 32, 1, "oceanDeep", 8);
+      // gentle ocean texture
+      p.dither(0, 8, 32, 16, "oceanDeep", 2);
+      // land
+      for (let y = 0; y < 16; y++)
+        for (let x = 0; x < 32; x++)
+          if (LAND32[y][x] === "1") p.px(x, y + 8, "landDark");
+      // dithered land highlight (sun-side)
+      for (let y = 0; y < 16; y++)
+        for (let x = 0; x < 32; x++)
+          if (LAND32[y][x] === "1" && bayer(x, y) < 5) p.px(x, y + 8, "landMid");
+    }
+  };
+
+  /* ---- cube : isometric data cube (24 grid) ---- */
+  ICONS.cube = {
+    grid: 24,
+    paint(p) {
+      const cx = 12;
+      // top diamond: rows 3..13, widest at row 8 (x 1..22)
+      for (let y = 3; y <= 13; y++) {
+        const hw = (y <= 8 ? (y - 3) * 2 + 1 : (13 - y) * 2 + 1);
+        p.rect(cx - hw, y, hw * 2, 1, "land");
+        p.px(cx - hw, y, "ink"); p.px(cx + hw - 1, y, "ink");
+      }
+      p.rect(cx - 1, 3, 2, 1, "ink");
+      // left face: cols 1..11, dithered within the face only
+      for (let x = 1; x <= 11; x++) {
+        const yt = 8 + ((x - 1) >> 1) + 1;
+        for (let i = 0; i < 8; i++) {
+          const y = yt + i;
+          p.px(x, y, bayer(x, y) < 5 ? "landDark" : "landMid");
+        }
+        p.px(x, yt + 8, "ink");
+      }
+      // right face: mirrored, darker, dithered within the face only
+      for (let x = 12; x <= 22; x++) {
+        const m = 22 - x;
+        const yt = 8 + (m >> 1) + 1;
+        for (let i = 0; i < 8; i++) {
+          const y = yt + i;
+          p.px(x, y, bayer(x, y) < 2 ? "ink" : "landDark");
+        }
+        p.px(x, yt + 8, "ink");
+      }
+      // vertical edges
+      p.vline(1, 8, 9, "ink"); p.vline(22, 8, 9, "ink");
+      p.vline(11, 13, 9, "ink"); p.px(12, 13, "ink");
+      // top-face grid hint (it's data)
+      p.dither(cx - 5, 6, 10, 5, "landMid", 3);
+    }
+  };
+
+  /* ---- zarr : chunked cube — 3x3 grid of blocks, one gold (24 grid) ---- */
+  ICONS.zarr = {
+    grid: 24,
+    paint(p) {
+      for (let r = 0; r < 3; r++)
+        for (let c = 0; c < 3; c++) {
+          const x = 1 + c * 8, y = 1 + r * 8; // 7px blocks, 1px gaps
+          const hot = (r === 1 && c === 1);
+          p.rect(x, y, 7, 7, hot ? "goldSoft" : "land");
+          p.frame(x, y, 7, 7, hot ? "gold" : "landDark");
+          p.dither(x + 1, y + 1, 5, 5, hot ? "gold" : "landMid", 4);
+        }
+      // corner tick: it's one addressable block
+      p.px(1 + 8 + 1, 1 + 8 + 1, "goldDeep");
+    }
+  };
+
+  /* ---- cog : one big raster file with overview pyramid (24 grid) ---- */
+  ICONS.cog = {
+    grid: 24,
+    paint(p) {
+      // page body with a clean folded corner (fold x13..16, y1..4)
+      p.rect(3, 1, 14, 22, "card");
+      p.rect(13, 1, 4, 4, "paper");   // cut the corner
+      p.hline(3, 1, 10, "ink");       // top edge up to the fold
+      p.vline(3, 1, 22, "ink");       // left
+      p.hline(3, 22, 14, "ink");      // bottom
+      p.vline(16, 4, 19, "ink");      // right, below the fold
+      p.px(13, 1, "ink"); p.px(14, 2, "ink"); p.px(15, 3, "ink"); // diagonal
+      p.hline(13, 4, 4, "ink");       // fold underside
+      p.px(13, 2, "line"); p.px(13, 3, "line"); p.px(14, 3, "line"); // flap
+      // overview pyramid: 3 rasters, small on top
+      p.dither(9, 6, 3, 2, "fetch", 9, "fetchSoft");
+      p.frame(8, 5, 5, 4, "ink");
+      p.dither(8, 11, 6, 3, "fetch", 9, "fetchSoft");
+      p.frame(7, 10, 8, 5, "ink");
+      p.dither(6, 17, 9, 3, "fetch", 9, "fetchSoft");
+      p.frame(5, 16, 11, 5, "ink");
+    }
+  };
+
+  /* ---- netcdf : classic container box with layers (24 grid) ---- */
+  ICONS.netcdf = {
+    grid: 24,
+    paint(p) {
+      // lid (slightly lifted)
+      p.rect(4, 2, 16, 3, "landMid");
+      p.frame(4, 2, 16, 3, "ink");
+      // box body
+      p.rect(3, 6, 18, 16, "land");
+      p.frame(3, 6, 18, 16, "ink");
+      // three stacked layers inside
+      const shades = ["landMid", "landDark", "landMid"];
+      for (let i = 0; i < 3; i++) {
+        const y = 8 + i * 5;
+        p.dither(5, y, 14, 4, shades[i], 9, "land");
+        p.frame(5, y, 14, 4, "ink");
+      }
+      // little "n" dimension ticks on the lid
+      p.px(7, 3, "ink"); p.px(11, 3, "ink"); p.px(15, 3, "ink");
+    }
+  };
+
+  /* ---- parquet : columnar bars (24 grid) ---- */
+  ICONS.parquet = {
+    grid: 24,
+    paint(p) {
+      const bars = [
+        { x: 3,  h: 13, c: "fetch" },
+        { x: 8,  h: 18, c: "gold" },
+        { x: 13, h: 9,  c: "fetch" },
+        { x: 18, h: 15, c: "fetch" }
+      ];
+      for (const b of bars) {
+        const y = 21 - b.h;
+        p.dither(b.x, y, 4, b.h, b.c, 9, b.c === "gold" ? "goldSoft" : "fetchSoft");
+        p.frame(b.x, y, 4, b.h, "ink");
+        // row-group segment lines
+        for (let yy = y + 4; yy < 20; yy += 4) p.hline(b.x, yy, 4, "ink");
+      }
+      p.hline(1, 22, 22, "ink"); // baseline
+    }
+  };
+
+  /* ---- chunk : single tile (16 grid) ---- */
+  ICONS.chunk = {
+    grid: 16,
+    paint(p) {
+      p.rect(2, 2, 12, 12, "land");
+      p.dither(3, 3, 10, 10, "landMid", 6);
+      p.frame(2, 2, 12, 12, "ink");
+      // gold index tag in the corner: chunk "0.0"
+      p.rect(3, 3, 4, 4, "goldSoft");
+      p.frame(3, 3, 4, 4, "gold");
+    }
+  };
+
+  /* ---- chunks_grid : 4x4 grid of tiles, one fetched (24 grid) ---- */
+  ICONS.chunks_grid = {
+    grid: 24,
+    paint(p) {
+      for (let r = 0; r < 4; r++)
+        for (let c = 0; c < 4; c++) {
+          const x = 0 + c * 6, y = 0 + r * 6; // 5px tiles + 1px gap
+          const fetched = (r === 1 && c === 2);
+          const cached = (r === 2 && c === 1);
+          const body = fetched ? "fetch" : cached ? "cache" : "land";
+          p.rect(x, y, 5, 5, body);
+          if (!fetched && !cached) p.dither(x + 1, y + 1, 3, 3, "landMid", 5);
+          p.frame(x, y, 5, 5, fetched ? "ink" : cached ? "ink" : "landDark");
+        }
+    }
+  };
+
+  /* ---- shard : many tiles packed into one file strip (24 grid) ---- */
+  ICONS.shard = {
+    grid: 24,
+    paint(p) {
+      // the one file (outer capsule)
+      p.rect(1, 6, 22, 12, "card");
+      p.frame(1, 6, 22, 12, "ink");
+      // packed chunk tiles inside
+      for (let i = 0; i < 4; i++) {
+        const x = 3 + i * 4;
+        p.rect(x, 8, 3, 8, "land");
+        p.dither(x, 8, 3, 8, "landMid", 6);
+        p.frame(x, 8, 3, 8, "landDark");
+      }
+      // gold index footer block at the end (shard index)
+      p.rect(19, 8, 3, 8, "goldSoft");
+      p.dither(19, 8, 3, 8, "gold", 6);
+      p.frame(19, 8, 3, 8, "gold");
+    }
+  };
+
+  /* ---- folder (16 grid) ---- */
+  ICONS.folder = {
+    grid: 16,
+    paint(p) {
+      paintMap(p, [
+        "................",
+        ".########.......",
+        ".#ffffff#.......",
+        ".##############.",
+        ".#ffffffffffff#.",
+        ".#ffffffffffff#.",
+        ".#ffffffffffff#.",
+        ".#ffffffffffff#.",
+        ".#ffffffffffff#.",
+        ".#dddddddddddd#.",
+        ".#dddddddddddd#.",
+        ".#dddddddddddd#.",
+        ".##############.",
+        "................",
+        "................",
+        "................"
+      ], {
+        "#": "ink",
+        "f": "land",
+        "d": { c: "landMid", d: 8, c2: "land" }
+      });
+    }
+  };
+
+  /* ---- file_json : metadata file with braces (16 grid) ---- */
+  ICONS.file_json = {
+    grid: 16,
+    paint(p) {
+      // page + fold + braces
+      p.rect(2, 1, 12, 13, "card");
+      p.frame(2, 1, 12, 13, "ink");
+      // folded corner
+      p.rect(10, 1, 4, 4, "paper");
+      p.px(10, 1, "ink"); p.px(11, 2, "ink"); p.px(12, 3, "ink");
+      p.hline(10, 4, 4, "ink");
+      p.vline(13, 4, 10, "ink");
+      p.px(10, 2, "line"); p.px(10, 3, "line"); p.px(11, 3, "line"); // flap
+      // { } braces in ink
+      p.vline(5, 6, 4, "ink"); p.px(6, 5, "ink"); p.px(6, 10, "ink"); p.px(4, 7, "ink");
+      p.vline(10, 6, 4, "ink"); p.px(9, 5, "ink"); p.px(9, 10, "ink"); p.px(11, 7, "ink");
+      // gold key:value dot
+      p.rect(7, 7, 2, 2, "gold");
+    }
+  };
+
+  /* ---- download : arrow into tray (16 grid) ---- */
+  ICONS.download = {
+    grid: 16,
+    paint(p) {
+      // arrow shaft
+      p.rect(7, 1, 2, 6, "fetch");
+      // arrow head
+      p.rect(4, 6, 8, 1, "fetch");
+      p.rect(5, 7, 6, 1, "fetch");
+      p.rect(6, 8, 4, 1, "fetch");
+      p.rect(7, 9, 2, 1, "fetch");
+      // dither trail (bytes streaming)
+      p.dither(7, 1, 2, 5, "fetchSoft", 5);
+      // tray
+      p.vline(2, 10, 4, "ink"); p.vline(13, 10, 4, "ink");
+      p.hline(2, 13, 12, "ink");
+      p.dither(3, 12, 10, 1, "line", 8);
+    }
+  };
+
+  /* ---- receipt : till receipt (24 grid) ---- */
+  ICONS.receipt = {
+    grid: 24,
+    paint(p) {
+      p.rect(6, 1, 12, 20, "card");
+      p.vline(6, 1, 20, "ink"); p.vline(17, 1, 20, "ink");
+      p.hline(6, 1, 12, "ink");
+      // zigzag torn bottom
+      for (let x = 6; x < 18; x += 2) {
+        p.px(x, 21, "ink"); p.px(x + 1, 20, "ink");
+        p.px(x + 1, 21, "paper");
+      }
+      // printed lines
+      p.hline(8, 4, 8, "dim");
+      p.hline(8, 7, 5, "dim"); p.hline(14, 7, 2, "landDark");
+      p.hline(8, 10, 6, "dim"); p.hline(15, 10, 1, "landDark");
+      p.hline(8, 13, 4, "dim"); p.hline(14, 13, 2, "landDark");
+      // divider + gold total
+      p.dither(8, 15, 8, 1, "dim", 8);
+      p.hline(8, 17, 3, "ink"); p.rect(13, 16, 3, 2, "goldSoft");
+      p.frame(13, 16, 3, 2, "gold");
+    }
+  };
+
+  /* ---- clock_wait (16 grid) ---- */
+  ICONS.clock_wait = {
+    grid: 16,
+    paint(p) {
+      p.rect(3, 3, 10, 10, "card");
+      // circle-ish rim
+      p.hline(5, 2, 6, "ink"); p.hline(5, 13, 6, "ink");
+      p.vline(2, 5, 6, "ink"); p.vline(13, 5, 6, "ink");
+      p.px(3, 3, "ink"); p.px(4, 3, "ink"); p.px(3, 4, "ink");
+      p.px(11, 3, "ink"); p.px(12, 3, "ink"); p.px(12, 4, "ink");
+      p.px(3, 11, "ink"); p.px(3, 12, "ink"); p.px(4, 12, "ink");
+      p.px(12, 11, "ink"); p.px(11, 12, "ink"); p.px(12, 12, "ink");
+      p.rect(4, 4, 8, 8, "card"); p.dither(4, 4, 8, 8, "paper", 3);
+      // hands: minute up, hour right (waiting…)
+      p.vline(7, 4, 4, "ink");
+      p.hline(7, 8, 3, "ink"); p.px(7, 8, "gold");
+    }
+  };
+
+  /* ---- bolt_fast (16 grid) ---- */
+  ICONS.bolt_fast = {
+    grid: 16,
+    paint(p) {
+      paintMap(p, [
+        "................",
+        "........KK......",
+        ".......KGG......",
+        "......KGGG......",
+        ".....KGGG.......",
+        "....KGGG........",
+        "...KGGGGGKK.....",
+        "...KKKKGGGK.....",
+        "......KGGK......",
+        ".....KGGK.......",
+        "....KGGK........",
+        "....KGK.........",
+        "...KGK..........",
+        "...KK...........",
+        "................",
+        "................"
+      ], { "K": "ink", "G": "gold" });
+      // speed ticks trailing on the left
+      p.hline(1, 9, 2, "dim");
+      p.hline(1, 11, 2, "dim");
+    }
+  };
+
+  /* ---- link_out : learn-more arrow (16 grid) ---- */
+  ICONS.link_out = {
+    grid: 16,
+    paint(p) {
+      // box
+      p.frame(2, 5, 9, 9, "ink");
+      p.rect(3, 6, 7, 7, "card");
+      p.dither(3, 6, 7, 7, "paper", 3);
+      // arrow out to top-right
+      p.px(8, 8, "gold"); p.px(9, 7, "gold"); p.px(10, 6, "gold");
+      p.px(11, 5, "gold"); p.px(12, 4, "gold");
+      // arrow head
+      p.hline(9, 2, 5, "gold");
+      p.vline(13, 2, 5, "gold");
+      p.px(12, 3, "gold");
+    }
+  };
+
+  /* ---- bulb : idea (16 grid) ---- */
+  ICONS.bulb = {
+    grid: 16,
+    paint(p) {
+      paintMap(p, [
+        "................",
+        ".....#####......",
+        "....#ggggg#.....",
+        "...#ggggggg#....",
+        "...#ggGgggg#....",
+        "...#gGggggg#....",
+        "...#ggggggg#....",
+        "....#ggggg#.....",
+        ".....#ggg#......",
+        ".....#####......",
+        ".....#KKK#......",
+        ".....#KKK#......",
+        "......###.......",
+        "................",
+        "................",
+        "................"
+      ], {
+        "#": "ink",
+        "g": { c: "goldSoft", d: 11, c2: "gold" },
+        "G": "card",
+        "K": { c: "dim", d: 8, c2: "line" }
+      });
+      // rays
+      p.px(1, 4, "gold"); p.px(13, 4, "gold");
+      p.px(2, 1, "gold"); p.px(12, 1, "gold");
+      p.px(7, 0, "gold");
+    }
+  };
+
+  /* ---- act badges : aliases with palette shifts ---- */
+  function shifted(base, shift) {
+    return {
+      grid: ICONS[base].grid,
+      paint(p) {
+        const pal2 = Object.assign({}, p.pal, shift(p.pal));
+        ICONS[base].paint(painterProxy(p, pal2));
+      }
+    };
+  }
+  function painterProxy(p, pal2) {
+    const q = Object.assign({}, p);
+    q.pal = pal2;
+    q.px = (x, y, c) => p.px(x, y, pal2[c] || c);
+    q.rect = (x, y, w, h, c) => p.rect(x, y, w, h, pal2[c] || c);
+    q.frame = (x, y, w, h, c) => p.frame(x, y, w, h, pal2[c] || c);
+    q.hline = (x, y, w, c) => p.hline(x, y, w, pal2[c] || c);
+    q.vline = (x, y, h, c) => p.vline(x, y, h, pal2[c] || c);
+    q.dither = (x, y, w, h, cA, d, cB) =>
+      p.dither(x, y, w, h, pal2[cA] || cA, d, cB ? (pal2[cB] || cB) : cB);
+    return q;
+  }
+  ICONS.act_data = shifted("cube", (pal) => ({
+    land: pal.goldSoft, landMid: pal.gold, landDark: pal.goldDeep
+  }));
+  ICONS.act_idea = shifted("bulb", () => ({}));
+  ICONS.act_files = shifted("folder", (pal) => ({
+    land: pal.goldSoft, landMid: pal.gold
+  }));
+  ICONS.act_world = shifted("globe", (pal) => ({
+    ocean: pal.paper, oceanDeep: pal.line,
+    landDark: pal.gold, landMid: pal.goldSoft
+  }));
+
+  /* ============================================================
+     public API
+     ============================================================ */
+  function resolvePalette(pal) {
+    if (!pal) return PALETTES.paper;
+    if (typeof pal === "string") return PALETTES[pal] || PALETTES.paper;
+    return Object.assign({}, PALETTES.paper, pal);
+  }
+
+  function draw(name, canvas, opts) {
+    opts = opts || {};
+    const def = ICONS[name];
+    if (!def) throw new Error("PixelIcons: unknown icon '" + name + "'");
+    const size = opts.size || 48;
+    const pal = resolvePalette(opts.palette);
+
+    // paint on the logical grid
+    const off = document.createElement("canvas");
+    off.width = def.grid; off.height = def.grid;
+    const octx = off.getContext("2d");
+    def.paint(painter(octx, pal), pal);
+
+    // blit up, crisp
+    const dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
+    canvas.style.width = size + "px";
+    canvas.style.height = size + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  const names = [
+    "zarr", "cog", "netcdf", "parquet",
+    "globe", "cube", "chunk", "chunks_grid", "shard",
+    "folder", "file_json", "download", "receipt",
+    "clock_wait", "bolt_fast", "link_out", "bulb",
+    "act_data", "act_idea", "act_files", "act_world"
+  ];
+
+  window.PixelIcons = { draw, names, palettes: PALETTES, icons: ICONS };
+})();
+/* PIXEL_ICONS_INLINE_END */
+</script>
+
+<script>
+"use strict";
+/* =====================================================================
+   What is Zarr? — a step-driven story.
+   Instant interactions run against a LOCAL mini twin of the real store
+   (mock_store/mur_sst_mini.zarr — real ERA5-derived temperatures, same
+   layout as NASA's MUR store). Talking to the huge real store on S3 is
+   one explicit opt-in moment, where the wait itself is the lesson.
+   All numbers are measured live by the zarr_probe.py daemon, or are
+   explicitly labelled canned (demo mode without the FusedRender bridge).
+   ===================================================================== */
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+function el(tag, cls, html){ const e = document.createElement(tag);
+  if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+const esc = s => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const fmtB = n => n >= 1e12 ? (n/1e12).toFixed(1)+" TB"
+             : n >= 1e9 ? (n/1e9).toFixed(1)+" GB"
+             : n >= 1e6 ? (n/1e6).toFixed(n >= 1e7 ? 0 : 1)+" MB"
+             : n >= 1000 ? Math.round(n/1000)+" KB" : Math.round(n)+" B";
+const fmtN = n => n >= 1e12 ? (n/1e12).toFixed(2)+" trillion"
+             : n >= 1e9 ? (n/1e9).toFixed(1)+" billion"
+             : n >= 1e6 ? (n/1e6).toFixed(1)+" million"
+             : Math.round(n).toLocaleString("en-US");
+/* pixelated glyph from the inlined PixelIcons library — decorative only */
+function pixIcon(name, size, css){
+  const cv = document.createElement("canvas");
+  PixelIcons.draw(name, cv, { size });
+  cv.style.cssText = "pointer-events:none;" + (css || "");
+  return cv;
+}
+
+/* ---------- app bridge ---------- */
+const HAS_FUSED = typeof window.fused !== "undefined" && !!window.fused.runPython;
+const P = HAS_FUSED && fused.params ? fused.params : (() => {
+  const qs = new URLSearchParams(location.search);
+  return { get: k => qs.get(k), set: (k, v) => { qs.set(k, v);
+           try { history.replaceState(null, "", "?" + qs); } catch(e) {} } };
+})();
+
+const DEMO = !HAS_FUSED;
+let daemonPort = null, daemonPromise = null;
+function ensureDaemon(){
+  // single-flight: several steps may ask at once, runPython must run once
+  if (DEMO) return Promise.resolve(null);
+  if (daemonPort) return Promise.resolve(daemonPort);
+  if (!daemonPromise){
+    daemonPromise = (async () => {
+      const r = await fused.runPython("./zarr_probe.py", {}).catch(e => ({error: String(e)}));
+      if (!r || r.error || !r.port){
+        banner("The probe daemon failed to start" + (r && r.error ? ": " + esc(r.error) : "") +
+               " — is `uv` installed? Falling back to canned numbers.");
+        daemonPromise = null;
+        return null;
+      }
+      daemonPort = r.port;
+      return daemonPort;
+    })();
+  }
+  return daemonPromise;
+}
+async function api(path){
+  if (DEMO) throw new Error("demo mode");
+  await ensureDaemon();
+  if (!daemonPort) throw new Error("probe daemon unreachable");
+  let res;
+  try { res = await fetch(`http://127.0.0.1:${daemonPort}${path}`); }
+  catch(e){                       // daemon idled out — restart once
+    daemonPort = null; daemonPromise = null;
+    await ensureDaemon();
+    if (!daemonPort) throw new Error("probe daemon unreachable");
+    res = await fetch(`http://127.0.0.1:${daemonPort}${path}`);
+  }
+  const j = await res.json();
+  if (!res.ok) throw new Error(j.error || res.status);
+  return j;
+}
+function banner(msg){
+  const b = $("#banner");
+  if (!msg){ b.classList.remove("show"); return; }
+  b.innerHTML = msg;
+  b.classList.add("show");
+}
+
+/* ---------- the cast ---------- */
+const MOCK  = "mock_store/mur_sst_mini.zarr";   // local mini twin, resolved by the daemon next to this page
+const MUR   = "s3://mur-sst/zarr-v1";
+const GEFS  = "https://data.dynamical.org/noaa/gefs/forecast-35-day/latest.zarr";
+const CMIP6 = "s3://cmip6-pds/CMIP6/CMIP/NCAR/CESM2/historical/r10i1p1f1/Amon/ts/gn/v20190313";
+const WSF   = "s3://us-west-2.opendata.source.coop/mindearth/wsf/World_WSF_20160701-20260101.zarr";
+const MOCK_T = 6;                               // the month used throughout (July 2022)
+
+/* The Mediterranean read used for the real-store moment (MUR grid indices).
+   day 6210 of the record = 2 June 2019; lat rows 12700–13500 = 37–45°N;
+   lon cols 18700–20100 = 7–21°E (the seas around Italy). */
+const READ = { t: 6210, r0: 12700, r1: 13500, c0: 18700, c1: 20100 };
+
+/* ---------- session ledger (bytes that really traveled the internet) ---------- */
+const SES = { bytes: 0, reqs: 0, log: [], localBytes: 0, localReads: 0,
+              touched: new Map(), otherReads: 0 };   // touched: chunk cells for the receipt cube
+/* record which chunk coords a read touched, for the receipt datacube.
+   parses v3 keys (analysed_sst/c/t/y/x — the mock store) and v2 dot keys
+   (analysed_sst/t.y.x — NASA's real store). */
+function recordTouches(touched, store){
+  if (!touched) return;
+  for (const t of touched){
+    let m = /^analysed_sst\/c\/(\d+)\/(\d+)\/(\d+)$/.exec(t.key) ||
+            /^analysed_sst\/(\d+)\.(\d+)\.(\d+)$/.exec(t.key);
+    if (!m) continue;
+    const id = store + ":" + t.key;
+    const prev = SES.touched.get(id);
+    if (prev){ if (t.bytes) prev.bytes = t.bytes; continue; }
+    SES.touched.set(id, { store, key: t.key,
+      t: +m[1], lat: +m[2], lon: +m[3], bytes: t.bytes || 0 });
+  }
+}
+function bump(cost, what, isLocal){
+  if (isLocal){
+    SES.localBytes += cost.net_bytes; SES.localReads += 1;
+    footNote(); return;
+  }
+  SES.bytes += cost.net_bytes; SES.reqs += cost.requests;
+  SES.log.push({ what, bytes: cost.net_bytes, reqs: cost.requests,
+                 ms: cost.ms, cached: cost.net_bytes === 0 });
+  footNote();
+}
+function footNote(extra){
+  $("#foot").innerHTML = (SES.reqs
+    ? `this session: <span class="f">${fmtB(SES.bytes)}</span> traveled the internet in ` +
+      `${SES.reqs} request${SES.reqs === 1 ? "" : "s"} — counted by the local probe` +
+      (DEMO ? " (demo: canned copies of measured values)" : "")
+    : (SES.localReads ? `so far everything ran on the local mini store — nothing traveled the internet` : ""))
+    + (extra ? " · " + extra : "");
+}
+
+/* ---------- store metadata (cached / canned) ---------- */
+const treeCache = new Map();
+function loadTree(file){
+  if (treeCache.has(file)) return treeCache.get(file);
+  const p = (async () => {
+    if (DEMO) return DEMO_TREES[file];
+    await ensureDaemon();
+    if (!daemonPort) return DEMO_TREES[file];
+    return api(`/tree?file=${encodeURIComponent(file)}`);
+  })();
+  treeCache.set(file, p);
+  p.catch(() => treeCache.delete(file));
+  return p;
+}
+const headCache = new Map();
+async function headObj(url){
+  if (headCache.has(url)) return headCache.get(url);
+  let r;
+  if (DEMO || !(await ensureDaemon())) r = { url: DEMO_HEADS[url] ? DEMO_HEADS[url].url : url,
+        bytes: DEMO_HEADS[url] ? DEMO_HEADS[url].bytes : 0, demo: true };
+  else r = await api(`/head?url=${encodeURIComponent(url)}`);
+  headCache.set(url, r);
+  return r;
+}
+const arrOf = (tree, path) => tree.arrays.find(a => a.path === path);
+let lsCache = null;
+function loadLs(){
+  if (lsCache) return lsCache;
+  lsCache = (async () => {
+    if (DEMO) return DEMO_LS;
+    await ensureDaemon();
+    if (!daemonPort) return DEMO_LS;
+    return api(`/ls?file=${encodeURIComponent(MOCK)}`);
+  })();
+  lsCache.catch(() => { lsCache = null; });
+  return lsCache;
+}
+let rawmetaCache = null;
+function loadMockMeta(){
+  if (rawmetaCache) return rawmetaCache;
+  rawmetaCache = (async () => {
+    if (DEMO) return DEMO_RAWMETA;
+    await ensureDaemon();
+    if (!daemonPort) return DEMO_RAWMETA;
+    const root = await api(`/rawmeta?file=${encodeURIComponent(MOCK)}&path=`);
+    const arr  = await api(`/rawmeta?file=${encodeURIComponent(MOCK)}&path=analysed_sst`);
+    return { root: root.docs, arr: arr.docs };
+  })();
+  rawmetaCache.catch(() => { rawmetaCache = null; });
+  return rawmetaCache;
+}
+
+/* ---------- canned data for demo mode (values measured 2026-07-20) ---------- */
+const DEMO_TREES = {
+  [MOCK]: { zarr_format: 3, consolidated: true, n_arrays: 4, n_groups: 0,
+    default_var: "analysed_sst", file: MOCK, arrays: [
+    { path: "analysed_sst", dims: ["time","lat","lon"], shape: [12,360,720],
+      chunks: [1,90,180], inner_chunks: null, chunk_grid: [12,4,4],
+      n_chunks: 192, dtype: "float32", itemsize: 4, zarr_format: 3, separator: "/",
+      codecs: ["zstd"], units: "kelvin", logical_bytes: 12441600,
+      chunk_logical_bytes: 64800, key_first: "analysed_sst/c/0/0/0",
+      key_last: "analysed_sst/c/11/3/3" },
+    { path: "lat", dims: ["lat"], shape: [360], chunks: [360], n_chunks: 1,
+      dtype: "float32", itemsize: 4, zarr_format: 3, separator: "/", codecs:["zstd"],
+      units: "", logical_bytes: 1440, chunk_logical_bytes: 1440,
+      key_first: "lat/c/0", key_last: "lat/c/0", chunk_grid: [1], inner_chunks: null },
+    { path: "lon", dims: ["lon"], shape: [720], chunks: [720], n_chunks: 1,
+      dtype: "float32", itemsize: 4, zarr_format: 3, separator: "/", codecs:["zstd"],
+      units: "", logical_bytes: 2880, chunk_logical_bytes: 2880,
+      key_first: "lon/c/0", key_last: "lon/c/0", chunk_grid: [1], inner_chunks: null },
+    { path: "time", dims: ["time"], shape: [12], chunks: [12], n_chunks: 1,
+      dtype: "int64", itemsize: 8, zarr_format: 3, separator: "/", codecs:["zstd"],
+      units: "days since 1981-01-01", logical_bytes: 96, chunk_logical_bytes: 96,
+      key_first: "time/c/0", key_last: "time/c/0", chunk_grid: [1], inner_chunks: null },
+  ]},
+  [MUR]: { zarr_format: 2, consolidated: true, n_arrays: 7, n_groups: 0,
+    default_var: "analysed_sst", file: MUR, arrays: [
+    { path: "analysed_sst", dims: ["time","lat","lon"], shape: [6443,17999,36000],
+      chunks: [5,1799,3600], inner_chunks: null, chunk_grid: [1289,11,10],
+      n_chunks: 141790, dtype: "int16", itemsize: 2, zarr_format: 2, separator: ".",
+      codecs: ["blosc"], units: "kelvin", logical_bytes: 8349664104000,
+      chunk_logical_bytes: 64764000, key_first: "analysed_sst/0.0.0",
+      key_last: "analysed_sst/1288.10.9" },
+    { path: "time", dims: ["time"], shape: [6443], chunks: [5], n_chunks: 1289,
+      dtype: "int64", itemsize: 8, zarr_format: 2, separator: ".", codecs:["blosc"],
+      units: "days since 2002-06-01 09:00:00", logical_bytes: 51544,
+      chunk_logical_bytes: 40, key_first: "time/0", key_last: "time/1288",
+      chunk_grid: [1289], inner_chunks: null },
+  ]},
+  [GEFS]: { zarr_format: 3, consolidated: true, n_arrays: 31, n_groups: 0,
+    default_var: "temperature_2m", file: GEFS, arrays: [
+    { path: "temperature_2m",
+      dims: ["init_time","ensemble_member","lead_time","latitude","longitude"],
+      shape: [2119,31,181,721,1440], chunks: [1,31,192,374,368],
+      inner_chunks: [1,31,64,17,16], chunk_grid: [2119,1,1,2,4], n_chunks: 16952,
+      dtype: "float32", itemsize: 4, zarr_format: 3, separator: "/",
+      codecs: ["sharding_indexed"], units: "degree_Celsius",
+      logical_bytes: 49377485888640, chunk_logical_bytes: 3276742656,
+      key_first: "temperature_2m/c/0/0/0/0/0", key_last: "temperature_2m/c/2118/0/0/1/3" },
+  ]},
+  [CMIP6]: { zarr_format: 2, consolidated: true, n_arrays: 7, n_groups: 0,
+    default_var: "ts", file: CMIP6, arrays: [
+    { path: "ts", dims: ["time","lat","lon"], shape: [1980,192,288],
+      chunks: [600,192,288], inner_chunks: null, chunk_grid: [4,1,1], n_chunks: 4,
+      dtype: "float32", itemsize: 4, zarr_format: 2, separator: ".",
+      codecs: ["zstd"], units: "K", logical_bytes: 437944320,
+      chunk_logical_bytes: 132710400, key_first: "ts/0.0.0", key_last: "ts/3.0.0" },
+  ]},
+};
+const DEMO_HEADS = {
+  [MUR + "/.zmetadata"]:
+    { url: "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/.zmetadata", bytes: 10551 },
+  [MUR + "/analysed_sst/1242.7.5"]:
+    { url: "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst/1242.7.5", bytes: 13384457 },
+  [CMIP6 + "/ts/1.0.0"]:
+    { url: "https://cmip6-pds.s3.amazonaws.com/CMIP6/CMIP/NCAR/CESM2/historical/r10i1p1f1/Amon/ts/gn/v20190313/ts/1.0.0", bytes: 80221890 },
+};
+const DEMO_LS = { root: MOCK, n_files: 200, total_bytes: 4846975, files: [
+  { path: "zarr.json", bytes: 4563 },
+  { path: "analysed_sst/zarr.json", bytes: 939 },
+  { path: "analysed_sst/c/0/0/0", bytes: 27656 }, { path: "analysed_sst/c/0/0/1", bytes: 24066 },
+  { path: "analysed_sst/c/6/2/3", bytes: 31232 },
+  { path: "analysed_sst/c/11/3/3", bytes: 7648 },
+  { path: "lat/zarr.json", bytes: 691 }, { path: "lat/c/0", bytes: 848 },
+  { path: "lon/zarr.json", bytes: 690 }, { path: "lon/c/0", bytes: 1789 },
+  { path: "time/zarr.json", bytes: 694 }, { path: "time/c/0", bytes: 57 } ] };
+const DEMO_RAWMETA = {
+  root: { "zarr.json": JSON.stringify({
+    attributes: { title: "MUR-mini: scaled-down ocean temperature cube (real data)" },
+    zarr_format: 3, consolidated_metadata: { kind: "inline", metadata: {
+      analysed_sst: { shape: [12,360,720],
+        chunk_grid: { configuration: { chunk_shape: [1,90,180] } },
+        data_type: "float32",
+        codecs: [{name:"bytes"},{name:"zstd"}] } } },
+    node_type: "group" }) },
+  arr: { "analysed_sst/zarr.json": JSON.stringify({
+    shape: [12,360,720], data_type: "float32",
+    chunk_grid: { name: "regular", configuration: { chunk_shape: [1,90,180] } },
+    chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+    fill_value: "NaN",
+    codecs: [{ name: "bytes" }, { name: "zstd" }],
+    attributes: { long_name: "analysed sea surface temperature", units: "kelvin" },
+    dimension_names: ["time","lat","lon"], zarr_format: 3, node_type: "array" }) } };
+function demoSliceMock(){
+  // synthesized from the inlined land mask: warm equator, cold poles
+  const h = 120, w = 144, vals = [];
+  for (let y = 0; y < h; y++){ const row = [];
+    const lat = 90 - 180 * (y + .5) / h;
+    for (let x = 0; x < w; x++){
+      const mr = clamp(Math.round((90 - lat) / 2), 0, 89);   // display row in mask
+      const mc = clamp(Math.floor(x / w * 180), 0, 179);
+      row.push(landDisp(mr, mc) ? null
+        : 302 - Math.abs(lat) * .32 + Math.sin(x * .35) * .6);
+    } vals.push(row); }
+  return { n_planned: 16, read_cells: 259200, logical_bytes: 1036800, units: "kelvin",
+    touched: Array.from({length:16}, (_,i) =>
+      ({ key: `analysed_sst/c/${MOCK_T}/${Math.floor(i/4)}/${i%4}`, bytes: 24000, cached: false, ms: 1 })),
+    cost: { requests: 16, net_bytes: 384000, cache_hits: 0, ms: 9 },
+    numeric: true, vmin: 271.3, vmax: 304.8, p2: 272.4, p98: 303.2,
+    flipDone: true, values: vals };
+}
+function demoSliceMURMed(){
+  const h = 120, w = 160, vals = [];
+  for (let y = 0; y < h; y++){ const row = [];
+    for (let x = 0; x < w; x++){
+      const lat = 37 + 8 * (y/h), lon = 7 + 14 * x/w;   // row 0 = south (37°N)
+      const land = (lat > 41.5 && lon > 11 && lon < 16) || (lat > 43.5 && lon < 10.5) ||
+                   (lat < 39 && lon > 15.5 && lon < 17);
+      row.push(land ? null : 291.8 - (lat - 37) * .42 + Math.sin(lon*1.3)*0.5 + Math.random()*.25);
+    } vals.push(row); }
+  return { n_planned: 1, read_cells: 1120000, logical_bytes: 2240000, units: "kelvin",
+    touched: [{ key: "analysed_sst/1242.7.5", bytes: 13384457, cached: false, ms: 4541 }],
+    cost: { requests: 1, net_bytes: 13384457, cache_hits: 0, ms: 4541 },
+    numeric: true, vmin: 290.19, vmax: 294.35, p2: 290.6, p98: 293.9, values: vals };
+}
+
+/* ---------- chunk-key helpers ---------- */
+function chunkKey(node, coords){
+  const sep = node.separator || ".";
+  const tail = node.zarr_format === 3 ? "c" + sep + coords.join(sep) : coords.join(sep);
+  return node.path ? node.path + "/" + tail : tail;
+}
+function keyToCoords(node, key){
+  if (node.path && !key.startsWith(node.path + "/")) return null;
+  let tail = node.path ? key.slice(node.path.length + 1) : key;
+  if (node.zarr_format === 3){
+    if (!tail.startsWith("c" + (node.separator || "/"))) return null;
+    tail = tail.slice(1 + (node.separator || "/").length);
+  }
+  if (tail.startsWith(".") || tail === "zarr.json") return null;
+  const parts = tail.split(node.separator === "." ? "." : "/");
+  if (parts.length !== node.shape.length || parts.some(p => !/^\d+$/.test(p))) return null;
+  return parts.map(Number);
+}
+const gridOf = (node, d) => Math.max(1, Math.ceil(node.shape[d] / Math.max(1, (node.chunks || node.shape)[d])));
+
+/* =====================================================================
+   THE WORLD PLANE — the mock store's own coastline, drawn to scale (2:1)
+   ===================================================================== */
+/* land mask straight from mock_store/land_mask.json (inlined; row 0 = 90°S) */
+const LAND_ROWS = ["111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111","111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111","111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111","111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111","111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111","111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111","000000000000000111111111111111111111111111111111111111111111111100000000000011111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111000000000","000000000000000000000001111111111100000011111111111111111110000000000000000000111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111000000000","000000000000000000000000000000000000000011000000000000111110000000000000000000000001111111111111111111111111111111111111111111111111111111111111111111111111111111111111111110000000","000000000000000000000000000000000000000000000000000000111110000000000000000000000000000001111111111111111111111111111111111111111111111111111111111111111111111111111111111000000000","000000000000000000000000000000000000000000000000000000000110000000000000000000000000000000000000000000000000000111111111111110000011111111111111111111111111111111111000000000000000","000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000001100000000000000010000111110001000000001111000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000","000000000000000000000000000000000000000000000000000000111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001010000000000000000","000000000000000000000000000000000000000000000000000000111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000011111000000000000000","000000000000000000000000000000000000000000000000000000011111111000000000000000000000000000000000000010000000000000000000000000000000000000000000000011000000000011111000000000000000","000000000000000000000000000000000000000000000000000000011101111100000000000000000000000000000000000011110000000000000000000000000000000000000000000011111100010001111100000000000000","000000000000000000000000000000000000000000000000000000011111111110000000000000000000000000000000000111111000000000000000000000000000000000000000000011111111110111111100000000000000","000000000000000000000000000000000000000000000000000000011111101110000000000000000000000000000000001111111100000000000000000000000000000000000000000011111111111111111100000000000000","000000000000000000000000000000000000000000000000000000011111111111000000000000000000000000000000001111111100000000000000000000000000000000000000000011111111111111111100000000000000","000000000000000000000000000000000000000000000000000000011111111111100000000000000000000000000000001111111110000011000000000000000000000000000000000111111111111111111000000000000000","000000000000000000000000000000000000000000000000000000011111111111111000000000000000000000000000001111001110000001000000000000000000000000000000000001111111111111110000000000000000","000000000000000000000000000000000000000000000000000000010111111111111100000000000000000000000000011111111110000001000000000000000000000000000000000000011111111111100000000000000000","000000000000000000000000000000000000000000000000000000001111111111111100000000000000000000000000111111111111000001000000000000000000000000000000000000001111111001100000000000000000","000000000000000000000000000000000000000000000000000001101111111111111100000000000000000000000000011111111111110000100000000000000000000000000000000000000001100001000000000000000000","000000000000000000000000000000000000000000000000000011111111111111111100000000000000000000000000011111111110110000000000000000000000000000000000000000000000110000000000000000000000","000000000000000000000000000000000000000000000000000011111111111111111110000000000000000000000000011111111110110000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000111111111111111111111000000000000000000000000011111100010100000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000111111111111111111111000000000000000000000000011111110001100000000000000000000000000000000000000000000000000011000000000000000000","000000000000000000000000000000000000000000000000001111111111111111111110000000000000000000000000011111110111100000000000000000000000000000000000000000000000000011000000000000000000","000000000000000000000000000000000000000000000000000111111110110111100000000000000000000000000000111111111101110000000000000000000000000000000000000000000000000100000000000000000000","000000000000000000000000000000000000000000000000001111111111010110000000000000000000000000000001111111110100110000000000000000000000000000000100001100000000000000000000000000000000","000000000000000000000000000000000000000000000000000111111111111100000000000000000000000000000001111111111000111000000000000000000000000000001000011100000000000000000000000000000000","000000000000000000000000000000000000000000000000000011111111111100000000000000000000000000000001111111111111011100000000000000000000000000000000000100000000000000000000000000000000","000000000000000000000000000000000000000000000000000011111111110000000000000000000000000000000001111111111111011111000000000000000000000000000000000010000000000000000000000000000000","000000000000000000000000000000000000000000000000000011111111000000000000000000000000011111000111111111111111111111000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000001011110000000000000000000000000111111111111111111111111111111100000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000111111111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000011111111111111101111111111011000000000000000001100000000000001000000000000000000000000000000000000","000000000000000000000000000000000000000000000111000000000000000000000000000000000011111111111111111111111111100011000000000000001100000000001111000000000000000000000000000000000000","000000000000000000000000000000000000000000001000000000000000000000000000000000000011111111111111111111111111100011110000000000011100000000011110000000000000000000000000000000000000","000000000000000000000000000000000000000011000100000000000000000000000000000000000011111111111111111111111111000111111100000000011110000000111110000000000000000000000000000000000000","000000000000000000000000000000000000001110000000000000000000000000000000000000000011111111111111111111111111000111111110000000011111100001111110000000000000000000000000000000000000","000000000000000000000000000000000000001110000000000000000000000000000000000000000011111111111111111111111111001111111110000000111111111001111111110000000000000000000000000000000000","000000000000000000000000000000000000011110000000000000000000000000000000000000000001111111111111111111111110001111100000000001111111111111111111111110000000000000000000000000000000","000000000000000000000000000000000000111110000000000000000000000000000000000000000000111111111111111111111100011111000001111111111111111111111111111111000000000000000000000000000000","000000000000000000000000000000000001111110000000000000000000000000000000000000000000011111111111111111111100111111001111111111111111111111111111111111000000000000000000000000000000","000000000000000000000000000000000011111111111000000000000000000000000000000000000000001111111111110001000000111111001111111111111111111111111111111111000000000000000000000000000000","000000000000000000000000000000001111111111111111100000000000000000000000000000000000000111111110000000000000111111111111111111111111110111111111111111000000000000000000000000000000","000000000000000000000000000000011111111111111111110000000000000000000000000000000000000000111110000000000000111111111111111111111111111111111111111110000000000000000000000000000000","000000000000000000000000000000111111111111111111111000000000000000000000000000000000000000000000000000000000111101000011111111111111111111110111111110000000000000000000000000000000","000000000000000000000000000001111111111111111111111000000000000000000000000000000000001110000000000000001101111011000111111111111111111111111111111110000000000000000000000000000000","000000000000000000000000000001111011111111111111011110000000000000000000000000000000001111000000000010000011000111000011111011111111111111111111111111001100000000000000000000000000","000000000000000000000000000011111111111111111101000011000000000000000000000000000000001000100000000011110000000110000101111111110111101111111111111111111110000000000000000000000000","000000000000000000000000000001111111111111111100001011100000000000000000000000000000000000111100001111110000001110000010011111101111111111111111111111111111010000000000000000000000","000000000000000000000000000001111111111111110000001111001000000000000000000000000000000000111111111111111000001111000111011111100001111111111111111111111111111000000000000000000000","000000000000000000000000000001111111111111011000111111000000010000000000000000000000000000011111111111111111111110111111111111111111011111111111111101111111111000000000000000000000","000000000000000000000000000011111111111100111011100110111000000000000000000000000000000000001111111111111111111111111111111101111111111101110101111111111111111100000000000000000000","000000000000000000000000001111111111111000111111100111111111010000000000000000000000000001000011111111111111111111111111111111111011111111111100011111111111111100000000000000000000","000000000000000000000000011111110111111011111110000001101001000000000000000000000000000000000000000001111111111111111111111111110111111111111111011111111101100000000000110000000000","000000000000000000000000111111111110010101110000000001111110000000000000000000000000000000000000000000011111111111111111111111111111111111111111111111111111110000000000011000000000","000000000000000000000001111111111100110111000000000011100000000000000000000000000000000000000000010000000111101111111111111111111111111111111111111111111111111100000000000000000000","000000000111100000001111111111100010111111000000000011000000000000000000000000000000000000000111110000000000011111111111111111111111111111111111111111111111111111111110000000000000","000000000111111111111111111111000000111011100000000000000000000000111000000000000000000000000001110001110110111111111111111111111111111111111111111111111111111111111111111001111000","000000000011111111111111111100011101111101111000000000110000000001111000000000001100000000000000011100011100000111111111111111111111111111111111111111111111111111111111111111111000","010000000011111111111111111100001110011111011100000000000000000011111111000000000000000000000000001111111100000000011111111110001011111111111111111111111111111111111111111111111111","000000000111111111110000011001000000000000000000000000110000000001111111110000000000000000000000000011100100000000000000010001000011110111111111111111111111111111111111110110001100","000000000000000000000000000000000011100000000000111011000000000011111111111110000000000000000000000000000000000000000000000010000110111111111111111111111110001011111000000000000000","000000000000000000000000000010000000000010000000000000000000000111111111111110000000000000000000000000000000000000000000000000000000111111111110001110001000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000001111111111111111100000000000000000000000000000000000000000000000000000000111110111000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000111111111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000111100000011111111111111111111100000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000001111000000111111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"];
+const landData = (r, c) => LAND_ROWS[r][c] === "1";        // data order (south first)
+const landDisp = (dr, c) => LAND_ROWS[89 - dr][c] === "1"; // display order (north first)
+
+let _face = null;
+function worldFace(){
+  if (_face) return _face;
+  const cv = document.createElement("canvas");
+  cv.width = 180; cv.height = 90;
+  const x = cv.getContext("2d");
+  x.fillStyle = "#dce7ea";                                   // ocean wash
+  x.fillRect(0, 0, 180, 90);
+  x.fillStyle = "#ece4cf";                                   // land = paper tone
+  for (let r = 0; r < 90; r++) for (let c = 0; c < 180; c++)
+    if (landDisp(r, c)) x.fillRect(c, r, 1, 1);
+  x.fillStyle = "#93876c";                                   // coastline
+  for (let r = 0; r < 90; r++) for (let c = 0; c < 180; c++){
+    if (!landDisp(r, c)) continue;
+    const sea = (r > 0 && !landDisp(r-1, c)) || (r < 89 && !landDisp(r+1, c)) ||
+                (c > 0 && !landDisp(r, c-1)) || (c < 179 && !landDisp(r, c+1));
+    if (sea) x.fillRect(c, r, 1, 1);
+  }
+  _face = cv;
+  return cv;
+}
+function setupCanvas(cv){
+  const dpr = window.devicePixelRatio || 1;
+  const W = +cv.dataset.w, H = +cv.dataset.h;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const c = cv.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  c.imageSmoothingEnabled = false;
+  return { c, W, H };
+}
+function planeCanvas(w, h){
+  const cv = el("canvas", "cube");
+  cv.dataset.w = w; cv.dataset.h = h;
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  return cv;
+}
+/* stacked slabs behind a face — the time axis */
+function paintSlabs(c, x, y, w, h, n, dx = 9, dy = -8){
+  for (let s = n; s >= 1; s--){
+    c.fillStyle = "rgba(214,205,184,.30)";
+    c.strokeStyle = "rgba(168,158,138,.55)";
+    c.lineWidth = 1;
+    c.beginPath();
+    c.roundRect(x + s*dx, y + s*dy, w, h, 3);
+    c.fill(); c.stroke();
+  }
+}
+function paintFace(c, x, y, w, h, opts = {}){
+  c.drawImage(worldFace(), x, y, w, h);
+  if (opts.dim){
+    c.fillStyle = `rgba(246,242,233,${opts.dim})`;
+    c.fillRect(x, y, w, h);
+  }
+  if (opts.grid){
+    const [gr, gc] = opts.grid;
+    c.strokeStyle = opts.gridColor || "rgba(90,75,40,.42)";
+    c.lineWidth = opts.gridWidth || 1;
+    for (let i = 1; i < gc; i++){
+      c.beginPath(); c.moveTo(x + w*i/gc, y); c.lineTo(x + w*i/gc, y + h); c.stroke();
+    }
+    for (let i = 1; i < gr; i++){
+      c.beginPath(); c.moveTo(x, y + h*i/gr); c.lineTo(x + w, y + h*i/gr); c.stroke();
+    }
+  }
+  c.strokeStyle = "#a89e8a"; c.lineWidth = 1.2;
+  c.strokeRect(x, y, w, h);
+}
+function axisLabels(c, x, y, w, h, lonLbl, latLbl, timeLbl, slabN, dx = 9, dy = -8){
+  c.font = "12px Georgia, serif"; c.fillStyle = "#7b7260";
+  if (lonLbl) c.fillText(lonLbl, x + w/2 - c.measureText(lonLbl).width/2, y + h + 18);
+  if (latLbl){
+    c.save();
+    c.translate(x - 12, y + h/2 + c.measureText(latLbl).width/2);
+    c.rotate(-Math.PI/2);
+    c.fillText(latLbl, 0, 0);
+    c.restore();
+  }
+  if (timeLbl){
+    const tx = x + w + slabN*dx - c.measureText(timeLbl).width;
+    c.fillText(timeLbl, tx, y + slabN*dy - 10);
+  }
+}
+
+/* ---------- slice values -> colored picture ---------- */
+const THERMAL = ["#31548f","#4a7fb5","#7fb2d0","#cfd9c4","#e8c46a","#dd8b4e","#c4503a"]
+  .map(hx => [1,3,5].map(i => parseInt(hx.slice(i,i+2),16)));
+const VIRIDIS = ["#440154","#472d7b","#3b528b","#2c728e","#21918c","#28ae80",
+                 "#5ec962","#addc30","#fde725"].map(hx => [1,3,5].map(i => parseInt(hx.slice(i,i+2),16)));
+function cmapOf(pal){
+  return t => {
+    const x = clamp(t, 0, 1) * (pal.length - 1);
+    const i = Math.min(pal.length - 2, Math.floor(x)), f = x - i;
+    return pal[i].map((v, k) => Math.round(v*(1-f) + pal[i+1][k]*f));
+  };
+}
+const cmap = cmapOf(VIRIDIS);
+function sliceImage(res, pal, flipY){
+  const vals = res.values;
+  if (!vals || !vals.length || res.numeric === false) return null;
+  const h = vals.length, w = vals[0].length;
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const x = cv.getContext("2d");
+  const img = x.createImageData(w, h);
+  const lo = res.p2 ?? res.vmin ?? 0, hi = res.p98 ?? res.vmax ?? 1;
+  const span = (hi - lo) || 1;
+  const cm = cmapOf(pal || VIRIDIS);
+  const flip = flipY && !res.flipDone;
+  for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++){
+    const v = vals[flip ? h - 1 - yy : yy][xx], o = (yy*w + xx) * 4;
+    if (v == null){ img.data[o+3] = 0; continue; }
+    const [r,g,b] = cm((v - lo) / span);
+    img.data[o] = r; img.data[o+1] = g; img.data[o+2] = b; img.data[o+3] = 255;
+  }
+  x.putImageData(img, 0, 0);
+  return cv;
+}
+
+/* narration helper */
+function narr(host){
+  return { push(html){
+    host.appendChild(el("div", "ln", html));
+    host.scrollTop = 1e9;
+  }};
+}
+
+/* ---------- the isometric cube (playground only) ---------- */
+function drawIso(cv, o){
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || +cv.dataset.w, H = cv.clientHeight || +cv.dataset.h;
+  if (!W || !H) return;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const c = cv.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  const gh = o.gh || 1, gw = o.gw || 1, slabs = Math.min(o.slabs || 0, 6);
+  const availW = W - 40, availH = H - (o.labelU || o.labelV ? 58 : 30);
+  let dw = Math.min(availW, o.maxW || 460);
+  let ax = dw / 2, ay = dw / 4;
+  const slabGap = slabs ? clamp(availH / (slabs + 4), 10, 22) : 0;
+  const totalH = ay * 2 + slabs * slabGap + 26;
+  if (totalH > availH){ const s = availH / totalH; dw *= s; ax = dw/2; ay = dw/4; }
+  const cx = W * 0.5, cy = 26 + ay;
+  const ux = ax / gw, uy = ay / gw, vx = -ax / gh, vy = ay / gh;
+  const org = { x: cx - (ux*gw + vx*gh)/2, y: cy - (uy*gw + vy*gh)/2 };
+  const pt = (r, cc) => ({ x: org.x + cc*ux + r*vx, y: org.y + cc*uy + r*vy });
+  for (let s = slabs; s >= 1; s--){
+    const oy = s * slabGap;
+    const q = [pt(0,0), pt(0,gw), pt(gh,gw), pt(gh,0)];
+    c.beginPath();
+    c.moveTo(q[0].x, q[0].y + oy);
+    q.slice(1).forEach(p => c.lineTo(p.x, p.y + oy));
+    c.closePath();
+    c.fillStyle = "rgba(214,205,184,.22)";
+    c.strokeStyle = "rgba(168,158,138,.5)";
+    c.lineWidth = 1;
+    c.fill(); c.stroke();
+  }
+  const maxCells = 130;
+  const stepR = Math.ceil(gh / maxCells), stepC = Math.ceil(gw / maxCells);
+  const quad = (r, cc, sr, sc) => {
+    const a = pt(r,cc), b = pt(r,cc+sc), d = pt(r+sr,cc+sc), e = pt(r+sr,cc);
+    c.beginPath();
+    c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.lineTo(d.x,d.y); c.lineTo(e.x,e.y);
+    c.closePath();
+  };
+  for (let r = 0; r < gh; r += stepR) for (let cc = 0; cc < gw; cc += stepC){
+    quad(r, cc, Math.min(stepR, gh-r), Math.min(stepC, gw-cc));
+    c.fillStyle = "#efe8d5"; c.fill();
+    c.strokeStyle = o.faint ? "#e6dfcc" : "#d6cdb8"; c.lineWidth = 0.7; c.stroke();
+  }
+  if (o.cells) for (const [k, st] of o.cells){
+    const [r, cc] = k.split(",").map(Number);
+    if (r >= gh || cc >= gw) continue;
+    quad(r, cc, 1, 1);
+    c.fillStyle = st.color; c.fill();
+    c.strokeStyle = st.line || st.color; c.lineWidth = st.line ? 1.4 : 0.6; c.stroke();
+    const cellPx = Math.min(Math.hypot(ux,uy), Math.hypot(vx,vy));
+    if (cellPx < 5){
+      const p = pt(r + .5, cc + .5);
+      c.beginPath(); c.arc(p.x, p.y, 3.2, 0, Math.PI*2);
+      c.fillStyle = st.color; c.fill();
+      c.strokeStyle = "#fffdf8"; c.lineWidth = 1; c.stroke();
+    }
+  }
+  if (o.img && o.imgWin){
+    const [rA, rB, cA, cB] = o.imgWin.map((f, i) => f * (i < 2 ? gh : gw));
+    const p0 = pt(rA, cA);
+    const iw = o.img.width, ih = o.img.height;
+    c.save();
+    c.setTransform(dpr*(cB-cA)*ux/iw, dpr*(cB-cA)*uy/iw,
+                   dpr*(rB-rA)*vx/ih, dpr*(rB-rA)*vy/ih, dpr*p0.x, dpr*p0.y);
+    c.globalAlpha = 0.95;
+    c.drawImage(o.img, 0, 0);
+    c.restore();
+  }
+  if (o.outline){
+    const [rA, rB, cA, cB] = o.outline.map((f, i) => f * (i < 2 ? gh : gw));
+    const q = [pt(rA,cA), pt(rA,cB), pt(rB,cB), pt(rB,cA)];
+    c.beginPath(); c.moveTo(q[0].x, q[0].y);
+    q.slice(1).forEach(p => c.lineTo(p.x, p.y));
+    c.closePath();
+    c.strokeStyle = "#b8860b"; c.lineWidth = 1.8; c.stroke();
+  }
+  c.font = "12px Georgia, serif"; c.fillStyle = "#7b7260";
+  if (o.labelU){ const p = pt(-0.06*gh - .001, gw*0.45); c.fillText(o.labelU, p.x - 30, p.y - 10); }
+  if (o.labelV){ const p = pt(gh*0.55, -0.06*gw); c.fillText(o.labelV, p.x - c.measureText(o.labelV).width, p.y + 6); }
+  if (o.labelD && slabs){ const p = pt(gh, gw); c.fillText(o.labelD, p.x + 8, p.y + slabGap + 6); }
+  if (o.note){ c.fillStyle = "#a89e8a"; c.font = "11px Georgia, serif"; c.fillText(o.note, 10, H - 8); }
+  return { pt, gh, gw };
+}
+
+/* =====================================================================
+   THE STEPS
+   ===================================================================== */
+const steps = [];
+const step = s => steps.push(s);
+const ACT = ["the problem", "zarr's big idea", "files & reading",
+             "why it matters", "try it"];
+const ACT_ICON = ["globe", "bulb", "folder", "receipt", "bolt_fast"];
+const LEARN = [
+  ["learn more: zarr.dev →", "https://zarr.dev"],
+  ["learn more: what is Zarr? (Earthmover) →", "https://earthmover.io/blog/what-is-zarr"],
+  ["learn more: Cloud-Native Geo guide →", "https://guide.cloudnativegeo.org"],
+  ["learn more: zarr.dev →", "https://zarr.dev"],
+  ["learn more: Cloud-Native Geo guide →", "https://guide.cloudnativegeo.org"],
+];
+
+/* ---- 0 · hook — the dataset builds itself, then hover to explore -------- */
+step({
+  act: 0,
+  title: "An Interactive guide to Zarr",
+  copy: "How huge datasets live in the cloud — told through NASA's record of the ocean's " +
+        "temperature, <b>every day since 2002</b>.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const cv = planeCanvas(620, 296);
+    inn.appendChild(cv);
+    const stats = el("div", "statrow");
+    inn.appendChild(stats);
+    const cap = el("div", "caption", "reading the dataset's own description…");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    const t = await loadTree(MUR).catch(() => DEMO_TREES[MUR]);
+    if (!st.isConnected) return;
+    const a = arrOf(t, "analysed_sst");
+    const total = a.shape.reduce((x,y) => x*y, 1);
+
+    /* geometry of the drawing */
+    const X = 118, Y = 82, W = 424, H = 194, SLABS = 5;
+    /* draw state: 0..1 per phase + hover focus */
+    const D = { grid: 0, slabs: 0, count: 0, bytes: 0, focus: null };
+    function draw(){
+      if (!st.isConnected) return;
+      const { c } = setupCanvas(cv);
+      const dimSlabs = D.focus && D.focus !== "days" && D.focus !== "count";
+      const dimFace  = D.focus === "days" || D.focus === "bytes";
+      // time slabs behind
+      if (D.slabs > 0){
+        const n = Math.max(1, Math.round(SLABS * D.slabs));
+        c.globalAlpha = dimSlabs ? .25 : 1;
+        for (let s = n; s >= 1; s--){
+          c.fillStyle = D.focus === "days" ? "rgba(245,227,175,.65)" : "rgba(214,205,184,.30)";
+          c.strokeStyle = D.focus === "days" ? "#b8860b" : "rgba(168,158,138,.55)";
+          c.lineWidth = D.focus === "days" ? 1.4 : 1;
+          c.beginPath(); c.roundRect(X + s*9, Y + s*-8, W, H, 3);
+          c.fill(); c.stroke();
+        }
+        c.globalAlpha = 1;
+        if (D.slabs >= 1){
+          c.font = "12px Georgia, serif";
+          c.fillStyle = D.focus === "days" ? "#7a5807" : "#7b7260";
+          const lbl = `time — ${fmtN(a.shape[0])} days, stacked behind`;
+          c.fillText(lbl, X + W + SLABS*9 - c.measureText(lbl).width, Y + SLABS*-8 - 10);
+        }
+      }
+      // the world face, revealed left→right during the grid phase
+      if (D.grid > 0){
+        c.save();
+        c.beginPath(); c.rect(X, Y, W * D.grid, H); c.clip();
+        paintFace(c, X, Y, W, H, { dim: dimFace ? .8 : 0 });
+        c.restore();
+        // the "grid" texture: fine cell lines over the revealed part
+        const gc = 24, gr = 12;
+        c.strokeStyle = D.focus === "grid" ? "rgba(184,134,11,.65)" : "rgba(90,75,40,.18)";
+        c.lineWidth = D.focus === "grid" ? 1 : .6;
+        for (let i = 1; i < gc; i++){
+          const gx = X + W*i/gc;
+          if (gx > X + W*D.grid) break;
+          c.beginPath(); c.moveTo(gx, Y); c.lineTo(gx, Y + H); c.stroke();
+        }
+        for (let i = 1; i < gr; i++){
+          c.beginPath(); c.moveTo(X, Y + H*i/gr); c.lineTo(X + W*D.grid, Y + H*i/gr); c.stroke();
+        }
+        c.strokeStyle = D.focus === "grid" ? "#b8860b" : "#a89e8a";
+        c.lineWidth = D.focus === "grid" ? 2 : 1.2;
+        c.strokeRect(X, Y, W, H);
+        if (D.grid >= 1){
+          c.font = "12px Georgia, serif"; c.fillStyle = D.focus === "grid" ? "#7a5807" : "#7b7260";
+          const lonL = `longitude — ${a.shape[2].toLocaleString("en-US")} cells →`;
+          c.fillText(lonL, X + W/2 - c.measureText(lonL).width/2, Y + H + 18);
+          c.save();
+          const latL = `← latitude — ${a.shape[1].toLocaleString("en-US")} cells`;
+          c.translate(X - 12, Y + H/2 + c.measureText(latL).width/2);
+          c.rotate(-Math.PI/2); c.fillText(latL, 0, 0); c.restore();
+        }
+      }
+      // whole-cube glow for the "temperatures" chip
+      if (D.focus === "count"){
+        c.strokeStyle = "#b8860b"; c.lineWidth = 2.4;
+        c.strokeRect(X - 4, Y + SLABS*-8 - 4, W + SLABS*9 + 8, H - SLABS*-8 + 8);
+      }
+      // byte annotation for the TB chip
+      if (D.focus === "bytes"){
+        c.font = "600 15px Georgia, serif"; c.fillStyle = "#7a5807";
+        const s1 = "every cell = one float32 temperature = 4 bytes";
+        c.fillText(s1, X + W/2 - c.measureText(s1).width/2, Y + H/2 - 6);
+        c.font = "13px Georgia, serif";
+        const s2 = `${fmtN(total)} × 4 bytes = ${fmtB(a.logical_bytes)}`;
+        c.fillText(s2, X + W/2 - c.measureText(s2).width/2, Y + H/2 + 16);
+      }
+    }
+
+    /* the four stat chips, revealed one per phase */
+    const CHIPS = [
+      { id: "grid",  v: a.shape[1].toLocaleString("en-US") + " × " + a.shape[2].toLocaleString("en-US"),
+        l: "grid cells in one day's map" },
+      { id: "days",  v: fmtN(a.shape[0]), l: "days of ocean, stacked" },
+      { id: "count", v: fmtN(total), l: "temperature points" },
+      { id: "bytes", v: fmtB(a.logical_bytes), l: "of raw numbers" },
+    ];
+    const chipEls = CHIPS.map(ch => {
+      const d = el("div", "stat hidden0",
+        `<div class="v">${ch.v}</div><div class="l">${ch.l}</div>`);
+      d.dataset.focus = ch.id;
+      stats.appendChild(d);
+      return d;
+    });
+
+    /* the build: 4 phases, then hand control to hover */
+    const PH = [
+      { key: "grid",  dur: 1300, cap: "one day of ocean = <b>one world map</b> — a grid of " +
+          `${a.shape[1].toLocaleString("en-US")} × ${a.shape[2].toLocaleString("en-US")} cells` },
+      { key: "slabs", dur: 1100, cap: `now stack <b>${fmtN(a.shape[0])} of those maps</b> behind ` +
+          `each other — one per day since June 2002` },
+      { key: "count", dur: 1300, cap: `count every cell of every map…` },
+      { key: "bytes", dur: 800,  cap: `at 4 bytes per temperature, that's <b>${fmtB(a.logical_bytes)}</b> ` +
+          `of raw numbers — in one public dataset` },
+    ];
+    let built = false;
+    const countChipV = chipEls[2].querySelector(".v");
+    function runPhase(i){
+      if (!st.isConnected || i >= PH.length){ finishBuild(); return; }
+      const ph = PH[i];
+      cap.innerHTML = ph.cap;
+      chipEls[i].classList.remove("hidden0");
+      const t0 = performance.now();
+      const loop = now => {
+        if (!st.isConnected) return;
+        const p = clamp((now - t0) / ph.dur, 0, 1);
+        const e = p < .5 ? 2*p*p : 1 - Math.pow(-2*p + 2, 2)/2;
+        if (ph.key === "grid") D.grid = e;
+        if (ph.key === "slabs") D.slabs = e;
+        if (ph.key === "count"){
+          D.count = e;
+          const oneMap = a.shape[1] * a.shape[2];   // start the multiplication at one map
+          countChipV.textContent = fmtN(oneMap + (total - oneMap) * e);
+        }
+        if (ph.key === "bytes") D.bytes = e;
+        draw();
+        if (p < 1) requestAnimationFrame(loop);
+        else runPhase(i + 1);
+      };
+      requestAnimationFrame(loop);
+    }
+    function finishBuild(){
+      if (!st.isConnected) return;
+      built = true;
+      countChipV.textContent = fmtN(total);
+      cap.innerHTML = (DEMO
+        ? "demo mode — canned metadata · "
+        : "read live from the store's own metadata · ") +
+        "<b>hover any number</b> to see it in the drawing — then press <b>Start</b>";
+      draw();
+    }
+    /* hover a chip -> that component glows, everything else fades */
+    chipEls.forEach(d => {
+      d.addEventListener("mouseenter", () => {
+        if (!built) return;
+        D.focus = d.dataset.focus;
+        chipEls.forEach(x => { x.classList.toggle("dim", x !== d); x.classList.toggle("hot", x === d); });
+        draw();
+      });
+      d.addEventListener("mouseleave", () => {
+        if (!built) return;
+        D.focus = null;
+        chipEls.forEach(x => { x.classList.remove("dim"); x.classList.remove("hot"); });
+        draw();
+      });
+    });
+    draw();
+    setTimeout(() => runPhase(0), 350);
+  }
+});
+
+/* ---- 1 · the old way ------------------------------------------------- */
+step({
+  act: 0,
+  title: "Brute force approach: downloading everything",
+  copy: "Before cloud-native formats, seeing <i>any</i> of a dataset meant downloading " +
+        "<i>all</i> of it. Say you want <b>one day</b> of sea temperature, around Italy:",
+  mount(st){
+    const inn = el("div", "stage-in fadein");
+    const win = el("div", "oldwin");
+    win.innerHTML = `
+      <div class="oldbar"><div class="wdots"><i></i><i></i><i></i></div>Downloading…</div>
+      <div class="oldbody">
+        <div class="fn">ocean_temperature_2002-2020_full.nc &nbsp;·&nbsp; 8.3 TB</div>
+        <div class="dlbar"><i id="dlfill"></i></div>
+        <div class="dlmeta"><span id="dlpct">0.00000%</span><span id="dleta">—</span></div>
+      </div>`;
+    inn.appendChild(win);
+    inn.appendChild(el("div", "caption",
+      `you wanted <b>one day, one sea</b> — <b>2.2&nbsp;MB</b>, ` +
+      `<b>0.00003%</b> of this download`));
+    const q = el("div", "caption",
+      `<span style="font-family:Georgia,serif;font-size:16px;color:var(--ink)">So: ` +
+      `how do you take a <span class="z">pinch</span> of a huge dataset ` +
+      `without downloading the whole thing?</span>`);
+    q.style.marginTop = "6px";
+    inn.appendChild(q);
+    st.appendChild(inn);
+    const TOTAL = 8349664104000, RATE = 300e6/8;   // bytes/s at 300 Mbit/s
+    const t0 = performance.now();
+    const tick = () => {
+      if (!st.isConnected) return;
+      const got = (performance.now() - t0) / 1000 * RATE;
+      const pct = got / TOTAL * 100;
+      const left = (TOTAL - got) / RATE;
+      $("#dlfill") && ($("#dlfill").style.width = Math.max(.5, pct * 8) + "%");  // bar exaggerated 8× or it would look frozen
+      $("#dlpct") && ($("#dlpct").textContent = pct.toFixed(5) + "%  ·  " + fmtB(got) + " of 8.3 TB");
+      $("#dleta") && ($("#dleta").textContent =
+        "time remaining ≈ " + (left/3600).toFixed(1) + " hours (~2.6 days) — estimate at 300 Mbit/s home broadband");
+      setTimeout(tick, 250);
+    };
+    tick();
+    setTimeout(() => {                          // 10 s in: drop the act
+      if (!st.isConnected) return;
+      const bar = win.querySelector(".oldbar");
+      if (bar) bar.innerHTML = `<div class="wdots"><i></i><i></i><i></i></div>Downloading… (not really)`;
+      const joke = el("div", "fn",
+        `okay, we're joking — <b>nothing is downloading</b>. It's a simulation, but the math is real: ` +
+        `at home-broadband speed this file takes <b>~2.6 days</b>. Madness.`);
+      joke.style.cssText = "margin-top:8px;color:var(--gold)";
+      win.querySelector(".oldbody").appendChild(joke);
+    }, 10000);
+  }
+});
+
+/* ---- 2 · cut into chunks (hover-scrubbed) ----------------------------------- */
+/* the block everything keeps pointing at: month 6, display row 1, col 3
+   (South Asia / Indian Ocean) -> data chunk coords time 6, lat 2, lon 3  */
+const HERO = { dispR: 1, dispC: 3, latC: 2, lonC: 3, t: MOCK_T };
+step({
+  act: 1,
+  title: "Chunking",
+  copy: "Zarr cuts the data into blocks — <b>chunks</b> — along every axis. After the cut " +
+        "plays, <b>your pointer is the knife</b>: slide to scrub it, rest on a tile to lift one out.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const cv = planeCanvas(760, 380);
+    cv.style.cursor = "crosshair";
+    inn.appendChild(cv);
+    const hint = el("div", "caption");
+    inn.appendChild(hint);
+    const cap = el("div", "caption");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    const GR = 4, GC = 4;                       // the mini store's chunk grid
+    const W = 520, H = 260, X = 105, Y = 66;
+    const face = worldFace();
+    const ease = p => p < .5 ? 2*p*p : 1 - Math.pow(-2*p + 2, 2)/2;
+
+    /* live state, eased toward targets every frame — nothing ever needs a reset */
+    const S = { p: 0, targetP: 0,               // cut progress (pointer x after intro)
+                hero: null, heroT: null,        // lifted tile [r,c], target
+                pop: 0,                         // lift amount
+                auto: true };                   // intro autoplay owns targetP
+    function drawFrame(){
+      if (!st.isConnected) return;
+      const { c } = setupCanvas(cv);
+      const p = S.p;
+      const cut = ease(clamp(p / .42, 0, 1));           // grid lines sweep in
+      const gap = ease(clamp((p - .40) / .55, 0, 1));   // tiles drift apart
+      const pop = S.pop * gap;                          // lift only once separated
+      const hero = S.hero;
+      const slabGap = gap * 5;
+      for (let s = 5; s >= 1; s--){
+        c.fillStyle = "rgba(214,205,184,.30)";
+        c.strokeStyle = "rgba(168,158,138,.55)";
+        c.lineWidth = 1;
+        c.beginPath();
+        c.roundRect(X + s*(9 + slabGap*.6), Y + s*(-8 - slabGap*.4), W, H, 3);
+        c.fill(); c.stroke();
+      }
+      const g = 14 * gap;                              // px gap between tiles
+      const tw = (W - g*(GC-1)) / GC, th = (H - g*(GR-1)) / GR;
+      let heroBox = null;
+      for (let r = 0; r < GR; r++) for (let cc = 0; cc < GC; cc++){
+        const dx = X + cc*(tw + g), dy = Y + r*(th + g);
+        if (pop > .02 && hero && r === hero[0] && cc === hero[1]){ heroBox = [dx, dy, tw, th]; continue; }
+        c.globalAlpha = 1 - pop*.62;                   // everything but the hero dims
+        c.drawImage(face, cc*45, r*22.5, 45, 22.5, dx, dy, tw, th);
+        c.globalAlpha = 1;
+        c.strokeStyle = gap > 0 ? "#a89e8a" : "rgba(168,158,138,0)";
+        c.lineWidth = 1;
+        c.strokeRect(dx, dy, tw, th);
+      }
+      if (cut > 0 && gap < .05){                      // the sweeping cut lines
+        c.strokeStyle = "rgba(90,60,10,.75)"; c.lineWidth = 1.6;
+        for (let i = 1; i < GC; i++){
+          c.beginPath(); c.moveTo(X + W*i/GC, Y);
+          c.lineTo(X + W*i/GC, Y + H*cut); c.stroke();
+        }
+        for (let i = 1; i < GR; i++){
+          c.beginPath(); c.moveTo(X, Y + H*i/GR);
+          c.lineTo(X + W*Math.max(0,(cut-.5)*2), Y + H*i/GR); c.stroke();
+        }
+        c.strokeStyle = "#a89e8a"; c.lineWidth = 1.2;
+        c.strokeRect(X, Y, W, H);
+      }
+      if (heroBox){                                    // lift the hovered chunk
+        const s = 1 + pop*.7;
+        const cx = heroBox[0] + heroBox[2]/2, cy = heroBox[1] + heroBox[3]/2 - pop*16;
+        const w2 = heroBox[2]*s, h2 = heroBox[3]*s;
+        c.save();
+        c.shadowColor = "rgba(90,75,40,.35)"; c.shadowBlur = 16*pop;
+        c.drawImage(face, hero[1]*45, hero[0]*22.5, 45, 22.5,
+                    cx - w2/2, cy - h2/2, w2, h2);
+        c.restore();
+        c.strokeStyle = "#b8860b"; c.lineWidth = 2;
+        c.strokeRect(cx - w2/2, cy - h2/2, w2, h2);
+        if (pop > .5){
+          c.font = "12px Georgia, serif"; c.fillStyle = "#7b7260";
+          c.fillText("one chunk", cx - w2/2, cy - h2/2 - 8);
+        }
+      }
+      c.font = "12px Georgia, serif"; c.fillStyle = "#7b7260";
+      const monthNote = "each of the 12 months is cut the same way";
+      c.fillText(monthNote, X + W - c.measureText(monthNote).width + 30, Y - 32);
+    }
+    /* one always-running loop: ease state toward targets, redraw when moving */
+    let last = performance.now();
+    function loop(now){
+      if (!st.isConnected) return;
+      const dt = Math.min(50, now - last); last = now;
+      const k = 1 - Math.pow(0.0018, dt / 1000);       // smooth chase
+      let busy = false;
+      if (Math.abs(S.targetP - S.p) > .001){ S.p += (S.targetP - S.p) * k; busy = true; }
+      const popT = S.heroT ? 1 : 0;
+      if (S.heroT && (!S.hero || S.hero[0] !== S.heroT[0] || S.hero[1] !== S.heroT[1]))
+        S.hero = S.heroT;
+      if (Math.abs(popT - S.pop) > .001){ S.pop += (popT - S.pop) * k; busy = true; }
+      if (busy || S._dirty){ drawFrame(); S._dirty = false; }
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+
+    /* intro: the cut plays itself once, then the pointer owns it */
+    (function auto(){
+      const t0 = performance.now(), DUR = 2000;
+      const step = now => {
+        if (!st.isConnected) return;
+        const q = clamp((now - t0) / DUR, 0, 1);
+        S.targetP = q;
+        if (q < 1 && S.auto) requestAnimationFrame(step);
+        else if (S.auto){
+          S.heroT = [HERO.dispR, HERO.dispC];           // land with July's tile lifted
+          hint.innerHTML = `<b>slide</b> left ↔ right to scrub the cut · <b>rest on a tile</b> to lift it out`;
+        }
+      };
+      requestAnimationFrame(step);
+    })();
+
+    cv.addEventListener("pointermove", ev => {
+      S.auto = false;
+      const r = cv.getBoundingClientRect();
+      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+      S.targetP = clamp((mx - X + 30) / (W - 20), 0, 1);
+      // which tile is under the pointer? (approximate by the un-gapped grid)
+      const fr = (my - Y) / H, fc = (mx - X) / W;
+      if (fr >= 0 && fr < 1 && fc >= 0 && fc < 1 && S.targetP > .6){
+        const rT = Math.floor(fr * GR), cT = Math.floor(fc * GC);
+        S.heroT = [rT, cT];
+        const latC = GR - 1 - rT, lonC = cT;
+        hint.innerHTML = `this tile is chunk <span class="z mono">lat ${latC} · lon ${lonC}</span> — ` +
+          `July's copy lives in the file <span class="z mono">analysed_sst/c/${MOCK_T}/${latC}/${lonC}</span>`;
+      } else {
+        S.heroT = null;
+        hint.innerHTML = S.targetP < .4
+          ? "slide right — the knife follows your pointer"
+          : "rest on a tile to lift it out";
+      }
+      S._dirty = true;
+    });
+    cv.addEventListener("pointerleave", () => { S.heroT = null; S._dirty = true; });
+
+    const t = await loadTree(MOCK).catch(() => DEMO_TREES[MOCK]);
+    if (!st.isConnected) return;
+    const a = arrOf(t, "analysed_sst");
+    cap.innerHTML = `our <b>mini twin</b> of NASA's store: ${gridOf(a,1)} × ${gridOf(a,2)} tiles ` +
+      `× ${a.shape[0]} months = <b>${fmtN(a.n_chunks)} chunks</b> · the real store: <b>141,790</b>`;
+  }
+});
+
+/* ---- 3 · computable names — HOVER ------------------------------------- */
+step({
+  act: 1,
+  title: "Chunk positions",
+  copy: "Each chunk is its own small file, named by where it sits: " +
+        "<span class='k'>array/c/time/lat/lon</span>. <b>Hover the map and the months</b> — " +
+        "the name writes itself.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const row = el("div");
+    row.style.cssText = "display:flex; gap:22px; align-items:center;";
+    const left = el("div");
+    left.style.cssText = "display:flex; flex-direction:column; gap:8px; align-items:center;";
+    const cv = planeCanvas(476, 246);
+    cv.className += " dimhov";
+    cv.style.cursor = "crosshair";
+    left.appendChild(cv);
+    const stripWrap = el("div", "dimhov");
+    stripWrap.style.cssText = "display:flex; flex-direction:column; gap:4px; align-items:center;";
+    const strip = el("div", "tstrip");
+    const MON = ["J","F","M","A","M","J","J","A","S","O","N","D"];
+    MON.forEach((m, i) => {
+      const b = el("i", null, `${m}<span class="ix">${i}</span>`);
+      b.dataset.t = i;
+      strip.appendChild(b);
+    });
+    stripWrap.appendChild(strip);
+    stripWrap.appendChild(el("div", "caption",
+      "months (the time axis) — counted 0…11, not 1…12"));
+    left.appendChild(stripWrap);
+    row.appendChild(left);
+    const side = el("div");
+    side.style.cssText = "width:320px; display:flex; flex-direction:column; gap:10px;";
+    side.innerHTML = `
+      <div class="keylab">the file you'd need</div>
+      <div class="bigkey"><span class="pre">analysed_sst/c/</span><span class="seg" data-ax="0"></span><span class="pre">/</span><span class="seg" data-ax="1"></span><span class="pre">/</span><span class="seg" data-ax="2"></span></div>
+      <div class="keywords" id="kw"></div>`;
+    row.appendChild(side);
+    inn.appendChild(row);
+    const cap = el("div", "caption");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    const GR = 4, GC = 4;
+    const X = 46, Y = 6, W = 408, H = 204;      // map box inside the canvas
+    // state: data-order chunk coords + which axes to glow + axis under key-hover
+    const S = { t: HERO.t, latC: HERO.latC, lonC: HERO.lonC, glow: new Set([0,1,2]), hlAx: null };
+    const segs = side.querySelectorAll(".seg");
+    const kw = side.querySelector("#kw");
+    function draw(){
+      const { c } = setupCanvas(cv);
+      paintFace(c, X, Y, W, H, { grid: [GR, GC] });
+      const dispR = GR - 1 - S.latC, dispC = S.lonC;
+      const tw = W/GC, th = H/GR;
+      if (S.hlAx === 1){                          // whole latitude band
+        c.fillStyle = "rgba(184,134,11,.28)";
+        c.fillRect(X, Y + dispR*th, W, th);
+      } else if (S.hlAx === 2){                   // whole longitude band
+        c.fillStyle = "rgba(184,134,11,.28)";
+        c.fillRect(X + dispC*tw, Y, tw, H);
+      }
+      c.fillStyle = "rgba(184,134,11,.38)";
+      c.fillRect(X + dispC*tw, Y + dispR*th, tw, th);
+      c.strokeStyle = "#b8860b"; c.lineWidth = 2;
+      c.strokeRect(X + dispC*tw, Y + dispR*th, tw, th);
+      /* --- the axes, annotated: where the numbers come from --- */
+      c.font = "600 11px 'SF Mono', Menlo, monospace";
+      for (let b = 0; b < GR; b++){               // latitude bands: 0 at the SOUTH edge
+        const dr = GR - 1 - b;
+        c.fillStyle = b === S.latC ? "#7a5807" : "#a89e8a";
+        c.fillText(String(b), X - 14, Y + dr*th + th/2 + 4);
+      }
+      for (let b = 0; b < GC; b++){               // longitude blocks: 0 at the WEST edge
+        c.fillStyle = b === S.lonC ? "#7a5807" : "#a89e8a";
+        c.fillText(String(b), X + b*tw + tw/2 - 3, Y + H + 15);
+      }
+      c.font = "10.5px Georgia, serif"; c.fillStyle = "#a89e8a";
+      c.save();                                    // lat arrow, along the left edge
+      c.translate(X - 30, Y + H/2);
+      c.rotate(-Math.PI/2);
+      const latNote = "lat — counted from the south →";
+      c.fillText(latNote, -c.measureText(latNote).width/2, 4);
+      c.restore();
+      const lonNote = "lon — counted from the west, west → east";
+      c.fillText(lonNote, X + W - c.measureText(lonNote).width, Y + H + 30);
+    }
+    function render(){
+      const vals = [S.t, S.latC, S.lonC];
+      segs.forEach((sg, i) => {
+        sg.textContent = vals[i];
+        sg.classList.toggle("glow", S.glow.has(i));
+      });
+      const MONF = ["January","February","March","April","May","June","July",
+                    "August","September","October","November","December"];
+      kw.innerHTML =
+        `<span class="ax ${S.glow.has(0) ? "glow" : ""}">time slab <b>${S.t}</b> — ${MONF[S.t]}</span> · ` +
+        `<span class="ax ${S.glow.has(1) ? "glow" : ""}">latitude band <b>${S.latC}</b> — counted from the south edge</span> · ` +
+        `<span class="ax ${S.glow.has(2) ? "glow" : ""}">longitude block <b>${S.lonC}</b> — counted from the west edge</span>`;
+      strip.querySelectorAll("i").forEach((b, i) => {
+        b.classList.toggle("on", i === S.t);
+        b.classList.toggle("band", S.hlAx === 0);
+      });
+      draw();
+    }
+    // hover the map -> lat/lon segments update, changed axis glows; strip fades
+    cv.addEventListener("mousemove", ev => {
+      const r = cv.getBoundingClientRect();
+      const fx = clamp((ev.clientX - r.left - X) / W, 0, .999);
+      const fy = clamp((ev.clientY - r.top - Y) / H, 0, .999);
+      const dispC = Math.floor(fx * GC), dispR = Math.floor(fy * GR);
+      const latC = GR - 1 - dispR, lonC = dispC;
+      const g = new Set();
+      if (latC !== S.latC) g.add(1);
+      if (lonC !== S.lonC) g.add(2);
+      if (g.size){ S.glow = g; S.latC = latC; S.lonC = lonC; render(); }
+    });
+    /* the hover grammar: whichever axis widget you're on, the other fades */
+    cv.addEventListener("mouseenter", () => stripWrap.classList.add("dim"));
+    cv.addEventListener("mouseleave", () => stripWrap.classList.remove("dim"));
+    stripWrap.addEventListener("mouseenter", () => cv.classList.add("dim"));
+    stripWrap.addEventListener("mouseleave", () => cv.classList.remove("dim"));
+    // hover the month strip -> time segment updates
+    strip.querySelectorAll("i").forEach(b => {
+      b.addEventListener("mouseenter", () => {
+        S.t = +b.dataset.t; S.glow = new Set([0]); render();
+      });
+    });
+    // bidirectional: hover a key segment -> its axis lights up on the visuals
+    segs.forEach(sg => {
+      sg.addEventListener("mouseenter", () => {
+        const ax = +sg.dataset.ax;
+        S.hlAx = ax; S.glow = new Set([ax]); render();
+      });
+      sg.addEventListener("mouseleave", () => { S.hlAx = null; render(); });
+    });
+    render();
+    const t = await loadTree(MUR).catch(() => DEMO_TREES[MUR]);
+    if (!st.isConnected) return;
+    const a = arrOf(t, "analysed_sst");
+    cap.innerHTML = `NASA's full-size store works the same — ` +
+      `${fmtN(a.chunk_grid[0])} × ${a.chunk_grid[1]} × ${a.chunk_grid[2]} positions = ` +
+      `<b>${fmtN(a.n_chunks)}</b> file names, all computed`;
+  }
+});
+
+/* ---- 4 · the store is just files — tree + hover previews ---------------- */
+step({
+  act: 2,
+  title: "Zarr stores are folders of files",
+  copy: "No container, no special server — just a folder, shown exactly as it sits on disk. " +
+        "<b>Hover any file</b> to look inside it.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const row = el("div");
+    row.style.cssText = "display:flex; gap:20px; align-items:flex-start;";
+    const tree = el("div", "tree2 dimhov", "listing the store's real files…");
+    row.appendChild(tree);
+    const prev = el("div", "prevcard");
+    row.appendChild(prev);
+    inn.appendChild(row);
+    const cap = el("div", "caption");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    const [ls, meta] = await Promise.all([
+      loadLs().catch(() => DEMO_LS), loadMockMeta().catch(() => DEMO_RAWMETA)]);
+    if (!st.isConnected) return;
+    const sz = {};
+    for (const f of ls.files) sz[f.path] = f.bytes;
+    const S = f => sz[f] != null ? fmtB(sz[f]) : "";
+    const nChunks = ls.files.filter(f => /^analysed_sst\/c\//.test(f.path)).length || 192;
+    const sstBytes = ls.files.filter(f => f.path.startsWith("analysed_sst/"))
+                       .reduce((x, f) => x + f.bytes, 0) || 4840000;
+
+    /* the two zarr.json documents, parsed for the plain-words cards */
+    let rootDoc = {}, arrDoc = {};
+    try { rootDoc = JSON.parse(meta.root["zarr.json"] || "{}"); } catch(e){}
+    try { arrDoc = JSON.parse(meta.arr["analysed_sst/zarr.json"] || "{}"); } catch(e){}
+    const aShape = arrDoc.shape || [12, 360, 720];
+    const aChunk = ((arrDoc.chunk_grid || {}).configuration || {}).chunk_shape || [1, 90, 180];
+    const aType  = arrDoc.data_type || "float32";
+    const aCodec = (arrDoc.codecs || []).map(c => c.name).filter(n => n && n !== "bytes")
+                     .join(", ") || "zstd";
+    const aUnits = ((arrDoc.attributes || {}).units) || "kelvin";
+    const heroKey = `c/${HERO.t}/${HERO.latC}/${HERO.lonC}`;
+
+    const rows = [
+      ["dir",   "📁 mur_sst_mini.zarr/", "", null],
+      ["meta",  "├─ zarr.json", S("zarr.json"), "rootmeta"],
+      ["dir",   "├─ 📁 analysed_sst/", `${nChunks} chunk files · ${fmtB(sstBytes)}`, null],
+      ["meta",  "│&nbsp;&nbsp;&nbsp;├─ zarr.json", S("analysed_sst/zarr.json"), "arrmeta"],
+      ["chunk", "│&nbsp;&nbsp;&nbsp;├─ c/0/0/0", S("analysed_sst/c/0/0/0"), "chunk:0/0/0"],
+      ["chunk", "│&nbsp;&nbsp;&nbsp;├─ c/0/0/1", S("analysed_sst/c/0/0/1"), "chunk:0/0/1"],
+      ["chunk", `│&nbsp;&nbsp;&nbsp;├─ ${heroKey}`, S(`analysed_sst/${heroKey}`), `chunk:${HERO.t}/${HERO.latC}/${HERO.lonC}`],
+      ["dim",   `│&nbsp;&nbsp;&nbsp;├─ … ${nChunks - 4} more, one per block`, "", null],
+      ["chunk", "│&nbsp;&nbsp;&nbsp;└─ c/11/3/3", S("analysed_sst/c/11/3/3"), "chunk:11/3/3"],
+      ["coord", "├─ 📁 lat/&nbsp;&nbsp; (zarr.json · c/0)", S("lat/c/0"), "coord:lat"],
+      ["coord", "├─ 📁 lon/&nbsp;&nbsp; (zarr.json · c/0)", S("lon/c/0"), "coord:lon"],
+      ["coord", "└─ 📁 time/ (zarr.json · c/0)", S("time/c/0"), "coord:time"],
+    ];
+    tree.innerHTML = "";
+    for (const [kind, label, size, pk] of rows){
+      const d = el("div", "tn" + (pk ? " hov" : ""),
+        label + (size ? ` &nbsp;<span class="sz">${size}</span>` : ""));
+      if (pk) d.dataset.pk = pk;
+      tree.appendChild(d);
+    }
+
+    /* plain-words ID card + a "see the actual file" toggle to the raw JSON */
+    function idCard(host, cardRows, rawObj){
+      const wrap = el("div");
+      wrap.style.cssText = "display:flex; flex-direction:column; gap:5px;";
+      cardRows.forEach(([k, v]) => wrap.appendChild(el("div", "idrow",
+        `<span class="idk">${esc(k)}</span><span class="idv">${v}</span>`)));
+      const tog = el("button", "rawtoggle", "see the actual file →");
+      const pre = el("pre", "rawpre");
+      pre.style.display = "none";
+      pre.textContent = JSON.stringify(rawObj, null, 1);
+      tog.onclick = () => {
+        const showRaw = pre.style.display === "none";
+        pre.style.display = showRaw ? "block" : "none";
+        wrap.querySelectorAll(".idrow").forEach(r =>
+          r.style.display = showRaw ? "none" : "flex");
+        tog.textContent = showRaw ? "← back to plain words" : "see the actual file →";
+      };
+      wrap.appendChild(tog);
+      wrap.appendChild(pre);
+      host.appendChild(wrap);
+    }
+    function miniGrid(t, latC, lonC, isolate){
+      const cv2 = planeCanvas(288, 144);
+      setTimeout(() => {
+        const { c } = setupCanvas(cv2);
+        paintFace(c, 2, 2, 284, 140, { grid: [4, 4] });
+        const tw = 284/4, th = 140/4, dr = 3 - latC;
+        const cx = 2 + lonC*tw, cy = 2 + dr*th;
+        if (isolate){
+          /* grey out the ENTIRE map except this chunk's cell */
+          c.fillStyle = "rgba(246,242,233,.85)";
+          c.fillRect(2, 2, 284, cy - 2);                        // above
+          c.fillRect(2, cy + th, 284, 142 - (cy + th));         // below
+          c.fillRect(2, cy, cx - 2, th);                        // left
+          c.fillRect(cx + tw, cy, 286 - (cx + tw), th);         // right
+        } else {
+          c.fillStyle = "rgba(184,134,11,.4)";
+          c.fillRect(cx, cy, tw, th);
+        }
+        c.strokeStyle = "#b8860b"; c.lineWidth = 2;
+        c.strokeRect(cx, cy, tw, th);
+      }, 0);
+      return cv2;
+    }
+    function showPreview(pk){
+      prev.innerHTML = "";
+      if (!pk){
+        prev.appendChild(el("div", "ph", "preview"));
+        prev.appendChild(el("div", "pt", "Hover any file on the left"));
+        prev.appendChild(el("div", "pb",
+          "Everything Zarr knows lives in these files — one small text file per folder " +
+          "(<span class='mono'>zarr.json</span>), and one small data file per chunk. " +
+          "That's the entire format."));
+        return;
+      }
+      if (pk === "rootmeta"){
+        prev.appendChild(el("div", "ph", `zarr.json · ${S("zarr.json")} of plain text`));
+        prev.appendChild(el("div", "pt", "The store's ID card"));
+        idCard(prev, [
+          ["holds", "one data array — <b>analysed_sst</b> (plus its 3 axis rulers)"],
+          ["shape", `${aShape[0]} months × ${aShape[1]} × ${aShape[2]} cells`],
+          ["cut into", `chunks of ${aChunk[0]} × ${aChunk[1]} × ${aChunk[2]} — ${nChunks} files`],
+          ["each number", `${aType}, 4 bytes`],
+        ], {
+          zarr_format: 3, node_type: "group",
+          attributes: (rootDoc.attributes || {}),
+          consolidated_metadata: "…a copy of every array's zarr.json, inlined…",
+        });
+        prev.appendChild(el("div", "pb",
+          "<b>Read this one file and you know where every number lives</b> — it even " +
+          "carries a copy of each array's own card, so one read opens the whole store."));
+        return;
+      }
+      if (pk === "arrmeta"){
+        prev.appendChild(el("div", "ph", `analysed_sst/zarr.json · ${S("analysed_sst/zarr.json")}`));
+        prev.appendChild(el("div", "pt", "The array's own ID card"));
+        idCard(prev, [
+          ["shape", `${aShape[0]} months × ${aShape[1]} × ${aShape[2]} cells`],
+          ["cut into", `chunks of ${aChunk[0]} × ${aChunk[1]} × ${aChunk[2]} cells`],
+          ["each number", `${aType}, 4 bytes — a temperature in ${esc(aUnits)}`],
+          ["squeezed with", `${esc(aCodec)} (like zipping — smaller files, same numbers)`],
+        ], {
+          shape: aShape, data_type: aType,
+          chunk_grid: arrDoc.chunk_grid || { configuration: { chunk_shape: aChunk } },
+          chunk_key_encoding: arrDoc.chunk_key_encoding || { configuration: { separator: "/" } },
+          fill_value: arrDoc.fill_value ?? "NaN",
+          codecs: (arrDoc.codecs || []).map(c => c.name),
+          dimension_names: arrDoc.dimension_names || ["time","lat","lon"],
+        });
+        return;
+      }
+      if (pk.startsWith("chunk:")){
+        const key = pk.slice(6);
+        const [t, latC, lonC] = key.split("/").map(Number);
+        const bytes = sz["analysed_sst/c/" + key];
+        prev.appendChild(el("div", "ph", `analysed_sst/c/${key} · ${bytes ? fmtB(bytes) : "~24 KB"}`));
+        prev.appendChild(el("div", "pt", "One chunk — a little file of squeezed numbers"));
+        prev.appendChild(miniGrid(t, latC, lonC, true));
+        prev.appendChild(el("div", "pb",
+          `everything greyed out is <b>other files</b> — this file holds only the lit cell: ` +
+          `month <b>${t}</b>, band <b>${latC}</b> up from the south, block <b>${lonC}</b> across`));
+        return;
+      }
+      if (pk.startsWith("coord:")){
+        const which = pk.slice(6);
+        const what = { lat: ["the 360 real latitudes", "−89.75° … 89.75°"],
+                       lon: ["the 720 real longitudes", "−179.75° … 179.75°"],
+                       time: ["the 12 real dates", "Jan 2022 … Dec 2022"] }[which];
+        prev.appendChild(el("div", "ph", `${which}/ · ${S(which + "/c/0")}`));
+        prev.appendChild(el("div", "pt", "A ruler for one axis"));
+        prev.appendChild(el("div", "pb",
+          `A tiny one-dimensional array holding ${what[0]} (${what[1]}). ` +
+          `These “coordinate arrays” are how a reader turns <b>row 213</b> into ` +
+          `<b>16.75°N</b> — they're just more Zarr arrays, stored the same way.`));
+        return;
+      }
+    }
+    showPreview(null);
+    tree.querySelectorAll(".tn.hov").forEach(d => {
+      d.addEventListener("mouseenter", () => {
+        tree.querySelectorAll(".tn").forEach(x => {
+          x.classList.remove("lit");
+          x.classList.toggle("dim", x !== d && x.classList.contains("hov"));
+        });
+        d.classList.add("lit");
+        showPreview(d.dataset.pk);
+      });
+    });
+    tree.addEventListener("mouseleave", () => {
+      tree.querySelectorAll(".tn").forEach(x => x.classList.remove("dim"));
+    });
+    cap.innerHTML = `the store's <b>real ${fmtN(ls.n_files)} files (${fmtB(ls.total_bytes)})</b>, ` +
+      `listed just now — NASA's cloud store has the same layout, with 141,790 chunk files`;
+  }
+});
+
+/* ---- 5 · reading data — three slow beats, then the real thing ------------ */
+let READ_RESULT = null;    // the real-store read, kept for the next steps
+step({
+  act: 2,
+  title: "Reading just the chunks you need",   // <!-- title TBD: Max deciding keep/skip -->
+  copy: "A read is three moves: <b>compute the names</b>, <b>fetch those files</b>, " +
+        "<b>paint</b>. Click through them here — then do the same against <b>NASA's " +
+        "full-size store</b>.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const row = el("div");
+    row.style.cssText = "display:flex; gap:20px; align-items:flex-start;";
+    const left = el("div");
+    left.style.cssText = "display:flex; flex-direction:column; gap:8px; align-items:center;";
+    const cv = planeCanvas(440, 232);
+    left.appendChild(cv);
+    const keys = el("div", "keygrid");
+    keys.style.visibility = "hidden";
+    left.appendChild(keys);
+    row.appendChild(left);
+    const side = el("div");
+    side.style.cssText = "width:300px; display:flex; flex-direction:column; gap:8px;";
+    const btn = el("button", "small primary", "1 · compute the names →");
+    const btnReal = el("button", "small", "Now do it for real: NASA's store, 8,000× bigger →");
+    btnReal.style.display = "none";
+    side.appendChild(btn); side.appendChild(btnReal);
+    /* the PINNED download panel — fixed height, updates in place, never scrolls */
+    const panel = el("div", "dlpanel");
+    panel.style.display = "none";
+    panel.innerHTML = `
+      <div class="dlh">live · one chunk from NASA's S3</div>
+      <canvas class="cube" data-w="270" data-h="54" style="width:270px;height:54px"></canvas>
+      <div class="pbar"><i></i></div>
+      <div class="dlstat">waiting…</div>`;
+    side.appendChild(panel);
+    row.appendChild(side);
+    inn.appendChild(row);
+    const cap = el("div", "caption",
+      `the wish: <b>the whole July map</b> — ${fmtN(259200)} numbers ` +
+      `from the <span class="z">gold</span> selection`);
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    const GR = 4, GC = 4, X = 10, Y = 6, W = 420, H = 210;
+    const lit = new Set();
+    let img = null, medMode = null;
+    function draw(){
+      if (!st.isConnected) return;
+      const { c } = setupCanvas(cv);
+      if (medMode){
+        // the real-store result: the Mediterranean patch, big
+        c.font = "12px Georgia, serif"; c.fillStyle = "#7b7260";
+        c.fillText("the seas around Italy — 2 June 2019 · real NASA data, 1-km cells", X, Y + 8);
+        const mw = 380, mh = 208;
+        c.fillStyle = "#eee7d4";
+        c.fillRect(X + 20, Y + 16, mw, mh);
+        c.imageSmoothingEnabled = true;
+        c.drawImage(medMode, X + 20, Y + 16, mw, mh);
+        c.strokeStyle = "#b8860b"; c.lineWidth = 2;
+        c.strokeRect(X + 20, Y + 16, mw, mh);
+        return;
+      }
+      paintFace(c, X, Y, W, H, { grid: [GR, GC] });
+      c.strokeStyle = "#b8860b"; c.lineWidth = 2.4;      // gold = the wish
+      c.strokeRect(X, Y, W, H);
+      if (img){
+        c.drawImage(img, X, Y, W, H);
+        c.strokeStyle = "rgba(90,75,40,.35)"; c.lineWidth = 1;
+        for (let i = 1; i < GC; i++){ c.beginPath(); c.moveTo(X+W*i/GC, Y); c.lineTo(X+W*i/GC, Y+H); c.stroke(); }
+        for (let i = 1; i < GR; i++){ c.beginPath(); c.moveTo(X, Y+H*i/GR); c.lineTo(X+W, Y+H*i/GR); c.stroke(); }
+        c.strokeStyle = "#a89e8a"; c.strokeRect(X, Y, W, H);
+      }
+      for (const k of lit){
+        const [r, cc] = k.split(",").map(Number);
+        c.fillStyle = img ? "rgba(31,143,184,0)" : "rgba(31,143,184,.4)";
+        if (!img) c.fillRect(X + cc*W/GC, Y + r*H/GR, W/GC, H/GR);
+        c.strokeStyle = "#1f8fb8"; c.lineWidth = 1.6;
+        c.strokeRect(X + cc*W/GC, Y + r*H/GR, W/GC, H/GR);
+      }
+    }
+    draw();
+
+    /* 16 name chips, in display order (top row first) */
+    const chipOf = [];
+    for (let i = 0; i < 16; i++){
+      const dispR = Math.floor(i/4), dispC = i%4;
+      const latC = GR - 1 - dispR, lonC = dispC;
+      const chip = el("i", null, `c/${MOCK_T}/${latC}/${lonC}`);
+      keys.appendChild(chip);
+      chipOf.push(chip);
+    }
+
+    let beat = 0, busy = false, res = null;
+    async function nextBeat(){
+      if (busy) return; busy = true;
+      btn.disabled = true;
+      if (beat === 0){
+        /* beat 1 — compute the names. only the names appear. */
+        keys.style.visibility = "";
+        keys.classList.add("fadein");
+        cap.innerHTML = `<b>move 1 — compute the names.</b> month ${MOCK_T} × lat 0–3 × ` +
+          `lon 0–3 → <b>16 file names</b>, by arithmetic alone`;
+        btn.textContent = "2 · fetch the files →";
+        beat = 1;
+      } else if (beat === 1){
+        /* beat 2 — fetch: tiles light one at a time, ~2 s of choreography */
+        cap.innerHTML = `<b>move 2 — fetch.</b> asking the store for those 16 files, ` +
+          `<span class="f">one file per tile</span>…`;
+        const promise = DEMO ? sleep(120).then(demoSliceMock)
+          : api(`/slice?file=${encodeURIComponent(MOCK)}&var=analysed_sst&plane=1,2` +
+                `&idx=${MOCK_T},0,0&r0=0&r1=360&c0=0&c1=720`);
+        for (let i = 0; i < 16; i++){
+          const dispR = Math.floor(i/4), dispC = i%4;
+          lit.add(`${dispR},${dispC}`);
+          chipOf[i].classList.add("hot");
+          if (i > 0) chipOf[i-1].classList.replace("hot", "done");
+          draw();
+          await sleep(115);
+        }
+        chipOf[15].classList.replace("hot", "done");
+        try { res = await promise; }
+        catch(e){
+          cap.innerHTML = `<span style="color:var(--miss)">${esc(e.message)}</span>`;
+          busy = false; btn.disabled = false; return;
+        }
+        if (!st.isConnected) return;
+        bump(res.cost, "mini-store read", true);
+        recordTouches(res.touched, "mock");
+        cap.innerHTML = `<b>16 files fetched</b> in <b>${Math.max(1, Math.round(res.cost.ms))} ms</b> ` +
+          `(the mini store is on disk) — the slow lighting was for your eyes` +
+          (DEMO ? " (demo: synthesized copy)" : "");
+        btn.textContent = "3 · paint the map →";
+        beat = 2;
+      } else if (beat === 2){
+        /* beat 3 — paint */
+        img = sliceImage(res, THERMAL, true);
+        draw();
+        const toC = k => (k - 273.15).toFixed(1);
+        cap.innerHTML = `<b>move 3 — paint.</b> real ocean temperatures, ` +
+          `<b>${toC(res.vmin)} – ${toC(res.vmax)} °C</b> · now feel what <b>scale</b> does to move 2 →`;
+        btn.style.display = "none";
+        btnReal.style.display = "";
+        btnReal.classList.add("primary");
+        beat = 3;
+      }
+      busy = false;
+      btn.disabled = false;
+    }
+    btn.onclick = nextBeat;
+
+    /* ---- the real S3 read: pinned panel, always cold ---- */
+    const pfill = panel.querySelector(".pbar i");
+    const pstat = panel.querySelector(".dlstat");
+    const pmap = panel.querySelector("canvas");
+    function drawPanelMap(){
+      const { c } = setupCanvas(pmap);
+      paintFace(c, 2, 2, 104, 50, {});
+      /* MUR chunk grid: 11 lat bands × 10 lon blocks; our chunk = (lat 7, lon 5) */
+      c.strokeStyle = "rgba(90,75,40,.25)"; c.lineWidth = .5;
+      for (let i = 1; i < 10; i++){ c.beginPath(); c.moveTo(2 + 104*i/10, 2); c.lineTo(2 + 104*i/10, 52); c.stroke(); }
+      for (let i = 1; i < 11; i++){ c.beginPath(); c.moveTo(2, 2 + 50*i/11); c.lineTo(106, 2 + 50*i/11); c.stroke(); }
+      const dr = 10 - 7, tw = 104/10, th = 50/11;      // lat counted from the south
+      c.fillStyle = "rgba(31,143,184,.75)";
+      c.fillRect(2 + 5*tw, 2 + dr*th, tw, th);
+      c.font = "10.5px Georgia, serif"; c.fillStyle = "#7b7260";
+      c.fillText("← the ONE chunk file", 116, 22);
+      c.fillText("out of 141,790", 116, 36);
+    }
+    const EXPECT = 13.4e6;                          // a cold Mediterranean chunk
+    let running = false;
+    async function runReal(){
+      if (running) return; running = true;
+      btnReal.disabled = true;
+      panel.style.display = "";
+      drawPanelMap();
+      pfill.style.width = "0%";
+      const t0 = performance.now();
+      pstat.innerHTML = `clearing every cache first — this read is <b>always cold</b>, ` +
+        `the wait is the honest cost`;
+      /* make it genuinely cold: the daemon forgets the store entirely.
+         then reopen it once (via /stats) BEFORE racing /slice against the
+         poller — otherwise two concurrent opens can split the meter. */
+      if (!DEMO){
+        try {
+          await api(`/clearcache?file=${encodeURIComponent(MUR)}`);
+          await api(`/stats?file=${encodeURIComponent(MUR)}`);
+        } catch(e){}
+      }
+      let poll = null, seen = 0;
+      if (!DEMO){
+        poll = setInterval(async () => {
+          try {
+            const sres = await api(`/stats?file=${encodeURIComponent(MUR)}`);
+            /* inflight = bytes of the object currently arriving, live */
+            seen = Math.max(seen, sres.net_bytes + (sres.inflight || 0));
+            pfill.style.width = clamp(seen / EXPECT * 100, 1.5, 99) + "%";
+            pstat.innerHTML = `<span class="sz">${fmtB(seen)}</span> of ~13.4 MB · ` +
+              `${((performance.now() - t0)/1000).toFixed(1)} s — one whole chunk must arrive`;
+          } catch(e){}
+        }, 300);
+      } else {
+        poll = setInterval(() => {
+          const p = clamp((performance.now() - t0) / 2500, 0, .99);
+          pfill.style.width = (p * 100) + "%";
+          pstat.innerHTML = `<span class="sz">${fmtB(EXPECT * p)}</span> of ~13.4 MB · ` +
+            `${((performance.now() - t0)/1000).toFixed(1)} s (demo: canned pace)`;
+        }, 200);
+      }
+      let r2;
+      try {
+        r2 = DEMO ? (await sleep(2500), demoSliceMURMed())
+          : await api(`/slice?file=${encodeURIComponent(MUR)}&var=analysed_sst&plane=1,2` +
+                      `&idx=${READ.t},0,0&r0=${READ.r0}&r1=${READ.r1}&c0=${READ.c0}&c1=${READ.c1}`);
+      } catch(e){
+        clearInterval(poll);
+        pstat.innerHTML = `<span style="color:var(--miss)">${esc(e.message)}</span>`;
+        running = false; btnReal.disabled = false; return;
+      }
+      clearInterval(poll);
+      if (!st.isConnected) return;
+      READ_RESULT = r2;
+      bump(r2.cost, "NASA store: Mediterranean, 1 day");
+      recordTouches(r2.touched, "mur");
+      pfill.style.width = "100%";
+      pstat.innerHTML = `<span class="sz">${fmtB(r2.cost.net_bytes)}</span> in ` +
+        `<b>${(r2.cost.ms/1000).toFixed(1)} s</b> — the file ` +
+        `<span class="z mono" style="font-size:10px">analysed_sst/1242.7.5</span>` +
+        (DEMO ? " (demo: canned copy)" : "");
+      medMode = sliceImage(r2, THERMAL, true);
+      keys.style.visibility = "hidden";
+      draw();
+      const toC = k => (k - 273.15).toFixed(1);
+      cap.innerHTML = `1.1 million real temperatures, <b>${toC(r2.vmin)} – ${toC(r2.vmax)} °C</b> · ` +
+        `the other <b>141,789</b> chunks? <b>never touched</b> · ` +
+        `NASA's older store spells names with dots — same idea`;
+      running = false;
+      btnReal.textContent = "↺ do it again — it clears the cache, so it's honest every time";
+      btnReal.disabled = false;
+    }
+    btnReal.onclick = runReal;
+  }
+});
+
+/* ---- 6 · the gotcha — one bar at a time, plus the datacube ---------------- */
+step({
+  act: 2,
+  title: "Chunks in practice",
+  copy: "Storage only hands out <b>whole files</b>: touch one number, receive its entire " +
+        "chunk. How much that hurts is the <i>publisher's</i> choice — step through it:",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const row = el("div");
+    row.style.cssText = "display:flex; gap:22px; align-items:center;";
+    const cube = planeCanvas(300, 264);
+    row.appendChild(cube);
+    const right = el("div");
+    right.style.cssText = "display:flex; flex-direction:column; gap:14px; width:470px;";
+    const cmpEl = el("div", "cmp");
+    right.appendChild(cmpEl);
+    const beatBtn = el("button", "small primary", "So what did the store send? →");
+    const btnwrap = el("div"); btnwrap.style.cssText = "display:flex; justify-content:center;";
+    btnwrap.appendChild(beatBtn);
+    right.appendChild(btnwrap);
+    row.appendChild(right);
+    inn.appendChild(row);
+    const cap = el("div", "caption");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+    const asked = (READ.r1-READ.r0)*(READ.c1-READ.c0)*2;
+    const murGot = READ_RESULT && READ_RESULT.cost.net_bytes > 0
+      ? READ_RESULT.cost.net_bytes : 13384457;
+    const murMeasured = !!(READ_RESULT && READ_RESULT.cost.net_bytes > 0);
+    const cmipBytes = 80221890;
+    const max = cmipBytes;
+
+    /* --- the datacube: a pixelated box for what traveled, with your sliver inside --- */
+    function drawBox(c, x, y, w, h, d, stroke, fill){
+      // x,y = front-bottom-left; depth goes up-right
+      const dx = d * .85, dy = -d * .55;
+      c.fillStyle = fill;
+      c.beginPath();                                     // front face
+      c.rect(x, y - h, w, h); c.fill();
+      c.beginPath();                                     // top face
+      c.moveTo(x, y - h); c.lineTo(x + dx, y - h + dy);
+      c.lineTo(x + w + dx, y - h + dy); c.lineTo(x + w, y - h);
+      c.closePath(); c.fill();
+      c.beginPath();                                     // right face
+      c.moveTo(x + w, y - h); c.lineTo(x + w + dx, y - h + dy);
+      c.lineTo(x + w + dx, y + dy); c.lineTo(x + w, y);
+      c.closePath(); c.fill();
+      c.strokeStyle = stroke; c.lineWidth = 1.6;
+      c.strokeRect(x, y - h, w, h);
+      c.beginPath();
+      c.moveTo(x, y - h); c.lineTo(x + dx, y - h + dy);
+      c.lineTo(x + w + dx, y - h + dy); c.lineTo(x + w, y - h);
+      c.moveTo(x + w + dx, y - h + dy); c.lineTo(x + w + dx, y + dy);
+      c.lineTo(x + w, y);
+      c.stroke();
+      // dithered texture on the front face (the house pixel style)
+      c.fillStyle = stroke;
+      c.globalAlpha = .18;
+      for (let yy = y - h + 3; yy < y - 2; yy += 5)
+        for (let xx = x + 3 + ((yy | 0) % 2) * 2; xx < x + w - 2; xx += 5)
+          c.fillRect(xx, yy, 1.6, 1.6);
+      c.globalAlpha = 1;
+    }
+    function drawCube(beat){
+      const { c } = setupCanvas(cube);
+      const BX = 26, BY = 232;
+      /* constant context: the whole store as a ghost box — every beat lives inside it */
+      drawBox(c, BX, BY, 226, 148, 40, "rgba(90,75,40,.30)", "rgba(90,75,40,.03)");
+      c.font = "10.5px Georgia, serif"; c.fillStyle = "#a89e8a";
+      c.fillText("the whole store — 8.3 TB", BX, BY - 200);
+      c.font = "11px Georgia, serif"; c.fillStyle = "#7b7260";
+      if (beat === 0){
+        drawBox(c, BX + 92, BY - 62, 58, 30, 4, "#b8860b", "rgba(245,227,175,.9)");
+        c.fillText("your ask — one sea, 1 day thin", BX, BY + 22);
+      } else if (beat === 1){
+        drawBox(c, BX + 66, BY - 40, 130, 74, 20, "#1f8fb8", "rgba(31,143,184,.12)");
+        drawBox(c, BX + 92, BY - 62, 58, 30, 4, "#b8860b", "rgba(245,227,175,.9)");
+        c.fillText("what traveled (blue) — your ask rides inside", BX, BY + 22);
+      } else {
+        drawBox(c, BX + 30, BY - 16, 180, 118, 34, "#c9366b", "rgba(201,54,107,.10)");
+        drawBox(c, BX + 100, BY - 60, 26, 14, 2, "#b8860b", "rgba(245,227,175,.95)");
+        c.fillText("a CMIP6 chunk — your ask is the speck", BX, BY + 22);
+      }
+      c.fillStyle = "#a89e8a"; c.font = "10px Georgia, serif";
+      c.fillText("not to scale", 234, 258);
+    }
+
+    const BEATS = [
+      { lb: `you asked for<br><b>one day, one sea</b>`, v: asked, color: "#b8860b",
+        note: "what you wanted (raw numbers)",
+        cap: `` },
+      { lb: `the ocean store sent<br><b>one whole chunk</b>`, v: murGot, color: "#1f8fb8",
+        note: murMeasured ? "measured on the previous step" : "measured 2026-07-20",
+        cap: `the chunk holding your sea is a <b>5-day block</b> — 6× your ask` },
+      { lb: `a climate store<br><b>would have sent</b>`, v: cmipBytes, color: "#c9366b",
+        note: "CMIP6 world-climate archive (canned object size, measured 2026-07-20)",
+        cap: `CMIP6 packed <b>50 years per chunk</b> — touch one month, receive 80 MB · ` +
+             `<b>chunk size is a promise about how the data will be read</b>` },
+    ];
+    let beat = 0;
+    function show(){
+      const B = BEATS[beat];
+      const rowEl = el("div", "row fadein");
+      rowEl.innerHTML = `<div class="lb">${B.lb}</div>
+        <div class="tr"><i style="background:${B.color};width:${Math.max(0.7, B.v/max*100)}%"></i></div>
+        <div class="val">${fmtB(B.v)}</div>`;
+      rowEl.querySelector(".tr").title = B.note;
+      cmpEl.appendChild(rowEl);
+      drawCube(beat);
+      cap.innerHTML = B.cap;
+      beat++;
+      if (beat === 2) beatBtn.textContent = "And a store built for centuries, not days? →";
+      if (beat >= BEATS.length) beatBtn.style.display = "none";
+    }
+    beatBtn.onclick = show;
+    show();
+  }
+});
+
+/* ---- 7 · sharding — the 16 familiar tiles pack into one file -------------- */
+step({
+  act: 2,
+  title: "Sharding",
+  copy: "Small chunks read cheap, but a big dataset becomes <b>millions of tiny files</b>. " +
+        "A <b>shard</b> bundles many chunks into one file, with a tiny index saying where each sits.",
+  async mount(st){
+    const inn = el("div", "stage-in fadein");
+    const cv = planeCanvas(760, 330);
+    cv.style.cursor = "crosshair";
+    inn.appendChild(cv);
+    const idxLine = el("div", "caption");
+    idxLine.style.minHeight = "20px";
+    inn.appendChild(idxLine);
+    const btnwrap = el("div"); btnwrap.style.cssText = "display:flex; justify-content:center;";
+    const bundleBtn = el("button", "small primary", "Pack them into one shard file →");
+    btnwrap.appendChild(bundleBtn);
+    inn.appendChild(btnwrap);
+    const cap = el("div", "caption",
+      "the <b>same 16 files</b> from the chunking step — now imagine NASA's 141,790, " +
+      "or a store with 141 <i>million</i>");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    /* the 16 July tiles, with their REAL on-disk sizes when available */
+    const FALLBACK = { "0/0":20408,"0/1":17149,"0/2":16035,"0/3":18332,
+      "1/0":43926,"1/1":32914,"1/2":37261,"1/3":36439,"2/0":36742,"2/1":33286,
+      "2/2":15126,"2/3":31232,"3/0":14613,"3/1":23606,"3/2":15377,"3/3":11504 };
+    let szOf = k => FALLBACK[k];
+    try {
+      const ls = await loadLs();
+      const m = {};
+      for (const f of ls.files) m[f.path] = f.bytes;
+      if (m[`analysed_sst/c/${MOCK_T}/2/3`]) szOf = k => m[`analysed_sst/c/${MOCK_T}/` + k] || FALLBACK[k];
+    } catch(e){}
+    if (!st.isConnected) return;
+    const face = worldFace();
+    const T = [];                                   // display order, row by row
+    for (let i = 0; i < 16; i++){
+      const dispR = Math.floor(i/4), dispC = i%4;
+      const latC = 3 - dispR, lonC = dispC;
+      T.push({ dispR, dispC, latC, lonC, key: `c/${MOCK_T}/${latC}/${lonC}`,
+               bytes: szOf(`${latC}/${lonC}`) || 24000,
+               color: `hsl(${Math.round(i*360/16 + 12)} 40% 56%)` });
+    }
+    const offs = [0];
+    T.forEach((t, i) => offs.push(offs[i] + t.bytes));
+    const totalB = offs[16], idxB = 16 * 16;        // 16 bytes per index entry
+
+    /* layout: ghost grid left · index table right · byte strip along the bottom */
+    const GX = 34, GY = 18, TW = 86, TH = 43, GAP = 10;
+    const tileRect = t => [GX + t.dispC*(TW+GAP), GY + t.dispR*(TH+GAP+13), TW, TH];
+    const SX = 34, SY = 288, SW = 620, SH = 24;     // strip (data zone)
+    const IW = 34;                                   // index tail on the strip
+    const bandRect = i => [SX + offs[i]/totalB*SW, SY, T[i].bytes/totalB*SW, SH];
+    const TXX = 428, TXY = 20, TRH = 13.4;           // index table (right)
+    const rowRect = i => [TXX, TXY + 18 + i*TRH, 300, TRH];
+
+    let phase = 0, anim = 0, hov = -1;               // hov = tile index or -1
+    function drawTile(c, t, x, y, w, h, alpha, hot){
+      c.globalAlpha = alpha;
+      c.drawImage(face, t.dispC*45, t.dispR*22.5, 45, 22.5, x, y, w, h);
+      c.globalAlpha = 1;
+      c.strokeStyle = hot ? "#b8860b" : t.color;
+      c.lineWidth = hot ? 2.2 : 1.4;
+      c.strokeRect(x, y, w, h);
+    }
+    function draw(){
+      if (!st.isConnected) return;
+      const { c } = setupCanvas(cv);
+      const packed = phase === 1 && anim >= 1;
+      const dimAll = packed && hov >= 0;
+      /* tiles / ghosts */
+      for (let i = 0; i < 16; i++){
+        const t = T[i];
+        const [gx, gy, gw, gh] = tileRect(t);
+        if (phase === 1 && anim < 1){
+          // mid-flight: tile morphs toward its byte band
+          const [bx, by, bw, bh] = bandRect(i);
+          const q = anim;
+          drawTile(c, t, gx + (bx-gx)*q, gy + (by-gy)*q, gw + (bw-gw)*q, gh + (bh-gh)*q, 1 - q*.4, false);
+        } else {
+          const ghost = packed;
+          const hot = hov === i;
+          const alpha = ghost ? (hot ? 1 : (dimAll ? .12 : .38)) : 1;
+          drawTile(c, t, gx, gy, gw, gh, alpha, hot);
+          c.font = "600 9px 'SF Mono', Menlo, monospace";
+          c.fillStyle = hot ? "#7a5807" : (dimAll ? "rgba(168,158,138,.35)" : "#a89e8a");
+          c.fillText(t.key, gx + 2, gy + gh + 10);
+        }
+      }
+      if (!packed && phase === 0){
+        c.font = "11px Georgia, serif"; c.fillStyle = "#7b7260";
+        c.fillText("16 separate files on storage — every read = one round-trip each", GX, SY + 8);
+      }
+      if (packed){
+        /* the shard file, seen as bytes */
+        c.font = "11px Georgia, serif";
+        c.fillStyle = dimAll ? "rgba(123,114,96,.4)" : "#7b7260";
+        c.fillText(`one shard file · ${fmtB(totalB + idxB)} — the same bytes, in one file →`, SX, SY - 8);
+        for (let i = 0; i < 16; i++){
+          const [bx, by, bw, bh] = bandRect(i);
+          const hot = hov === i;
+          c.globalAlpha = dimAll && !hot ? .18 : 1;
+          c.fillStyle = T[i].color;
+          c.fillRect(bx, by, bw, bh);
+          c.globalAlpha = 1;
+          if (hot){ c.strokeStyle = "#b8860b"; c.lineWidth = 2.2; c.strokeRect(bx, by, bw, bh); }
+          else { c.strokeStyle = "rgba(255,253,248,.7)"; c.lineWidth = 1; c.strokeRect(bx, by, bw, bh); }
+        }
+        // the index tail at the end of the file
+        c.fillStyle = dimAll ? "rgba(245,227,175,.35)" : "#f5e3af";
+        c.fillRect(SX + SW, SY, IW, SH);
+        c.strokeStyle = "#b8860b"; c.lineWidth = 1.2;
+        c.strokeRect(SX + SW, SY, IW, SH);
+        c.font = "600 8.5px -apple-system, sans-serif";
+        c.fillStyle = "#7a5807";
+        c.fillText("index", SX + SW + 4, SY + 15);
+        /* the index table — what those last bytes SAY */
+        c.font = "600 10px 'SF Mono', Menlo, monospace";
+        c.fillStyle = dimAll ? "rgba(122,88,7,.4)" : "#7a5807";
+        c.fillText("the index (the file's last 256 bytes):", TXX, TXY + 8);
+        c.font = "9.5px 'SF Mono', Menlo, monospace";
+        for (let i = 0; i < 16; i++){
+          const [rx, ry, rw, rh] = rowRect(i);
+          const hot = hov === i;
+          if (hot){ c.fillStyle = "rgba(245,227,175,.95)"; c.fillRect(rx - 3, ry - 1, rw, rh); }
+          c.fillStyle = hot ? "#5a4106" : (dimAll ? "rgba(123,114,96,.3)" : "#8b8270");
+          c.fillText(`${T[i].key}   starts at ${String(offs[i]).padStart(6, " ")}   ${fmtB(T[i].bytes)}`,
+                     rx, ry + 9);
+        }
+        /* static connectors for the hovered chunk (nothing moves) */
+        if (hov >= 0){
+          const [gx, gy, gw, gh] = tileRect(T[hov]);
+          const [bx, by, bw] = bandRect(hov);
+          const [rx, ry] = rowRect(hov);
+          c.strokeStyle = "rgba(184,134,11,.55)"; c.lineWidth = 1.3;
+          c.beginPath(); c.moveTo(gx + gw/2, gy + gh + 12); c.lineTo(bx + bw/2, by); c.stroke();
+          c.beginPath(); c.moveTo(rx - 3, ry + 6); c.lineTo(bx + bw, by + SH/2); c.stroke();
+        }
+      }
+    }
+    function hitTest(ev){
+      const r = cv.getBoundingClientRect();
+      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+      for (let i = 0; i < 16; i++){
+        const [gx, gy, gw, gh] = tileRect(T[i]);
+        if (mx >= gx && mx <= gx + gw && my >= gy && my <= gy + gh + 12) return i;
+      }
+      if (phase === 1 && anim >= 1){
+        for (let i = 0; i < 16; i++){
+          const [bx, by, bw, bh] = bandRect(i);
+          if (mx >= bx && mx <= bx + bw && my >= by - 2 && my <= by + bh + 2) return i;
+        }
+        for (let i = 0; i < 16; i++){
+          const [rx, ry, rw, rh] = rowRect(i);
+          if (mx >= rx - 3 && mx <= rx + rw && my >= ry - 1 && my <= ry + rh - 1) return i;
+        }
+      }
+      return -1;
+    }
+    cv.addEventListener("mousemove", ev => {
+      const h = hitTest(ev);
+      if (h === hov) return;
+      hov = h;
+      draw();
+      if (phase === 1 && anim >= 1){
+        idxLine.innerHTML = hov >= 0
+          ? `the index says: <span class="z mono">${T[hov].key}</span> lives at bytes ` +
+            `<b>${offs[hov].toLocaleString("en-US")} – ${(offs[hov] + T[hov].bytes - 1).toLocaleString("en-US")}</b> ` +
+            `— a reader fetches <b>just that ${fmtB(T[hov].bytes)} sliver</b>`
+          : "hover a tile, a colored band, or an index row — they're the same chunk three ways";
+      } else if (hov >= 0){
+        idxLine.innerHTML = `<span class="z mono">analysed_sst/${T[hov].key}</span> · ${fmtB(T[hov].bytes)}`;
+      } else idxLine.innerHTML = "";
+    });
+    cv.addEventListener("mouseleave", () => { hov = -1; draw();
+      if (phase === 1 && anim >= 1)
+        idxLine.innerHTML = "hover a tile, a colored band, or an index row — they're the same chunk three ways";
+    });
+    bundleBtn.onclick = () => {
+      if (phase === 1) return;
+      phase = 1;
+      bundleBtn.style.display = "none";
+      const t0 = performance.now(), DUR = 900;
+      const ease = q => 1 - Math.pow(1 - q, 3);
+      const loop = now => {
+        anim = ease(clamp((now - t0) / DUR, 0, 1));
+        draw();
+        if (anim < 1 && st.isConnected) requestAnimationFrame(loop);
+        else {
+          cap.innerHTML = `16 files became <b>1</b> — the index still lets a reader fetch ` +
+            `only the byte range it needs`;
+          idxLine.innerHTML = "hover a tile, a colored band, or an index row — they're the same chunk three ways";
+        }
+      };
+      requestAnimationFrame(loop);
+    };
+    draw();
+  }
+});
+
+/* ---- 8 · the receipt — ledger + the session's chunks lit in a datacube ---- */
+step({
+  act: 3,
+  title: "Your data receipt",
+  copy: "Step back: here's what your session actually cost. Every chunk you pulled " +
+        "glows in the cube — <b>hover one</b> for its file.",
+  mount(st){
+    const inn = el("div", "stage-in fadein");
+    const row = el("div");
+    row.style.cssText = "display:flex; gap:26px; align-items:center; justify-content:center; width:100%;";
+    const cv = planeCanvas(400, 396);
+    row.appendChild(cv);
+    const right = el("div");
+    right.style.cssText = "display:flex; flex-direction:column; gap:9px; width:350px; align-items:flex-start;";
+    row.appendChild(right);
+    inn.appendChild(row);
+    const hoverLine = el("div", "caption");
+    inn.appendChild(hoverLine);
+    st.appendChild(inn);
+
+    /* ----- right side: the ledger ----- */
+    const did = SES.log.length > 0;
+    const totRow = el("div");
+    totRow.style.cssText = "display:flex; align-items:center; gap:11px;";
+    totRow.appendChild(pixIcon("receipt", 26));
+    totRow.appendChild(el("div", "bigno", did ? fmtB(SES.bytes) : "0 B"));
+    right.appendChild(totRow);
+    right.appendChild(el("div", "caption",
+      !did
+        ? `traveled the internet — everything so far ran on the local mini twin, free`
+        : SES.bytes === 0
+        ? `traveled — your real read was served by the local cache; cold it's ~13.4 MB`
+        : `traveled the internet, in <b>${SES.reqs}</b> request${SES.reqs === 1 ? "" : "s"}`)
+      ).style.textAlign = "left";
+    if (SES.log.length){
+      const tbl = el("div", "narr"); tbl.style.maxWidth = "350px";
+      for (const L of SES.log)
+        tbl.appendChild(el("div", "ln",
+          `${esc(L.what)} — <span class="sz">${L.bytes ? fmtB(L.bytes) : "0 B (cache)"}</span>` +
+          ` · ${L.reqs} req · ${(L.ms/1000).toFixed(1)} s`));
+      if (SES.localReads)
+        tbl.appendChild(el("div", "ln",
+          `plus ${SES.localReads} local read${SES.localReads === 1 ? "" : "s"} — ` +
+          `<span class="sz">free</span>`));
+      right.appendChild(tbl);
+    }
+    const moved = SES.bytes || 13.4e6;
+    const pct = moved / 8349664104000 * 100;
+    const pctCap = el("div", "caption",
+      `${SES.bytes ? "that's" : "even a full real read is"} <b>${pct.toFixed(5)}%</b> of the ` +
+      `dataset — vs the brute-force plan's <b>~2.6 days</b>`);
+    pctCap.style.textAlign = "left";
+    right.appendChild(pctCap);
+
+    /* ----- left side: the datacube of fetched chunks ----- */
+    const cells = [...SES.touched.values()];
+    const mockCells = cells.filter(c => c.store === "mock");
+    const murCells  = cells.filter(c => c.store === "mur");
+    /* iso helpers (matches the house style: flat diamonds, stacked slabs) */
+    function slabPt(geo, r, c){          // r = display row, c = col, in grid units
+      const ux = geo.ax/geo.gw, uy = geo.ay/geo.gw, vx = -geo.ax/geo.gh, vy = geo.ay/geo.gh;
+      return { x: geo.cx + c*ux + r*vx - (ux*geo.gw + vx*geo.gh)/2,
+               y: geo.y0 + c*uy + r*vy - (uy*geo.gw + vy*geo.gh)/2 };
+    }
+    const inQuad = (q, x, y) => {        // point-in-convex-quad via cross products
+      let sgn = 0;
+      for (let i = 0; i < 4; i++){
+        const a = q[i], b = q[(i+1)%4];
+        const cr = (b.x-a.x)*(y-a.y) - (b.y-a.y)*(x-a.x);
+        if (!cr) continue;
+        if (!sgn) sgn = Math.sign(cr);
+        else if (Math.sign(cr) !== sgn) return false;
+      }
+      return true;
+    };
+    /* the mock cube: 12 ghost slabs; MUR: one ghost slab of its 11×10 grid */
+    const MG = { gh: 4, gw: 4, ax: 96, ay: 48, cx: murCells.length ? 128 : 200, y0: 48, gap: 19 };
+    const NG = { gh: 11, gw: 10, ax: 62, ay: 31, cx: 322, y0: 96, gap: 0 };
+    let hot = null;                      // the hovered vibrant cell (its info object)
+    const hits = [];                     // { quad, info } for every vibrant cell
+    function cellQuad(geo, r, c, oy){
+      return [slabPt(geo,r,c), slabPt(geo,r,c+1), slabPt(geo,r+1,c+1), slabPt(geo,r+1,c)]
+        .map(p => ({ x: p.x, y: p.y + oy }));
+    }
+    function tracePoly(c2, q){
+      c2.beginPath(); c2.moveTo(q[0].x, q[0].y);
+      q.slice(1).forEach(p => c2.lineTo(p.x, p.y));
+      c2.closePath();
+    }
+    function draw(){
+      if (!st.isConnected) return;
+      const { c } = setupCanvas(cv);
+      hits.length = 0;
+      const dimAll = !!hot;
+      /* mock cube — slab 0 (January) on top, drawn bottom-up */
+      for (let t = 11; t >= 0; t--){
+        const oy = t * MG.gap;
+        const full = [slabPt(MG,0,0), slabPt(MG,0,MG.gw), slabPt(MG,MG.gh,MG.gw), slabPt(MG,MG.gh,0)]
+          .map(p => ({ x: p.x, y: p.y + oy }));
+        c.globalAlpha = dimAll ? .35 : 1;
+        tracePoly(c, full);
+        c.fillStyle = "rgba(214,205,184,.15)"; c.fill();
+        c.strokeStyle = "rgba(168,158,138,.45)"; c.lineWidth = 1; c.stroke();
+        c.globalAlpha = 1;
+        for (const cell of mockCells){
+          if (cell.t !== t) continue;
+          const q = cellQuad(MG, MG.gh - 1 - cell.lat, cell.lon, oy);
+          const isHot = hot === cell;
+          hits.push({ quad: q, info: cell });
+          c.globalAlpha = dimAll && !isHot ? .15 : 1;
+          tracePoly(c, q);
+          c.fillStyle = isHot ? "#c4503a" : "#dd8b4e"; c.fill();
+          c.strokeStyle = isHot ? "#b8860b" : "#c4503a";
+          c.lineWidth = isHot ? 2 : 1; c.stroke();
+          c.globalAlpha = 1;
+        }
+      }
+      c.font = "11px Georgia, serif"; c.fillStyle = "#7b7260";
+      const lbl1 = "the mini store — 12 months, stacked";
+      c.fillText(lbl1, MG.cx - c.measureText(lbl1).width/2, MG.y0 + 11*MG.gap + MG.ay*2 + 22);
+      /* NASA slab, only if a real read happened */
+      if (murCells.length){
+        const full = [slabPt(NG,0,0), slabPt(NG,0,NG.gw), slabPt(NG,NG.gh,NG.gw), slabPt(NG,NG.gh,0)];
+        c.globalAlpha = dimAll ? .35 : 1;
+        tracePoly(c, full);
+        c.fillStyle = "rgba(214,205,184,.15)"; c.fill();
+        c.strokeStyle = "rgba(168,158,138,.45)"; c.lineWidth = 1; c.stroke();
+        c.globalAlpha = 1;
+        for (const cell of murCells){
+          const q = cellQuad(NG, NG.gh - 1 - cell.lat, cell.lon, 0);
+          const isHot = hot === cell;
+          hits.push({ quad: q, info: cell });
+          c.globalAlpha = dimAll && !isHot ? .15 : 1;
+          tracePoly(c, q);
+          c.fillStyle = isHot ? "#c4503a" : "#dd8b4e"; c.fill();
+          c.strokeStyle = isHot ? "#b8860b" : "#c4503a";
+          c.lineWidth = isHot ? 2 : 1; c.stroke();
+          c.globalAlpha = 1;
+        }
+        c.fillStyle = "#7b7260"; c.font = "11px Georgia, serif";
+        const ts = [...new Set(murCells.map(x => x.t))];
+        const lbl2 = "NASA's store — time slab" + (ts.length > 1 ? "s" : "");
+        const lbl3 = `${ts.slice(0,3).join(", ")} of 1,289`;
+        c.fillText(lbl2, NG.cx - c.measureText(lbl2).width/2, NG.y0 + NG.ay*2 + 20);
+        c.fillText(lbl3, NG.cx - c.measureText(lbl3).width/2, NG.y0 + NG.ay*2 + 34);
+      }
+    }
+    function defaultLine(){
+      hoverLine.innerHTML = cells.length
+        ? `<b>${cells.length}</b> chunk${cells.length === 1 ? "" : "s"} fetched, out of 141,982 — ` +
+          `<b>hover a lit cell</b> for its file` +
+          (SES.otherReads ? ` · playground reads on other stores aren't drawn` : ``)
+        : `read something first — your pulls will light up here ` +
+          `(the reading step, or the playground)`;
+    }
+    cv.style.cursor = "default";
+    cv.addEventListener("mousemove", ev => {
+      const r = cv.getBoundingClientRect();
+      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+      let found = null;
+      for (let i = hits.length - 1; i >= 0; i--)
+        if (inQuad(hits[i].quad, mx, my)){ found = hits[i].info; break; }
+      if (found === hot) return;
+      hot = found;
+      draw();
+      if (hot) hoverLine.innerHTML = `<span class="z mono">analysed_sst/${esc(hot.key.replace(/^analysed_sst\//, ""))}</span>` +
+        ` · <span class="f">${hot.bytes ? fmtB(hot.bytes) : "size unknown"}</span> — ` +
+        (hot.store === "mock" ? "local mini store" : "NASA's store on S3");
+      else defaultLine();
+    });
+    cv.addEventListener("mouseleave", () => { if (hot){ hot = null; draw(); defaultLine(); } });
+    defaultLine();
+    draw();
+  }
+});
+
+/* ---- 9 · the format landscape — all four on one page ------------------------ */
+step({
+  act: 3,
+  title: "Where Zarr sits among the formats",
+  copy: "Zarr's neighbours each solve a different problem. <b>Hover a card</b> to focus on it:",
+  mount(st){
+    const inn = el("div", "stage-in fadein");
+    const grid = el("div", "fmtgrid");
+    inn.appendChild(grid);
+    const cap = el("div", "caption",
+      "files-with-names (Zarr, Parquet) travel well · sealed containers (NetCDF/HDF5) don't");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    function icon(kind){
+      // pixel icons from the inlined library (zarr / cog / netcdf / parquet)
+      const NAME = { zarr: "zarr", cog: "cog", hdf: "netcdf", parquet: "parquet" };
+      return pixIcon(NAME[kind], 64, "margin:1px 0 3px;");
+    }
+    const CARDS = [
+      { kind: "zarr", name: "Zarr", tag: "many small named files",
+        a: "Cuts a grid of numbers into chunk files with computable names.",
+        b: "<b>Shines:</b> huge weather / ocean / satellite cubes in the cloud, many machines reading at once." },
+      { kind: "cog", name: "GeoTIFF (and its cloud cousin, COG)", tag: "one big image file",
+        a: "The standard file for a single map image; the cloud-friendly version arranges " +
+           "its insides so readers can grab one region without the whole file.",
+        b: "<b>Shines:</b> individual satellite images and maps. <b>Struggles:</b> data with " +
+           "more axes than a flat image — like our time × lat × lon cube." },
+      { kind: "hdf", name: "NetCDF / HDF5", tag: "one big scientific container",
+        a: "The classic science formats: the whole cube, metadata and all, sealed in a " +
+           "single clever file.",
+        b: "<b>Shines:</b> archives and laptop analysis. <b>Struggles:</b> over the web — one " +
+           "big file, and everyone contends for it." },
+      { kind: "parquet", name: "Parquet", tag: "Zarr's sibling, for tables",
+        a: "The same cloud trick applied to tables — rows and columns instead of grids " +
+           "of numbers.",
+        b: "<b>Shines:</b> big tabular data (measurements, logs, features). If your data " +
+           "looks like a spreadsheet, this is your Zarr." },
+    ];
+    const cardEls = CARDS.map((C, i) => {
+      const card = el("div", "fmtc");
+      card.appendChild(icon(C.kind));
+      card.appendChild(el("div", "ftag", C.tag));
+      card.appendChild(el("div", "fname", C.name));
+      card.appendChild(el("div", "fline", C.a));
+      card.appendChild(el("div", "fline", C.b));
+      grid.appendChild(card);
+      setTimeout(() => { if (st.isConnected) card.classList.add("in"); }, 150 + i * 220);
+      return card;
+    });
+    /* the hover grammar: the card you're on stays, the rest fade */
+    cardEls.forEach(card => {
+      card.addEventListener("mouseenter", () => cardEls.forEach(x => {
+        x.classList.toggle("dim", x !== card);
+        x.classList.toggle("hot", x === card);
+      }));
+      card.addEventListener("mouseleave", () => cardEls.forEach(x => {
+        x.classList.remove("dim"); x.classList.remove("hot");
+      }));
+    });
+  }
+});
+
+/* ---- 10 · real datasets to explore ----------------------------------------- */
+let PENDING_FILE = null;
+step({
+  act: 3,
+  title: "Real Zarr stores you can open right now",
+  copy: "Every dataset in this story is public — no account, no key. <b>Click one</b> to " +
+        "open it in the playground:",
+  mount(st){
+    const inn = el("div", "stage-in fadein");
+    const grid = el("div", "dsgrid");
+    const DS = [
+      [MUR, "Ocean temperature (MUR)", "this story's real store — every km of sea surface, " +
+        "daily since 2002 · 8.3 TB", "globe"],
+      [GEFS, "35-day weather forecast (NOAA GEFS)", "five axes: forecast start × 31 parallel " +
+        "runs × lead time × lat × lon · sharded v3 · 49 TB", "clock_wait"],
+      [CMIP6, "World climate runs (CMIP6)", "the 80 MB-chunk climate archive from the " +
+        "all-or-nothing step — model temperature 1850–2014", "cube"],
+      [WSF, "Where humans built things (WSF)", "world settlement footprint at 10 m — " +
+        "92,000 chunks · 8 TB", "chunks_grid"],
+    ];
+    for (const [f, name, desc, glyph] of DS){
+      const cardEl = el("button", "dscard");
+      cardEl.innerHTML = `<div class="dn">${name}</div><div class="dd">${desc}</div>` +
+        `<div class="dgo">open in the playground →</div>`;
+      const dn = cardEl.querySelector(".dn");
+      dn.style.cssText = "display:flex; align-items:center; gap:9px;";
+      dn.prepend(pixIcon(glyph, 28, "flex:none;"));
+      cardEl.onclick = () => {
+        PENDING_FILE = f;
+        P.set && P.set("file", f);
+        go(steps.length - 1);
+      };
+      grid.appendChild(cardEl);
+    }
+    inn.appendChild(grid);
+    st.appendChild(inn);
+  }
+});
+
+/* ---- 11 · playground -------------------------------------------------------- */
+step({
+  act: 4,
+  title: "Your turn: open any Zarr store",
+  copy: "Pick a store, choose an array, drag the gold bars, and read. It starts on the " +
+        "instant <b>mini practice store</b> — the cloud stores are one chip away.",
+  mount(st){
+    st.appendChild(playground());
+  }
+});
+
+/* ================================================================
+   the playground (final step)
+   ================================================================ */
+function playground(){
+  const root = el("div", "pg fadein");
+  const L = el("div", "pgL"), R = el("div", "pgR");
+  root.appendChild(L); root.appendChild(R);
+  const inputRow = el("div"); inputRow.style.cssText = "display:flex; gap:6px;";
+  const inp = el("input"); inp.type = "text"; inp.spellcheck = false;
+  inp.placeholder = "s3://bucket/store.zarr · https://…/store.zarr · /local/path";
+  const goB = el("button", "small primary", "Load");
+  inputRow.appendChild(inp); inputRow.appendChild(goB);
+  L.appendChild(inputRow);
+  const chips = el("div", "chips");
+  L.appendChild(chips);
+  const sel = el("select");
+  L.appendChild(sel);
+  const dims = el("div", "dims");
+  L.appendChild(dims);
+  const est = el("div", "pgEst", "–");
+  L.appendChild(est);
+  const btnRow = el("div"); btnRow.style.cssText = "display:flex; gap:6px;";
+  const readB = el("button", "small primary", "Read this slice");
+  btnRow.appendChild(readB);
+  L.appendChild(btnRow);
+  const log = el("div", "pgNarr", DEMO
+    ? "demo mode — no probe daemon, so only canned stores are loaded"
+    : "pick a store and read something — the cube shows every chunk it touches");
+  L.appendChild(log);
+  const cwrap = el("div", "cwrap");
+  const cv = el("canvas", "cube");
+  cwrap.appendChild(cv);
+  R.appendChild(cwrap);
+  const legend = el("div", "caption",
+    `<span class="z">selection</span> · <span class="f">fetched</span> · <span class="g">cache</span>` +
+    ` — drag the gold bars to move the window · caps: 64 files / 4M numbers per read`);
+  R.appendChild(legend);
+
+  const PRESETS = [
+    ["mini practice store · instant", MOCK],
+    ["ocean temp · 3-D · 8.3 TB", MUR],
+    ["forecast · 5-D · sharded", GEFS],
+    ["climate run · 80 MB chunks", CMIP6],
+    ["settlements · 92k chunks · 8 TB", WSF],
+  ];
+  const S = { file: null, tree: null, node: null, idx: [], win: [0,1,0,1],
+              cells: new Map(), img: null, imgWin: null, reading: false };
+  const planeOf = () => { const nd = S.node.shape.length; return [nd-2, nd-1]; };
+  const say = html => { log.innerHTML = html; };
+
+  function draw(){
+    if (!S.node) return;
+    const a = S.node, [d0, d1] = planeOf();
+    const gh = gridOf(a, d0), gw = gridOf(a, d1);
+    const depth = a.shape.length > 2 ? gridOf(a, 0) : 0;
+    drawIso(cv, { gh, gw, slabs: Math.min(4, depth), cells: S.cells,
+      maxW: 420,
+      outline: [S.win[0]/a.shape[d0], S.win[1]/a.shape[d0],
+                S.win[2]/a.shape[d1], S.win[3]/a.shape[d1]],
+      img: S.img, imgWin: S.imgWin,
+      labelU: `${a.dims[d1]} → ${fmtN(gw)} chunks`,
+      labelV: `← ${a.dims[d0]} — ${fmtN(gh)} chunks`,
+      labelD: depth ? `↓ ${a.dims[0]}` : null,
+      note: gh*gw > 130*130 ? "grid too fine to draw 1:1 — fetched chunks get dots" : null });
+  }
+
+  function spanOf(d){
+    const a = S.node, ch = a.chunks || a.shape, [d0, d1] = planeOf();
+    const c = Math.max(1, ch[d]);
+    if (d === d0) return [Math.floor(S.win[0]/c), Math.floor((S.win[1]-1)/c)];
+    if (d === d1) return [Math.floor(S.win[2]/c), Math.floor((S.win[3]-1)/c)];
+    const i = clamp(S.idx[d], 0, a.shape[d]-1);
+    return [Math.floor(i/c), Math.floor(i/c)];
+  }
+  function estObjects(){
+    const a = S.node;
+    let total = 1;
+    for (let d = 0; d < a.shape.length; d++){ const [lo,hi] = spanOf(d); total *= hi-lo+1; }
+    if (a.inner_chunks){
+      const [d0, d1] = planeOf();
+      let ratio = Math.ceil(Math.min(a.chunks[d0], S.win[1]-S.win[0]) / a.inner_chunks[d0]);
+      ratio *= Math.ceil(Math.min(a.chunks[d1], S.win[3]-S.win[2]) / a.inner_chunks[d1]);
+      total *= Math.max(1, ratio);
+    }
+    return total;
+  }
+  function updateEst(){
+    const a = S.node;
+    if (!a) return;
+    const cells = (S.win[1]-S.win[0]) * (S.win[3]-S.win[2]);
+    const objs = estObjects();
+    let outer = 1;
+    for (let d = 0; d < a.shape.length; d++){ const [lo,hi] = spanOf(d); outer *= hi-lo+1; }
+    const over = objs > 64 || cells > 4e6;
+    est.innerHTML = `asking for <b>${fmtN(cells)}</b> numbers (<b>${fmtB(cells*a.itemsize)}</b> raw) · ` +
+      `they live in <b>${fmtN(outer)}</b> ${a.inner_chunks ? "shard" : "chunk"}${outer>1?"s":""}` +
+      (a.inner_chunks ? ` / ~<b>${fmtN(objs)}</b> inner chunks` : "") +
+      (over ? ` <span class="warn">· too big — shrink the gold window (caps: 64 files, 4M numbers)</span>` : "");
+    readB.disabled = over || S.reading || !S.node;
+    markSel();
+    draw();
+  }
+  function markSel(){
+    for (const [k, v] of S.cells) if (v.sel) S.cells.delete(k);
+    const [d0, d1] = planeOf();
+    const [rlo, rhi] = spanOf(d0), [clo, chi] = spanOf(d1);
+    if ((rhi-rlo+1) * (chi-clo+1) > 4000) return;
+    for (let r = rlo; r <= rhi; r++) for (let c = clo; c <= chi; c++){
+      const k = r + "," + c;
+      if (!S.cells.has(k)) S.cells.set(k, { color: "rgba(184,134,11,.45)", line: "#b8860b", sel: true });
+    }
+  }
+
+  function buildDims(){
+    const a = S.node, [d0, d1] = planeOf();
+    dims.innerHTML = "";
+    for (let d = 0; d < a.shape.length; d++){
+      const ch = Math.max(1, (a.chunks || a.shape)[d]);
+      const grid = gridOf(a, d);
+      const isP = d === d0 || d === d1;
+      const row = el("div", "dimRow");
+      const bar = el("div", "cbar");
+      bar.dataset.dim = d;
+      const shown = Math.min(grid, 40);
+      for (let i = 1; i < shown; i++)
+        bar.appendChild(el("span", "cb")).style.left = (i/shown*100) + "%";
+      bar.appendChild(el("span", isP ? "win" : "ix"));
+      row.appendChild(el("div", "dn",
+        esc(a.dims[d] || "dim" + d) + (isP ? `<span class="tag">${d === d0 ? "rows" : "cols"}</span>` : "")));
+      row.appendChild(bar);
+      row.appendChild(el("div", "num",
+        `${fmtN(a.shape[d])} ÷ ${fmtN(ch)} = ${fmtN(grid)}<br><span class="cur" data-d="${d}"></span>`));
+      dims.appendChild(row);
+      // drag behaviour
+      let start = null, moved = false;
+      const frac = ev => {
+        const r = bar.getBoundingClientRect();
+        return clamp((ev.clientX - r.left) / r.width, 0, 1);
+      };
+      const apply = ev => {
+        const size = a.shape[d], f = frac(ev);
+        if (!isP){ S.idx[d] = Math.min(size-1, Math.floor(f*size)); }
+        else {
+          const isR = d === d0;
+          let lo, hi;
+          if (!moved){
+            const span = isR ? S.win[1]-S.win[0] : S.win[3]-S.win[2];
+            lo = clamp(Math.round(f*size - span/2), 0, size - span); hi = lo + span;
+          } else {
+            const A = Math.min(start, f), B = Math.max(start, f);
+            lo = Math.floor(A*size/ch)*ch;
+            hi = Math.min(size, Math.ceil(B*size/ch)*ch);
+            if (hi <= lo) hi = Math.min(size, lo + ch);
+          }
+          if (isR){ S.win[0] = lo; S.win[1] = hi; } else { S.win[2] = lo; S.win[3] = hi; }
+        }
+        S.img = null;
+        updateBars(); updateEst();
+      };
+      bar.addEventListener("pointerdown", ev => {
+        bar.setPointerCapture(ev.pointerId);
+        start = frac(ev); moved = false; apply(ev); ev.preventDefault();
+      });
+      bar.addEventListener("pointermove", ev => { if (start != null){ moved = true; apply(ev); } });
+      bar.addEventListener("pointerup", () => start = null);
+      bar.addEventListener("pointercancel", () => start = null);
+    }
+    updateBars();
+  }
+  function updateBars(){
+    const a = S.node, [d0, d1] = planeOf();
+    dims.querySelectorAll(".cbar").forEach(bar => {
+      const d = +bar.dataset.dim, size = a.shape[d];
+      const wm = bar.querySelector(".win, .ix");
+      const lbl = dims.querySelector(`[data-d="${d}"]`);
+      if (d === d0 || d === d1){
+        const lo = d === d0 ? S.win[0] : S.win[2], hi = d === d0 ? S.win[1] : S.win[3];
+        wm.style.left = (lo/size*100) + "%";
+        wm.style.width = Math.max(1.2, (hi-lo)/size*100) + "%";
+        if (lbl) lbl.textContent = `${fmtN(lo)}–${fmtN(hi)}`;
+      } else {
+        wm.style.left = (S.idx[d]/size*100) + "%";
+        if (lbl) lbl.textContent = `@ ${fmtN(S.idx[d])}`;
+      }
+    });
+  }
+
+  function setArray(path){
+    const a = arrOf(S.tree, path);
+    if (!a) return;
+    S.node = a;
+    S.idx = a.shape.map(s => Math.floor(s/2));
+    S.cells.clear(); S.img = null;
+    const [d0, d1] = planeOf();
+    const ch = a.chunks || a.shape;
+    let r0 = Math.floor(a.shape[d0]/2/Math.max(1,ch[d0])) * Math.max(1,ch[d0]);
+    let c0 = Math.floor(a.shape[d1]/2/Math.max(1,ch[d1])) * Math.max(1,ch[d1]);
+    S.win = [r0, Math.min(a.shape[d0], r0+ch[d0]), c0, Math.min(a.shape[d1], c0+ch[d1])];
+    for (let i = 0; i < 40 && (estObjects() > 16 || (S.win[1]-S.win[0])*(S.win[3]-S.win[2]) > 3.5e6); i++){
+      if (S.win[1]-S.win[0] >= S.win[3]-S.win[2] && S.win[1]-S.win[0] > 1)
+        S.win[1] = S.win[0] + Math.max(1, Math.floor((S.win[1]-S.win[0])/2));
+      else if (S.win[3]-S.win[2] > 1)
+        S.win[3] = S.win[2] + Math.max(1, Math.floor((S.win[3]-S.win[2])/2));
+      else break;
+    }
+    buildDims(); updateEst();
+  }
+
+  async function load(file){
+    say(`reading <span class="key">${esc(file)}</span>…`);
+    chips.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.f === file));
+    inp.value = file;
+    let t;
+    try { t = await loadTree(file); if (!t) throw new Error("demo mode: only the canned presets load"); }
+    catch(e){ say(`<span style="color:var(--miss)">couldn't open it: ${esc(e.message)}</span>`); return; }
+    if (!root.isConnected) return;
+    S.file = file; S.tree = t;
+    const arrs = t.arrays.filter(a => a.shape.length >= 2);
+    if (!arrs.length){ say("no 2-D+ arrays in this store"); return; }
+    sel.innerHTML = arrs.map(a =>
+      `<option value="${esc(a.path)}">${esc(a.path)} — ${a.shape.join("×")} ${esc(a.dtype)}</option>`).join("");
+    const pick = arrs.find(a => a.path === t.default_var) || arrs[0];
+    sel.value = pick.path;
+    setArray(pick.path);
+    say(`opened with one metadata read: <b>${t.n_arrays}</b> arrays` +
+      ` — no data downloaded yet` +
+      (file === MOCK ? ` · this is the local mini twin, so reads are instant` : ""));
+  }
+
+  async function read(){
+    if (S.reading || !S.node) return;
+    S.reading = true; readB.disabled = true;
+    const a = S.node, [d0, d1] = planeOf();
+    say("fetching the chunks your slice touches…");
+    let res;
+    try {
+      res = DEMO && S.file === MOCK ? (await sleep(150), demoSliceMock())
+        : DEMO ? (() => { throw new Error("demo mode — reads on this store need the live probe"); })()
+        : await api(`/slice?file=${encodeURIComponent(S.file)}&var=${encodeURIComponent(a.path)}` +
+            `&plane=${d0},${d1}&idx=${S.idx.join(",")}` +
+            `&r0=${S.win[0]}&r1=${S.win[1]}&c0=${S.win[2]}&c1=${S.win[3]}`);
+    } catch(e){
+      say(`<span style="color:var(--miss)">${esc(e.message)}</span>`);
+      S.reading = false; updateEst(); return;
+    }
+    if (!root.isConnected) return;
+    bump(res.cost, "playground read (" + (S.file || "").split("/").pop() + ")", S.file === MOCK);
+    if (S.file === MOCK || S.file === MUR)
+      recordTouches(res.touched, S.file === MOCK ? "mock" : "mur");
+    else SES.otherReads++;                 // the receipt cube notes these aren't drawn
+    for (const t of res.touched){
+      const cc = keyToCoords(a, t.key);
+      if (cc) S.cells.set(cc[d0] + "," + cc[d1], { color: t.cached ? "#2f9e57" : "#1f8fb8" });
+    }
+    S.img = sliceImage(res);
+    S.imgWin = [S.win[0]/a.shape[d0], S.win[1]/a.shape[d0],
+                S.win[2]/a.shape[d1], S.win[3]/a.shape[d1]];
+    const got = res.cost.net_bytes;
+    say(S.file === MOCK
+      ? `read <span class="sz">${fmtB(got)}</span> from ${res.cost.requests} local file` +
+        `${res.cost.requests>1?"s":""} in <b>${Math.max(1, Math.round(res.cost.ms))} ms</b> — ` +
+        `free: this store lives on disk`
+      : got === 0
+      ? `all <b>from cache</b> — <span class="sz">0 bytes</span> traveled, ${Math.round(res.cost.ms)} ms`
+      : `asked <span class="sz">${fmtB(res.logical_bytes)}</span> · got ` +
+        `<span class="sz">${fmtB(got)}</span> in <b>${res.cost.requests}</b> ` +
+        `request${res.cost.requests>1?"s":""} (${(res.cost.ms/1000).toFixed(1)} s)` +
+        (a.inner_chunks && got < a.chunk_logical_bytes/4
+          ? " — <b>sharding</b> kept it small"
+          : got > res.logical_bytes*3 ? " — <b>all-or-nothing</b>: whole chunks travel" : ""));
+    S.reading = false;
+    updateEst();
+  }
+
+  for (const [label, f] of PRESETS){
+    const c = el("button", "chip", label);
+    c.dataset.f = f;
+    c.onclick = () => load(f);
+    chips.appendChild(c);
+  }
+  goB.onclick = () => inp.value.trim() && load(inp.value.trim());
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") goB.onclick(); });
+  sel.onchange = () => setArray(sel.value);
+  readB.onclick = read;
+  const ro = new ResizeObserver(() => draw());
+  ro.observe(cwrap);
+  /* deep-linked ?file= must work on a COLD load too: under the app,
+     fused.params may not carry ad-hoc query params, so read the real URL
+     first (same trick the ?step= boot uses). */
+  const qsFile = new URLSearchParams(location.search).get("file");
+  load(PENDING_FILE || qsFile || (P.get && P.get("file")) || MOCK);
+  PENDING_FILE = null;
+  return root;
+}
+
+/* ================================================================
+   engine
+   ================================================================ */
+const stage = $("#stage");
+let cur = -1;
+function go(i){
+  i = clamp(i, 0, steps.length - 1);
+  if (i === cur) return;
+  cur = i;
+  const s = steps[i];
+  stage.innerHTML = "";
+  const kick = $("#kicker");
+  kick.textContent = "";
+  /* act badge glyph — negative vertical margins keep the line box (and the
+     header height) exactly where it was */
+  kick.appendChild(pixIcon(ACT_ICON[s.act], 18,
+    "display:inline-block; vertical-align:middle; margin:-5px 7px -3px 0;"));
+  kick.appendChild(document.createTextNode(`act ${s.act + 1} · ${ACT[s.act]}`));
+  $("#title").textContent = s.title;
+  $("#copy").innerHTML = s.copy;
+  const ln = $("#learn");
+  ln.textContent = LEARN[s.act][0];
+  ln.href = LEARN[s.act][1];
+  ["#title", "#copy"].forEach(q => {
+    $(q).classList.remove("fadein"); void $(q).offsetWidth; $(q).classList.add("fadein");
+  });
+  s.mount(stage);
+  $("#pn").textContent = `Part ${i + 1} of ${steps.length}`;
+  $("#pt").textContent = ACT[s.act];
+  const dots = $("#pdots"); dots.innerHTML = "";
+  steps.forEach((_, j) => {
+    const d = el("i", j === i ? "on" : (j < i ? "past" : ""));
+    d.addEventListener("click", () => go(j));
+    dots.appendChild(d);
+  });
+  $("#back").disabled = i === 0;
+  $("#next").textContent = i === 0 ? "Start →" : (i === steps.length - 1 ? "The end" : "Next →");
+  $("#next").disabled = i === steps.length - 1;
+  P.set && P.set("step", String(i));
+  footNote();
+}
+$("#back").addEventListener("click", () => go(cur - 1));
+$("#next").addEventListener("click", () => go(cur + 1));
+document.addEventListener("keydown", e => {
+  if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.key === "ArrowRight" || e.key === " "){ e.preventDefault(); go(cur + 1); }
+  if (e.key === "ArrowLeft"){ e.preventDefault(); go(cur - 1); }
+});
+
+(async function boot(){
+  if (DEMO) banner(`<b>demo mode</b> — not inside the FusedRender app, so this page can't spawn its ` +
+    `Python probe. Structure and byte counts are canned copies of values measured on 2026-07-20; ` +
+    `open via FusedRender for live requests.`);
+  else ensureDaemon().then(() => { loadTree(MOCK); loadTree(MUR); });   // warm the metadata early
+  // deep-link: ?step=N works both standalone and under /render?path=…&step=N
+  const qsStep = new URLSearchParams(location.search).get("step");
+  go(parseInt(qsStep ?? (P.get && P.get("step")) ?? "0", 10) || 0);
+})();
+</script>
+</body>
+</html>
