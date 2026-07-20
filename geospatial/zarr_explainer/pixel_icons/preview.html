@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel icon lab — Zarr explainer</title>
+<style>
+  :root {
+    --paper:#f6f2e9; --card:#fffdf8; --line:#e4dccb; --line2:#d6cdb8;
+    --ink:#28231a; --dim:#7b7260; --mut:#a89e8a; --gold:#b8860b;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .wrap { max-width:1240px; margin:0 auto; padding:34px 28px 60px; }
+  .kicker { font-size:11.5px; letter-spacing:1.6px; text-transform:uppercase;
+            color:var(--gold); font-weight:700; }
+  h1 { font-family:Georgia,"Iowan Old Style","Times New Roman",serif;
+       font-size:29px; margin:4px 0 6px; }
+  .sub { color:var(--dim); max-width:640px; margin-bottom:20px; }
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:22px; }
+  .toolbar .lbl { font-size:11.5px; letter-spacing:.8px; text-transform:uppercase;
+                  color:var(--mut); font-weight:700; margin-right:4px; }
+  button.chip { font:600 12.5px -apple-system,sans-serif; padding:6px 14px;
+                border-radius:999px; border:1px solid var(--line2); cursor:pointer;
+                background:var(--card); color:var(--dim); }
+  button.chip:hover { color:var(--ink); border-color:var(--mut); }
+  button.chip.on { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+
+  .sect { font-family:Georgia,serif; font-size:17px; margin:26px 0 10px;
+          border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(268px, 1fr));
+          gap:14px; }
+  .cardi { background:var(--card); border:1px solid var(--line); border-radius:14px;
+           padding:16px 16px 12px; transition:opacity .18s, box-shadow .18s,
+           border-color .18s; }
+  /* hover grammar: hovering one card dims the others */
+  .grid:hover .cardi { opacity:.35; }
+  .grid:hover .cardi:hover { opacity:1; border-color:var(--gold);
+           box-shadow:0 3px 14px rgba(184,134,11,.14); }
+  .cardi .nm { font-family:Georgia,serif; font-size:16px; margin-bottom:2px; }
+  .cardi .ds { font-size:12px; color:var(--dim); min-height:34px; margin-bottom:10px; }
+  .row { display:flex; align-items:flex-end; gap:14px; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .cell .sz { font-size:10px; color:var(--mut); font-variant-numeric:tabular-nums; }
+  canvas { display:block; image-rendering:pixelated; }
+  .big { margin-top:12px; padding-top:12px; border-top:1px dashed var(--line); }
+  footer { margin-top:36px; color:var(--mut); font-size:12px; }
+  code { background:#f0e9d8; border:1px solid var(--line); border-radius:5px;
+         padding:1px 5px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">Design lab</div>
+  <h1>Pixel icon lab — Zarr explainer</h1>
+  <div class="sub">Pixelated / dithered icon set for the explainer. Every glyph is
+    painted on a 16–32&nbsp;px logical grid with ordered-dither shading, then scaled
+    with hard pixels. Hover a card to focus it; toggle the palette to check contrast.</div>
+
+  <div class="toolbar">
+    <span class="lbl">Palette</span>
+    <button class="chip on" data-pal="paper">Paper (default)</button>
+    <button class="chip" data-pal="thermal">Thermal accent</button>
+  </div>
+
+  <div id="gallery"></div>
+
+  <footer>
+    Embed: <code>&lt;script src="pixel_icons/icons.js"&gt;&lt;/script&gt;</code> then
+    <code>PixelIcons.draw('zarr', canvas, {size:96, palette:'paper'})</code>
+    &nbsp;·&nbsp; <span id="status"></span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  /* Load icons.js from beside this page. Works for file://, /view/<abs>,
+     and /render?path=<abs> (which doesn't resolve relative siblings). */
+  function loadIcons(cb) {
+    var src = "icons.js";
+    var q = new URLSearchParams(location.search).get("path");
+    if (location.pathname.indexOf("/render") === 0 && q) {
+      src = "/api/fs/raw?path=" +
+            encodeURIComponent(q.replace(/\/[^/]*$/, "") + "/icons.js");
+    }
+    var s = document.createElement("script");
+    s.src = src; s.onload = cb;
+    s.onerror = function(){ document.getElementById("status").textContent =
+      "failed to load icons.js from " + src; };
+    document.head.appendChild(s);
+  }
+  loadIcons(main);
+  function main(){
+  const GROUPS = [
+    ["Format cards", [
+      ["zarr", "Chunked cube — 3×3 grid of blocks, one gold (the chunk you fetch)"],
+      ["cog", "One big raster file with its overview pyramid inside"],
+      ["netcdf", "Classic container box with stacked layers under a lid"],
+      ["parquet", "Columnar bars segmented into row groups"]
+    ]],
+    ["Story glyphs", [
+      ["globe", "Pixel world map — real continents from the mock-store land mask"],
+      ["cube", "Isometric data cube with dithered faces"],
+      ["chunk", "A single tile with its gold index tag"],
+      ["chunks_grid", "4×4 tile grid — one fetched (blue), one cached (green)"],
+      ["shard", "Many chunk tiles packed into one file, gold index at the end"],
+      ["folder", "A store is just a folder"],
+      ["file_json", "Metadata file — braces and a gold key:value"],
+      ["download", "Bytes streaming down into a tray"],
+      ["receipt", "Till receipt with a gold total"],
+      ["clock_wait", "Waiting on a full download"],
+      ["bolt_fast", "Range-request fast path"],
+      ["link_out", "Learn-more, opens elsewhere"],
+      ["bulb", "The core idea"]
+    ]],
+    ["Act badges (aliases, palette-shifted)", [
+      ["act_data", "Act I — the data (gold cube)"],
+      ["act_idea", "Act II — the idea (bulb)"],
+      ["act_files", "Act III — the files (gold folder)"],
+      ["act_world", "Act IV — the world (gold globe)"]
+    ]]
+  ];
+
+  let palette = "paper";
+  const gallery = document.getElementById("gallery");
+
+  function build() {
+    gallery.innerHTML = "";
+    for (const [title, items] of GROUPS) {
+      const h = document.createElement("div");
+      h.className = "sect"; h.textContent = title;
+      gallery.appendChild(h);
+      const g = document.createElement("div");
+      g.className = "grid";
+      for (const [name, desc] of items) {
+        const card = document.createElement("div");
+        card.className = "cardi";
+        card.innerHTML =
+          '<div class="nm">' + name + '</div><div class="ds">' + desc + '</div>';
+        const row = document.createElement("div");
+        row.className = "row";
+        for (const s of [48, 96]) {
+          const cell = document.createElement("div"); cell.className = "cell";
+          const cv = document.createElement("canvas");
+          PixelIcons.draw(name, cv, { size: s, palette });
+          cell.appendChild(cv);
+          const lb = document.createElement("div");
+          lb.className = "sz"; lb.textContent = s + "px";
+          cell.appendChild(lb);
+          row.appendChild(cell);
+        }
+        card.appendChild(row);
+        const big = document.createElement("div"); big.className = "big cell";
+        const cv = document.createElement("canvas");
+        PixelIcons.draw(name, cv, { size: 192, palette });
+        big.appendChild(cv);
+        const lb = document.createElement("div");
+        lb.className = "sz"; lb.textContent = "192px";
+        big.appendChild(lb);
+        card.appendChild(big);
+        g.appendChild(card);
+      }
+      gallery.appendChild(g);
+    }
+    document.getElementById("status").textContent =
+      PixelIcons.names.length + " icons · palette: " + palette;
+  }
+
+  document.querySelectorAll("button.chip").forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll("button.chip").forEach(x => x.classList.remove("on"));
+      b.classList.add("on");
+      palette = b.dataset.pal;
+      build();
+    });
+  });
+
+  build();
+
+  /* self-check hook for headless verification */
+  window.__iconCheck = function () {
+    const out = {};
+    document.querySelectorAll("canvas").forEach((cv, i) => {
+      const ctx = cv.getContext("2d");
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      let n = 0;
+      for (let j = 3; j < d.length; j += 4) if (d[j] > 0) n++;
+      const name = cv.closest(".cardi").querySelector(".nm").textContent;
+      out[name + ":" + i] = n;
+    });
+    return out;
+  };
+  }
+})();
+</script>
+</body>
+</html>

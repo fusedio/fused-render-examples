@@ -33,6 +33,7 @@ key, noted in their README).
 | [buildings_to_hexagons](geospatial/buildings_to_hexagons/) | Interactive explainer: every building on Earth as H3 hexes |
 | [hexagon_lab](geospatial/hexagon_lab/) | Three-tab H3 sandbox: buildings, terrain rasters, release diffs ([live](https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e)) |
 | [cog_range_viewer](geospatial/cog_range_viewer/) | Stream a huge COG with HTTP range requests, no download |
+| [zarr_explainer](geospatial/zarr_explainer/) | An interactive 12-step guide to the Zarr format, on real NASA ocean data |
 | [cog_overview_pyramid](geospatial/cog_overview_pyramid/) | Every resolution level of a COG as an interactive 3D pyramid |
 | [overture_census_isochrone](geospatial/overture_census_isochrone/) | Isochrone + Overture POIs + Census income on H3 hexes |
 | [zonal_stats_hex](geospatial/zonal_stats_hex/) | Who lives at what elevation — Census × DEM, joined in DuckDB |
