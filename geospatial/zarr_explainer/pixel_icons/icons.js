@@ -210,27 +210,24 @@
     }
   };
 
-  /* ---- cog : one big raster file with overview pyramid (24 grid) ---- */
+  /* ---- cog : overview pyramid — 3 stacked levels of tiles,
+       full-res at the bottom, smaller toward the top (24 grid) ---- */
   ICONS.cog = {
     grid: 24,
     paint(p) {
-      // page body with a clean folded corner (fold x13..16, y1..4)
-      p.rect(3, 1, 14, 22, "card");
-      p.rect(13, 1, 4, 4, "paper");   // cut the corner
-      p.hline(3, 1, 10, "ink");       // top edge up to the fold
-      p.vline(3, 1, 22, "ink");       // left
-      p.hline(3, 22, 14, "ink");      // bottom
-      p.vline(16, 4, 19, "ink");      // right, below the fold
-      p.px(13, 1, "ink"); p.px(14, 2, "ink"); p.px(15, 3, "ink"); // diagonal
-      p.hline(13, 4, 4, "ink");       // fold underside
-      p.px(13, 2, "line"); p.px(13, 3, "line"); p.px(14, 3, "line"); // flap
-      // overview pyramid: 3 rasters, small on top
-      p.dither(9, 6, 3, 2, "fetch", 9, "fetchSoft");
-      p.frame(8, 5, 5, 4, "ink");
-      p.dither(8, 11, 6, 3, "fetch", 9, "fetchSoft");
-      p.frame(7, 10, 8, 5, "ink");
-      p.dither(6, 17, 9, 3, "fetch", 9, "fetchSoft");
-      p.frame(5, 16, 11, 5, "ink");
+      const levels = [
+        { x: 1, y: 16, w: 22, h: 7, cols: 4 },  // full resolution
+        { x: 4, y: 9,  w: 16, h: 6, cols: 3 },  // 2x overview
+        { x: 8, y: 3,  w: 8,  h: 5, cols: 2 }   // 4x overview
+      ];
+      for (const L of levels) {
+        p.dither(L.x, L.y, L.w, L.h, "fetch", 6, "fetchSoft");
+        // tile cuts: vertical seams + one horizontal seam per level
+        for (let i = 1; i < L.cols; i++)
+          p.vline(L.x + Math.round(i * L.w / L.cols), L.y, L.h, "card");
+        p.hline(L.x, L.y + (L.h >> 1), L.w, "card");
+        p.frame(L.x, L.y, L.w, L.h, "ink");
+      }
     }
   };
 
@@ -256,24 +253,26 @@
     }
   };
 
-  /* ---- parquet : columnar bars (24 grid) ---- */
+  /* ---- parquet : a table partitioned into row groups — gold header row,
+       column seams, horizontal bands = the partitions (24 grid) ---- */
   ICONS.parquet = {
     grid: 24,
     paint(p) {
-      const bars = [
-        { x: 3,  h: 13, c: "fetch" },
-        { x: 8,  h: 18, c: "gold" },
-        { x: 13, h: 9,  c: "fetch" },
-        { x: 18, h: 15, c: "fetch" }
-      ];
-      for (const b of bars) {
-        const y = 21 - b.h;
-        p.dither(b.x, y, 4, b.h, b.c, 9, b.c === "gold" ? "goldSoft" : "fetchSoft");
-        p.frame(b.x, y, 4, b.h, "ink");
-        // row-group segment lines
-        for (let yy = y + 4; yy < 20; yy += 4) p.hline(b.x, yy, 4, "ink");
+      const x = 2, w = 20, cols = [7, 14];   // column seam offsets
+      // header row
+      p.rect(x, 2, w, 4, "goldSoft");
+      p.dither(x, 2, w, 4, "gold", 5, "goldSoft");
+      p.frame(x, 2, w, 4, "ink");
+      // three row-group bands below, separated by paper gaps
+      const groups = [{ y: 7, h: 5 }, { y: 13, h: 5 }, { y: 19, h: 3 }];
+      for (const g of groups) {
+        p.rect(x, g.y, w, g.h, "card");
+        p.dither(x, g.y, w, g.h, "fetchSoft", 4, "card");
+        p.frame(x, g.y, w, g.h, "ink");
+        for (const cx of cols) p.vline(x + cx, g.y, g.h, "ink");
       }
-      p.hline(1, 22, 22, "ink"); // baseline
+      // header column seams line up with the bands' seams
+      for (const cx of cols) p.vline(x + cx, 2, 4, "ink");
     }
   };
 
