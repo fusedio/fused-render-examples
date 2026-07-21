@@ -113,9 +113,9 @@ def main(mode: str = "wind", la1: float = 0.0, la2: float = 0.0,
             return None, None
 
     if mode == "global":
-        # full-planet snapshot via OpenSky — cached 60s so a session shares
-        # one snapshot per minute; authed quota 4000/day, anon 400
-        cached = cache_get("opensky", 60)
+        # full-planet snapshot via OpenSky — cached 120s (60s polling could burn
+        # 5760 credits/day vs the 4000 authed allowance); authed 4000/day, anon 400
+        cached = cache_get("opensky", 120)
         if cached:
             return cached
         d, quota = opensky_fetch("https://opensky-network.org/api/states/all")

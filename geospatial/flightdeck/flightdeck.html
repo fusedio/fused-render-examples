@@ -246,6 +246,28 @@ window.dispatchEvent(new Event("planeviewer-ready"));
   .apt-tip::before { display: none; }
   .live-tip { color: var(--muted) !important; font-weight: 400; }
   .plane-div { pointer-events: none; }
+  #loadpill {
+    position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 1290;
+    display: flex; align-items: center; gap: 9px; max-width: min(86vw, 620px);
+    background: oklch(0.14 0.014 250 / 0.94); border: 1px solid var(--border); border-radius: 999px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 6px 14px;
+  }
+  #loadpill[hidden] { display: none; }
+  #loadpill.err { border-color: oklch(0.62 0.19 30 / 0.6); color: oklch(0.8 0.15 45); }
+  #loadpill.err .lp-spin { display: none; }
+  #loadpill .lp-retry {
+    all: unset; cursor: pointer; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+    color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 999px; padding: 2px 9px; margin-left: 4px;
+  }
+  #loadpill .lp-retry:hover { background: oklch(0.78 0.14 75 / 0.1); }
+  #loadpill .lp-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .lp-spin {
+    width: 11px; height: 11px; border-radius: 50%; flex: none;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: lp-rot 0.9s linear infinite;
+  }
+  @keyframes lp-rot { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .lp-spin { animation: none; border-top-color: var(--accent); } }
   .map-overlay {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     pointer-events: none; z-index: 800;
@@ -336,6 +358,15 @@ window.dispatchEvent(new Event("planeviewer-ready"));
     display: flex; align-items: center; gap: 8px;
   }
   section.panel h2 svg { color: var(--faint); }
+  /* ---------- real airframe photo ---------- */
+  .ac-photo { margin: 4px 0 14px; }
+  .ac-photo img {
+    display: block; width: 100%; max-height: 220px; object-fit: cover;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+  }
+  .ac-photo figcaption { font-family: var(--mono); font-size: 10px; color: var(--faint); margin-top: 5px; text-align: right; }
+  .ac-photo figcaption a { color: var(--muted); text-decoration: none; }
+  .ac-photo figcaption a:hover { color: var(--ink); }
   /* ---------- drawing sheet ---------- */
   .sheet {
     position: relative; border: 1px solid var(--border); border-radius: 14px;
@@ -523,6 +554,7 @@ window.dispatchEvent(new Event("planeviewer-ready"));
 
 <div class="map-wrap">
   <div id="map"></div>
+  <div id="loadpill" role="status" aria-live="polite" hidden><span class="lp-spin"></span><span id="loadpill-txt"></span></div>
   <div class="map-fade" aria-hidden="true"></div>
   <div class="map-overlay" id="map-overlay" hidden>
     <div class="inner">
@@ -991,7 +1023,7 @@ function liveBadge(d) {
     const fl = d.live.alt_ft ? "FL" + String(Math.round(d.live.alt_ft / 100)).padStart(3, "0") : "";
     const kt = d.live.gs_kt ? Math.round(d.live.gs_kt) + " kt" : "";
     const radar = d.live.lat != null
-      ? ` <a class="badge live-link" target="_top" href="${FD("radar")}?lat=${d.live.lat.toFixed(3)}&lon=${d.live.lon.toFixed(3)}&z=8">◎ TRACK ON RADAR</a>`
+      ? ` <a class="badge live-link" target="_top" href="${FD("radar")}?lat=${d.live.lat.toFixed(3)}&lon=${d.live.lon.toFixed(3)}&z=8${d.live.hex ? "&sel=" + encodeURIComponent(d.live.hex) : ""}">◎ TRACK ON RADAR</a>`
       : "";
     return `<span class="badge live">AIRBORNE ${esc([fl, kt].filter(Boolean).join(" · "))}</span>${radar}`;
   }
@@ -1046,6 +1078,38 @@ const MODEL_MAP = {
   AT75: "AT76", AT76: "AT76",
   E190: "E190", E195: "E190",
 };
+
+// Real airframe photo (planespotters, via radar.py mode="photo"). Hidden until the
+// async fetch lands; only emitted when we have a live hex to look the airframe up by.
+function acPhoto(d) {
+  if (!(d.live && d.live.hex)) return "";
+  return `<figure class="ac-photo reveal" id="ac-photo-${d._slot}" hidden>
+    <img alt="Photo of this aircraft" loading="lazy">
+    <figcaption></figcaption>
+  </figure>`;
+}
+
+// reqCounter-guarded so a photo from a previous search can't land on a new result.
+function loadPhotos(list, token) {
+  for (const d of list) {
+    if (!(d.live && d.live.hex)) continue;
+    const slot = d._slot, hex = d.live.hex;
+    fused.runPython("./pages/radar.py", { mode: "photo", callsign: hex }).then(r => {
+      if (token !== reqCounter) return;            // a newer search owns the screen
+      if (!r || !r.ok || !r.src) return;           // 404 / error → render nothing (silent)
+      const fig = document.getElementById("ac-photo-" + slot);
+      if (!fig) return;
+      const img = fig.querySelector("img");
+      img.onerror = () => { fig.hidden = true; };
+      img.src = r.src;
+      const credit = r.credit ? "© " + esc(r.credit) + " · " : "";
+      fig.querySelector("figcaption").innerHTML = r.link
+        ? `<a target="_blank" rel="noopener" href="${esc(r.link)}">${credit}planespotters.net</a>`
+        : credit + "planespotters.net";
+      fig.hidden = false;
+    }).catch(() => {});
+  }
+}
 
 function aircraftSheet(d) {
   const ac = d.aircraft;
@@ -1194,6 +1258,7 @@ function flightBlock(d) {
       ${logoImg(d.airline.iata)}
       <span class="sub">${esc(d.airline.name || "")} ${flagEmoji(d.airline.country_iso)}</span>
     </div>
+    ${acPhoto(d)}
     ${aircraftSheet(d)}
     ${statsBand(d)}
     <div class="duo reveal" style="animation-delay:180ms">${amenitiesPanel(d)}${airlinePanel(d)}</div>
@@ -1276,6 +1341,8 @@ function renderResults(list) {
   window.PlaneViewer?.disposeAll();
   $("#map-overlay").hidden = true;
   document.body.classList.add("has-route");
+  clearSlowTimers();
+  setPill(false);
   strip.hidden = false;
   strip.innerHTML = stripHTML(list);
   main.innerHTML = `
@@ -1284,21 +1351,37 @@ function renderResults(list) {
     <p class="foot">Route &amp; registration: <span>adsbdb.com</span> · live position: <span>airplanes.live</span> · weather: <span>open-meteo.com</span> · aircraft pick ${list.some(d => d.aircraft && /estimated/.test(d.aircraft.source || "")) ? "estimated from fleet + route length — " : ""}amenities are typical for the airline, not booking-grade. Drawings are generic type-accurate schematics; 3D models are community-sourced (CGTrader) and may not match the operator's livery.</p>`;
   runCountUps(main);
   mountModelViewers(main);
+  loadPhotos(list, reqCounter);
   try {
     localStorage.setItem("fd:lastFlight", JSON.stringify({ flight: list[0].callsign_iata || list[0].query, ts: Date.now() }));
   } catch (e) {}
 }
 
+/* status pill over the map (mirrors sky.html's #loadpill) + slow-fetch reassurance timers */
+let slowTimer1 = 0, slowTimer2 = 0;
+function clearSlowTimers() { clearTimeout(slowTimer1); clearTimeout(slowTimer2); }
+function setPill(mode, html) {
+  const el = $("#loadpill");
+  if (!mode) { el.hidden = true; el.classList.remove("err"); return; }
+  el.classList.toggle("err", mode === "err");
+  $("#loadpill-txt").innerHTML = html;
+  el.hidden = false;
+}
+
 function renderError(msgs) {
   $("#map-overlay").hidden = true;
-  document.body.classList.remove("has-route");
+  document.body.classList.add("has-route");  // shrink the map so the error banner is on-screen
+  clearSlowTimers();
+  setPill("err", msgs.map(([q, m]) => `${esc(q)} — ${esc(m)}`).join(" · "));
   $("#strip").hidden = false;
   $("#strip").innerHTML = msgs.map(([q, m]) =>
-    `<div class="error-banner"><span class="code">${esc(q)}</span><span>${esc(m)}</span></div>`).join("");
+    `<div class="error-banner" role="alert"><span class="code">${esc(q)}</span><span>${esc(m)}</span></div>`).join("");
 }
 
 function renderLoading(f, v) {
   $("#map-overlay").hidden = true;
+  document.body.classList.add("has-route");  // shrink the map so the skeleton strip is on-screen
+  setPill("load", `resolving ${esc(f)}${v ? " and " + esc(v) : ""}…`);
   const strip = $("#strip");
   strip.hidden = false;
   strip.innerHTML = `<div class="strip-row">
@@ -1318,6 +1401,8 @@ function wireChips(root) {
 let idleCounter = 0;
 function renderIdle() {
   document.body.classList.remove("has-route");
+  clearSlowTimers();
+  setPill(false);
   $("#strip").hidden = true;
   $("#strip").innerHTML = "";
   $("#main").innerHTML = "";
@@ -1356,6 +1441,17 @@ async function load() {
 
   const my = ++reqCounter;
   renderLoading(flight || vs, flight ? vs : "");
+  // slow-fetch reassurance: 8s = still working, 25s = offer a retry. reqCounter-guarded so rapid re-searches don't stack.
+  clearSlowTimers();
+  slowTimer1 = setTimeout(() => {
+    if (my !== reqCounter || $("#loadpill").hidden) return;
+    $("#loadpill-txt").textContent += " — still working, slow feeds";
+  }, 8000);
+  slowTimer2 = setTimeout(() => {
+    if (my !== reqCounter || $("#loadpill").hidden) return;
+    $("#loadpill-txt").innerHTML = `taking longer than usual <button class="lp-retry" type="button">RETRY</button>`;
+    $("#loadpill .lp-retry").onclick = () => { clearSlowTimers(); lastLoadedKey = null; load(); };
+  }, 25000);
   let res;
   try {
     res = await fused.runPython("./flight.py", { flight: flight || vs, vs: flight ? vs : "" });

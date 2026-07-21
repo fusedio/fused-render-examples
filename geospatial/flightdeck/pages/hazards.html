@@ -185,6 +185,30 @@ function FD(view) {
     opacity: 0; transition: opacity 0.3s; pointer-events: none;
   }
   #toast.show { opacity: 1; }
+  #loadpill {
+    position: absolute; left: 50%; top: 62px; transform: translateX(-50%); z-index: 1290;
+    display: flex; align-items: center; gap: 9px;
+    background: oklch(0.14 0.014 250 / 0.94); border: 1px solid var(--border); border-radius: 999px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 6px 14px;
+  }
+  #loadpill[hidden] { display: none; }
+  .lp-spin {
+    width: 11px; height: 11px; border-radius: 50%; flex: none;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: lp-rot 0.9s linear infinite;
+  }
+  @keyframes lp-rot { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .lp-spin { animation: none; border-top-color: var(--accent); } }
+  #connchip {
+    position: absolute; left: 50%; top: 96px; transform: translateX(-50%); z-index: 1291;
+    display: flex; align-items: center; gap: 7px; white-space: nowrap;
+    background: oklch(0.14 0.014 250 / 0.94); border: 1px solid oklch(0.62 0.19 30 / 0.6); border-radius: 999px;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: oklch(0.8 0.15 45); padding: 5px 13px;
+  }
+  #connchip[hidden] { display: none; }
+  #connchip .cc-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: oklch(0.68 0.19 30); animation: cc-blink 1s steps(2) infinite; }
+  @keyframes cc-blink { 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { #connchip .cc-dot { animation: none; } }
 
   @media (max-width: 720px) {
     #panel { width: calc(100vw - 24px); top: auto; bottom: 12px; height: 42vh; }
@@ -220,12 +244,12 @@ function FD(view) {
 <header>
   <div class="brand">✈ FLIGHTDECK <span>EARTH OPS</span></div>
   <div class="chips" id="chips">
-    <button class="chip" data-layer="quakes">QUAKES <b>0</b></button>
-    <button class="chip" data-layer="fires">FIRES <b>0</b></button>
-    <button class="chip" data-layer="storms">STORMS <b>0</b></button>
-    <button class="chip" data-layer="volcanoes">VOLCANOES <b>0</b></button>
-    <button class="chip" data-layer="jet">JET STREAM <b>0</b></button>
-    <button class="chip" data-layer="traffic">TRAFFIC <b>0</b></button>
+    <button class="chip" data-layer="quakes">QUAKES <b>—</b></button>
+    <button class="chip" data-layer="fires">FIRES <b>—</b></button>
+    <button class="chip" data-layer="storms">STORMS <b>—</b></button>
+    <button class="chip" data-layer="volcanoes">VOLCANOES <b>—</b></button>
+    <button class="chip" data-layer="jet">JET STREAM <b>—</b></button>
+    <button class="chip" data-layer="traffic">TRAFFIC <b>—</b></button>
   </div>
   <div class="hspacer"></div>
   <svg id="ring" viewBox="0 0 22 22"><circle class="bgc" cx="11" cy="11" r="8.5"/><circle class="fgc" cx="11" cy="11" r="8.5" stroke-dasharray="53.4" stroke-dashoffset="0"/></svg>
@@ -238,7 +262,9 @@ function FD(view) {
   </nav>
 </header>
 <div id="map"></div>
-<div id="toast"></div>
+<div id="toast" role="alert"></div>
+<div id="loadpill" role="status" aria-live="polite" hidden><span class="lp-spin"></span><span id="loadpill-txt"></span></div>
+<div id="connchip" role="alert" hidden><span class="cc-dot"></span><span id="connchip-txt">connection lost — retrying</span></div>
 
 <div id="legend">
   <span class="sw" style="background:var(--faint)"></span><span class="sw" style="background:var(--muted)"></span><span class="sw" style="background:var(--accent)"></span>
@@ -550,14 +576,27 @@ function toast(msg) {
 /* ---------------- fetch loop ---------------- */
 let busy = false, reqCounter = 0, firstLoad = true, lastFetchAt = performance.now();
 
+function setPill(on) { $("#loadpill").hidden = !on; if (on) $("#loadpill-txt").textContent = "loading hazards…"; }
+let connFail = 0;
+function connOk() { connFail = 0; $("#connchip").hidden = true; }
+function connBad() { if (++connFail >= 2) $("#connchip").hidden = false; }
+// first payload never arrived: swap the panel's "loading…" slots for a retrying notice instead of loading forever
+function failFeeds() {
+  if (!firstLoad) return;  // keep the last good picture once we have one
+  $("#q-big").innerHTML = `<div class="p-empty" role="alert">couldn't reach hazard feeds — retrying</div>`;
+  $("#s-list").innerHTML = `<div class="p-empty" role="alert">couldn't reach hazard feeds — retrying</div>`;
+}
+
 async function refresh() {
   if (busy) return;
   busy = true;
+  setPill(true);
   const my = ++reqCounter;
   try {
     const d = await fused.runPython("./hazards.py", {});
     if (my !== reqCounter) return;
-    if (!d || !d.ok) { if (firstLoad) toast("could not reach hazard feeds — retrying"); return; }
+    if (!d || !d.ok) { connBad(); failFeeds(); if (firstLoad) toast("could not reach hazard feeds — retrying"); return; }
+    connOk();
     const c = d.counts || {};
     setCount("quakes", c.quakes || 0); setCount("fires", c.wildfires || 0);
     setCount("storms", c.storms || 0); setCount("volcanoes", c.volcanoes || 0);
@@ -580,9 +619,12 @@ async function refresh() {
     if (firstLoad) { firstLoad = false; reveal(); }
   } catch (e) {
     console.warn("hazards fetch failed", e);
+    connBad();
+    failFeeds();
     if (my === reqCounter && firstLoad) toast("could not reach hazard feeds — retrying");
   } finally {
     busy = false;
+    setPill(false);
   }
 }
 

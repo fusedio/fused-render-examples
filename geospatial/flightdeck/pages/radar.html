@@ -135,6 +135,13 @@ function FD(view) {
     border: 1px solid var(--border); background: var(--surface);
   }
   .p-photo figcaption { font-family: var(--mono); font-size: 9.5px; color: var(--faint); margin-top: 4px; text-align: right; }
+  .p-actions { display: flex; gap: 8px; margin: 0 0 14px; }
+  .p-follow {
+    all: unset; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 7px; padding: 5px 12px;
+  }
+  .p-follow:hover { color: var(--ink); background: var(--surface-2); }
+  .p-follow.on { background: var(--accent); color: oklch(0.17 0.02 75); border-color: var(--accent); font-weight: 600; }
   .p-apt-links { display: flex; gap: 8px; margin: -8px 0 16px; }
   .p-apt-links a {
     flex: 1; text-align: center; font-family: var(--mono); font-size: 10.5px; color: var(--muted);
@@ -192,6 +199,32 @@ function FD(view) {
     opacity: 0; transition: opacity 0.3s; pointer-events: none;
   }
   #toast.show { opacity: 1; }
+  #loadpill {
+    position: absolute; left: 50%; top: 62px; transform: translateX(-50%); z-index: 1290;
+    display: flex; align-items: center; gap: 9px;
+    background: oklch(0.14 0.014 250 / 0.94); border: 1px solid var(--border); border-radius: 999px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 6px 14px;
+  }
+  #loadpill[hidden] { display: none; }
+  .lp-spin {
+    width: 11px; height: 11px; border-radius: 50%; flex: none;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: lp-rot 0.9s linear infinite;
+  }
+  @keyframes lp-rot { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .lp-spin { animation: none; border-top-color: var(--accent); } }
+  #connchip {
+    position: absolute; left: 50%; top: 96px; transform: translateX(-50%); z-index: 1291;
+    display: flex; align-items: center; gap: 7px; white-space: nowrap;
+    background: oklch(0.14 0.014 250 / 0.94); border: 1px solid oklch(0.62 0.19 30 / 0.6); border-radius: 999px;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: oklch(0.8 0.15 45); padding: 5px 13px;
+  }
+  #connchip[hidden] { display: none; }
+  #connchip .cc-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: oklch(0.68 0.19 30); animation: cc-blink 1s steps(2) infinite; }
+  @keyframes cc-blink { 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { #connchip .cc-dot { animation: none; } }
+  .ago { font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+  .ago.stale { color: var(--accent); }
   @media (max-width: 720px) { #panel { width: calc(100vw - 24px); } #search { width: 130px; } }
 
   /* ---------- watch strip (cross-page) ---------- */
@@ -221,7 +254,8 @@ function FD(view) {
   <div class="brand">✈ FLIGHTDECK <span>RADAR</span></div>
   <input id="search" placeholder="callsign or airport (DEL, BOM…)" spellcheck="false">
   <div class="hspacer"></div>
-  <div class="hstat"><b id="n">0</b> aircraft in view</div>
+  <div class="hstat"><b id="n">scanning…</b><span id="nunit" hidden> aircraft in view</span></div>
+  <span class="ago" id="ago"></span>
   <svg id="ring" viewBox="0 0 22 22"><circle class="bgc" cx="11" cy="11" r="8.5"/><circle class="fgc" cx="11" cy="11" r="8.5" stroke-dasharray="53.4" stroke-dashoffset="0"/></svg>
   <nav class="xnav">
     <a class="home" target="_top" href="#" data-view="airport.html">AIRPORT →</a>
@@ -233,7 +267,9 @@ function FD(view) {
 </header>
 <div id="map"></div>
 <div id="sweep"></div>
-<div id="toast"></div>
+<div id="toast" role="alert"></div>
+<div id="loadpill" role="status" aria-live="polite" hidden><span class="lp-spin"></span><span id="loadpill-txt"></span></div>
+<div id="connchip" role="alert" hidden><span class="cc-dot"></span><span id="connchip-txt">connection lost — retrying</span></div>
 
 <div id="panel">
   <div class="p-scroll">
@@ -243,6 +279,7 @@ function FD(view) {
       <button class="p-close" id="p-close" aria-label="Close panel">✕</button>
     </div>
     <div class="p-air" id="p-air"></div>
+    <div class="p-actions"><button class="p-follow" id="p-follow" type="button">◎ follow</button></div>
     <figure class="p-photo" id="p-photo" hidden>
       <img id="p-photo-img" alt="Photo of this aircraft" loading="lazy">
       <figcaption id="p-photo-credit"></figcaption>
@@ -292,9 +329,23 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 const planes = new Map();   // hex -> {marker, data, trail:[[lat,lon,alt,ts]], anim}
 window.planes = planes;     // exposed for the tour's scripted radar drive
 let selHex = fused.params.get("sel") || null;
-let scanTimer = null, scanBusy = false, lastScanAt = 0;
-let trailLine = null;
+let scanTimer = null, scanBusy = false, lastScanAt = 0, lastScanWall = 0;
+let scanStarted = 0, scanToken = 0;
+let trailGroup = null;
 let firstScan = true;
+let follow = fused.params.get("follow") === "1";
+let followPan = false;  // set true right before a programmatic follow-pan so moveend won't re-scan
+
+// shared loading + connection-health language (mirrors sky.html)
+function setPill(on, txt) {
+  const el = $("#loadpill");
+  if (on) { $("#loadpill-txt").textContent = txt; el.hidden = false; }
+  else el.hidden = true;
+}
+let connFail = 0;
+function connOk() { connFail = 0; $("#connchip").hidden = true; }
+function connBad() { if (++connFail >= 2) $("#connchip").hidden = false; }
+setPill(true, "loading aircraft…");
 
 const PLANE_PATH = "M0,-7.5 L1.6,-4.2 L7,0.8 L7,2.4 L1.4,0.9 L1.2,4.6 L3,6.2 L3,7.4 L0,6.6 L-3,7.4 L-3,6.2 L-1.2,4.6 L-1.4,0.9 L-7,2.4 L-7,0.8 L-1.6,-4.2 Z";
 
@@ -324,19 +375,31 @@ function radiusNm() {
 
 /* ---------------- scan loop ---------------- */
 async function scan() {
-  if (scanBusy) return;
+  if (scanBusy) {
+    // a runPython promise that never settles (buggy/old server runtime at page
+    // boot) would deadlock the loop forever — abandon it and let this tick retry
+    if (performance.now() - scanStarted > 40000) { scanBusy = false; scanToken++; connBad(); }
+    else return;
+  }
   scanBusy = true;
+  scanStarted = performance.now();
+  const my = ++scanToken;
   try {
     const c = map.getCenter();
     const res = await fused.runPython("./radar.py", {
       mode: "scan", lat: +c.lat.toFixed(4), lon: +((c.lng + 540) % 360 - 180).toFixed(4), radius_nm: radiusNm(),
     });
-    if (!res || !res.ok) return;
+    if (my !== scanToken) return; // abandoned zombie call — a newer scan owns the state
+    if (!res || !res.ok) { connBad(); return; }
+    connOk();
     lastScanAt = performance.now();
+    lastScanWall = Date.now();
+    setPill(false);
+    $("#nunit").hidden = false;
     ingest(res.aircraft || []);
     $("#n").textContent = res.count;
-  } catch (e) { console.warn("scan failed", e); }
-  finally { scanBusy = false; }
+  } catch (e) { if (my === scanToken) { console.warn("scan failed", e); connBad(); } }
+  finally { if (my === scanToken) scanBusy = false; }
 }
 
 function ingest(list) {
@@ -371,7 +434,7 @@ function ingest(list) {
     map.removeLayer(p.marker);
     planes.delete(hex);
   }
-  if (selHex && seen.has(selHex)) { $("#panel").classList.remove("lost"); refreshPanel(); }
+  if (selHex && seen.has(selHex)) { $("#panel").classList.remove("lost"); refreshPanel(); doFollow(); }
   if (firstScan) { firstScan = false; if (selHex && planes.has(selHex)) select(selHex, true); }
 }
 
@@ -403,6 +466,7 @@ async function select(hex, quiet) {
   drawTrail(p);
   routeLookup(p.data.cs);
   photoLookup(hex);
+  doFollow();
 }
 
 let photoToken = 0;
@@ -531,11 +595,33 @@ function drawSpark(p) {
 }
 
 function drawTrail(p) {
-  if (trailLine) { map.removeLayer(trailLine); trailLine = null; }
+  // rebuild the whole group each call — cleared on deselect so no layers leak
+  if (trailGroup) { map.removeLayer(trailGroup); trailGroup = null; }
   if (!p || p.trail.length < 2) return;
-  trailLine = L.polyline(p.trail.map(t => [t[0], t[1]]), {
-    color: "oklch(0.72 0.09 230)", weight: 2.5, opacity: 0.85, interactive: false, dashArray: null,
-  }).addTo(map);
+  const segs = [];
+  for (let i = 1; i < p.trail.length; i++) {
+    const a = p.trail[i - 1], b = p.trail[i];
+    const alt = ((a[2] || 0) + (b[2] || 0)) / 2;  // mean altitude of the two endpoints
+    segs.push(L.polyline([[a[0], a[1]], [b[0], b[1]]], {
+      color: altColor(alt), weight: 2.5, opacity: 0.85, interactive: false,
+    }));
+  }
+  trailGroup = L.layerGroup(segs).addTo(map);
+}
+
+/* ---------------- follow mode ---------------- */
+function doFollow() {
+  if (!follow || !selHex) return;
+  const p = planes.get(selHex);
+  if (!p) return;
+  followPan = true;
+  map.panTo([p.data.lat, p.data.lon], { animate: true, duration: 0.5 });
+}
+function setFollow(on) {
+  follow = on;
+  fused.params.set("follow", on ? "1" : "");
+  $("#p-follow").classList.toggle("on", on);
+  if (on) doFollow();
 }
 
 /* ---------------- search ---------------- */
@@ -565,11 +651,15 @@ function toast(msg) {
 
 /* ---------------- wiring ---------------- */
 $("#p-close").addEventListener("click", () => select(null));
+$("#p-follow").classList.toggle("on", follow);
+$("#p-follow").addEventListener("click", () => setFollow(!follow));
+map.on("dragstart", () => { if (follow) setFollow(false); });  // user takes the wheel → follow off
 for (const a of document.querySelectorAll(".xnav a")) a.href = FD(a.dataset.view);
 map.on("moveend", () => {
   fused.params.set("lat", map.getCenter().lat.toFixed(3));
   fused.params.set("lon", map.getCenter().lng.toFixed(3));
   fused.params.set("z", String(map.getZoom()));
+  if (followPan) { followPan = false; return; }  // programmatic follow-pan — don't trigger a fresh scan
   clearTimeout(scanTimer); scanTimer = setTimeout(scan, 500);
 });
 
@@ -578,6 +668,12 @@ map.on("moveend", () => {
   requestAnimationFrame(ring);
   const k = Math.min(1, (performance.now() - lastScanAt) / SCAN_MS);
   $("#ring .fgc").style.strokeDashoffset = String(53.4 * (1 - k));
+  if (lastScanWall) {
+    const s = Math.round((Date.now() - lastScanWall) / 1000);
+    const ago = $("#ago");
+    ago.textContent = "updated " + (s <= 1 ? "just now" : s + "s ago");
+    ago.classList.toggle("stale", s > 60);
+  }
 })();
 
 setInterval(scan, SCAN_MS);

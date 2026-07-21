@@ -213,6 +213,23 @@ function FD(view) {
   }
   @keyframes lp-rot { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .lp-spin { animation: none; border-top-color: var(--accent); } }
+  #connchip {
+    position: absolute; left: 50%; top: 96px; transform: translateX(-50%); z-index: 1291;
+    display: flex; align-items: center; gap: 7px; white-space: nowrap;
+    background: oklch(0.14 0.014 250 / 0.94); border: 1px solid oklch(0.62 0.19 30 / 0.6); border-radius: 999px;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: oklch(0.8 0.15 45); padding: 5px 13px;
+  }
+  #connchip[hidden] { display: none; }
+  #connchip .cc-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: oklch(0.68 0.19 30); animation: cc-blink 1s steps(2) infinite; }
+  @keyframes cc-blink { 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { #connchip .cc-dot { animation: none; } }
+  #skyago {
+    position: absolute; left: 12px; top: 62px; z-index: 1290;
+    font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+    background: oklch(0.14 0.014 250 / 0.9); border: 1px solid var(--border); border-radius: 7px; padding: 4px 9px;
+  }
+  #skyago[hidden] { display: none; }
+  #skyago.stale { color: var(--accent); border-color: var(--accent-dim); }
   #quotapill {
     position: absolute; left: 50%; top: 98px; transform: translateX(-50%); z-index: 1290;
     display: flex; align-items: center; gap: 8px;
@@ -272,8 +289,10 @@ function FD(view) {
   <div id="rain-time"></div>
 </div>
 <div id="windleg">WIND 10 m — particles drift with the live field · <b id="windmax">—</b> strongest sampled</div>
-<div id="toast"></div>
-<div id="loadpill" hidden><span class="lp-spin"></span><span id="loadpill-txt"></span></div>
+<div id="toast" role="alert"></div>
+<div id="loadpill" role="status" aria-live="polite" hidden><span class="lp-spin"></span><span id="loadpill-txt"></span></div>
+<div id="connchip" role="alert" hidden><span class="cc-dot"></span><span id="connchip-txt">connection lost — retrying</span></div>
+<div id="skyago" hidden></div>
 <div id="quotapill" hidden></div>
 
 <div id="panel">
@@ -352,6 +371,28 @@ function loadState(key, on) {
   $("#loadpill-txt").textContent = "loading " + [...loading].join(" · ") + "…";
   el.hidden = false;
 }
+
+// connection-health: surface a persistent chip after 2 consecutive failed flight polls.
+let connFail = 0, lastGoodAt = 0;
+function connOk() {
+  connFail = 0;
+  lastGoodAt = Date.now();
+  $("#connchip").hidden = true;
+}
+function connBad() {
+  connFail++;
+  if (connFail >= 2) $("#connchip").hidden = false;
+}
+// freshness readout for the kept-last-good picture; amber once stale (>60s).
+function updateAgo() {
+  const el = $("#skyago");
+  if (!lastGoodAt) { el.hidden = true; return; }
+  const s = Math.round((Date.now() - lastGoodAt) / 1000);
+  el.textContent = "updated " + (s <= 1 ? "just now" : s + "s ago");
+  el.classList.toggle("stale", s > 60);
+  el.hidden = false;
+}
+setInterval(updateAgo, 1000);
 
 // OpenSky daily allowance is 4000 credits (authed); warn under 10% (400).
 // Hidden entirely while healthy. Called on every fetchGlobal response.
@@ -463,13 +504,16 @@ async function fetchGlobal() {
   try {
     const r = await fused.runPython("./sky.py", { mode: "global" });
     if (r) updateQuotaPill(r.quota, r.stale);
-    if (r && r.ok && active.has("flights")) {
-      globalPlanes = r.planes;
-      $("#n-fl").textContent = r.count.toLocaleString("en-IN");
-      ensureGlobalCanvas();
-      drawGlobal();
-    }
-  } catch (e) { console.warn("global fetch failed", e); }
+    if (r && r.ok) {
+      connOk();
+      if (active.has("flights")) {
+        globalPlanes = r.planes;
+        $("#n-fl").textContent = r.count.toLocaleString("en-IN");
+        ensureGlobalCanvas();
+        drawGlobal();
+      }
+    } else if (!r || !r.ok) { connBad(); }
+  } catch (e) { console.warn("global fetch failed", e); connBad(); }
   finally { globalBusy = false; loadState("flights", false); }
 }
 function clearGlobal() {
@@ -521,7 +565,9 @@ async function scanFlights() {
       mode: "scan", lat: +c.lat.toFixed(3), lon: +((c.lng + 540) % 360 - 180).toFixed(3), radius_nm: radiusNm(),
     });
     if (!active.has("flights")) return;
-    if (!res || !res.ok || !(res.aircraft || []).length) return; // keep last good picture — never blank the sky on a failed scan
+    if (!res || !res.ok) { connBad(); return; } // keep last good picture — never blank the sky on a failed scan
+    connOk();
+    if (!(res.aircraft || []).length) return; // ok but empty region: keep last picture, not a failure
     flLayer.clearLayers();
     flByHex.clear();
     for (const d of res.aircraft || []) {
@@ -537,7 +583,7 @@ async function scanFlights() {
       if (flByHex.has(selHex)) { $("#panel").classList.remove("lost"); refreshPanel(); }
       else $("#panel").classList.add("lost");
     }
-  } catch (e) { console.warn("flight scan failed", e); }
+  } catch (e) { console.warn("flight scan failed", e); connBad(); }
   finally { flBusy = false; loadState("flights", false); }
 }
 
