@@ -4,6 +4,9 @@ Track deforestation inside protected areas: pick a national park, see its annual
 tree-cover loss, cumulative loss, and the share of its year-2000 canopy that's
 gone.
 
+**▶ Live demo:** https://open.fused.io/qnstptjoep3pv4akfzdtsk63hi — runs in the
+browser, no install. (First open cold-starts in ~40s while the compute spins up.)
+
 ![Protected forest monitor](../../assets/forest_carbon_monitor.png)
 
 ## What it demonstrates
