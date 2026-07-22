@@ -29,7 +29,18 @@ uv run tests/check.py --warm
 
 # skip the browser layer (structure + entrypoints only)
 uv run tests/check.py --no-visual
+
+# test EXACTLY what a user clones from main (throwaway worktree of the ref;
+# ignores local edits and the gitignored .env). This is the pre-ship gate — the
+# showcase cards clone from main, so "passes on my branch" is not "works for users".
+uv run tests/check.py --ref origin/main
 ```
+
+> **Why `--ref` exists.** A showcase example once errored for an investor even
+> though it "worked on the author's machine": the fix lived on a branch while the
+> card cloned from `main`, and a gitignored `.env` masked the keyless first-open
+> path. `--ref origin/main` reproduces the real download — no working-tree edits,
+> no local `.env` — so that gap can't reopen silently. Run it before shipping.
 
 Prerequisites: the **FusedRender app running** (its bridge port is auto-detected)
 and **Google Chrome** installed. The harness itself runs under `uv` and pulls its

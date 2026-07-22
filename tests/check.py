@@ -27,10 +27,13 @@ The point of the FRESH copy (via --cold, default on) is to reproduce the
 machine breaks here.
 
 Usage:
-    uv run tests/check.py                 # all projects, cold
+    uv run tests/check.py                 # all projects, cold (the local working tree)
     uv run tests/check.py zonal_stats_hex # one project
     uv run tests/check.py --warm          # reuse existing .cache (faster)
     uv run tests/check.py --no-visual     # skip the browser layer
+    uv run tests/check.py --ref origin/main   # test what users actually clone from
+                                              # main, in a throwaway worktree (no
+                                              # local edits, no gitignored .env)
 
 Prerequisites: the FusedRender app running (its bridge is auto-detected), and
 Google Chrome installed for the visual layer.
@@ -314,8 +317,60 @@ def visual_check(chrome, port, fresh_dir, name, view_html):
 
 # ----------------------------------------------------------------- driver
 
+def _reexec_in_worktree(ref, passthrough):
+    """Re-run this harness against a throwaway git worktree of `ref`, so we test
+    EXACTLY what a user downloads from that ref (e.g. origin/main) — not the local
+    working tree. This is the gap that let a fix pass locally while the pushed
+    `main` an investor cloned still errored. All the checks below are unchanged;
+    they just run against the ref's checkout (which also has no gitignored .env,
+    so key-gated examples exercise their true keyless first-open path)."""
+    tmp = tempfile.mkdtemp(prefix="frx-ref-")
+    wt = os.path.join(tmp, "wt")
+    print(f"── testing ref {ref!r} in a fresh worktree (not the working tree)\n")
+    subprocess.check_call(["git", "-C", REPO, "worktree", "add", "--detach", wt, ref],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        # Same interpreter → same already-installed deps (pychrome, requests).
+        rc = subprocess.call([sys.executable, os.path.join(wt, "tests", "check.py"),
+                              *passthrough])
+        # Screenshots landed in the throwaway worktree; copy them into the real
+        # repo's tests/artifacts before it's removed, so they stay inspectable.
+        wt_art = os.path.join(wt, "tests", "artifacts")
+        if os.path.isdir(wt_art):
+            os.makedirs(ARTIFACTS, exist_ok=True)
+            for f in os.listdir(wt_art):
+                if f.endswith(".png"):
+                    shutil.copy2(os.path.join(wt_art, f), os.path.join(ARTIFACTS, f))
+        return rc
+    finally:
+        subprocess.call(["git", "-C", REPO, "worktree", "remove", "--force", wt],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     args = [a for a in sys.argv[1:]]
+
+    # --ref <gitref> / --ref=<gitref>: test that ref's checkout, then exit.
+    ref = None
+    rest = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--ref":
+            ref = args[i + 1] if i + 1 < len(args) else "origin/main"
+            i += 2
+            continue
+        if a.startswith("--ref="):
+            ref = a.split("=", 1)[1] or "origin/main"
+            i += 1
+            continue
+        rest.append(a)
+        i += 1
+    if ref:
+        sys.exit(_reexec_in_worktree(ref, rest))
+    args = rest
+
     cold = "--warm" not in args
     do_visual = "--no-visual" not in args
     names = [a for a in args if not a.startswith("-")]
