@@ -139,7 +139,10 @@ def _tracts_geojson(state: str, county: str):
 
 
 def _census_key():
-    """Census API key from CENSUS_API_KEY env var or a sibling .env file."""
+    """Census API key from CENSUS_API_KEY env var or a sibling .env file, or
+    None if neither is set. Returning None (rather than raising) lets the page
+    fall back to the bundled demo city instead of hard-erroring on open — see
+    _bundled() and main()."""
     key = os.environ.get("CENSUS_API_KEY")
     if key:
         return key
@@ -148,8 +151,24 @@ def _census_key():
         for line in open(env_path, encoding="utf-8"):
             if line.strip().startswith("CENSUS_API_KEY="):
                 return line.strip().split("=", 1)[1]
-    raise RuntimeError("No Census API key: set CENSUS_API_KEY or add it to .env "
-                       "(free key: https://api.census.gov/data/key_signup.html)")
+    return None
+
+
+# Bundled, key-free demo data. A first-time user opening the example with no
+# Census key still gets a live-looking dashboard for the default city, because
+# its full _fetch_city payload (tracts + demand + cafes) ships in data/<city>.json.
+# Regenerate with tests/../gen_austin.py-style scripts; see README.
+_BUNDLE_DIR = os.path.join(_HERE, "data")
+KEY_SIGNUP = "https://api.census.gov/data/key_signup.html"
+
+
+def _bundled(city: str):
+    """The committed _fetch_city payload for `city`, or None if not bundled."""
+    path = os.path.join(_BUNDLE_DIR, f"{city}.json")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    return None
 
 
 @disk_cache
@@ -326,22 +345,46 @@ def _warm(city: str):
     return {"ready": False}
 
 
+def _needs_key_payload(city: str) -> dict:
+    """Structured 'add a key' response — the page renders it as an inline setup
+    prompt instead of a full-page traceback. Never raised."""
+    return {
+        "needsKey": True,
+        "city": city, "label": CITIES[city][0],
+        "cities": {k: v[0] for k, v in CITIES.items()},
+        "keySignup": KEY_SIGNUP,
+        "message": (
+            f"{CITIES[city][0]} needs a free Census API key to load live. "
+            f"Get one at {KEY_SIGNUP}, then set CENSUS_API_KEY — locally in a "
+            f".env file next to this example, or as a hosted secret — and reopen."
+        ),
+    }
+
+
 def main(city: str = "austin", radius_km: float = RADIUS_KM, step: str = "view") -> dict:
     if city not in CITIES:
         raise ValueError(f"city must be one of {sorted(CITIES)}, got {city!r}")
-    if _HOSTED and not os.environ.get("CENSUS_API_KEY"):
-        # Hosted has no sibling .env (read-only bundle), so the key must be a
-        # provisioned secret. Fail fast at every step with an actionable, hosted-
-        # accurate message instead of raising deep in _fetch_city -> _census_key
-        # (whose "add it to .env" hint doesn't apply on a served page).
-        raise RuntimeError(
-            "CENSUS_API_KEY is not set. Provision it as a hosted secret / env var "
-            "(free key: https://api.census.gov/data/key_signup.html)."
-        )
+
+    key = _census_key()
+    bundle = _bundled(city)
+
     if step == "warm":
+        # Nothing to warm if the city is already servable (bundled demo data or a
+        # filled disk cache) or if there's no key at all — in the keyless case the
+        # view renders the add-a-key prompt rather than polling a doomed fetch.
+        if bundle is not None or os.path.exists(_fetch_city.cache_path(city)) or not key:
+            return {"ready": True}
         return _warm(city)
 
-    data = _fetch_city(city)
+    # step == "view": live fetch when a key is available; otherwise fall back to
+    # the bundled demo city, and only if neither exists ask the user for a key.
+    if key:
+        data = _fetch_city(city)
+    elif bundle is not None:
+        data = bundle
+    else:
+        return _needs_key_payload(city)
+
     tracts, cafes = data["tracts"], data["cafes"]
     _competition(tracts, cafes, float(radius_km))
 
@@ -349,4 +392,5 @@ def main(city: str = "austin", radius_km: float = RADIUS_KM, step: str = "view")
         "city": city, "label": data["label"], "radius_km": float(radius_km),
         "cities": {k: v[0] for k, v in CITIES.items()},
         "tracts": tracts, "cafes": cafes,
+        "cached": key is None,  # True => bundled demo (no live key); UI hints at it
     }

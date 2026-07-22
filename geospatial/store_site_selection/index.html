@@ -72,6 +72,19 @@
     position: absolute; inset: 0; z-index: 900; display: flex; align-items: center;
     justify-content: center; background: rgba(14,17,22,.75); font-size: 14px; color: var(--dim);
   }
+  .statuscard { max-width: 440px; text-align: center; padding: 22px; line-height: 1.5; }
+  .statuscard b { color: var(--text); }
+  .statuscard p { color: var(--dim); margin: 8px 0 14px; }
+  .statuscard a { color: var(--accent2); text-decoration: none; }
+  .statuscard a:hover { text-decoration: underline; }
+  .statusicon { font-size: 22px; margin-bottom: 8px; }
+  .statushint { font-size: 12px; margin-top: 14px; }
+  #demo {
+    display: none; margin-top: 8px; padding: 6px 8px; font-size: 11px; line-height: 1.4;
+    color: var(--accent2); background: rgba(242,193,78,.10);
+    border: 1px solid rgba(242,193,78,.30); border-radius: 6px;
+  }
+  #demo code { font-size: 10.5px; }
   .toggle { display: flex; align-items: center; gap: 6px; color: var(--dim); margin-top: 8px; }
   .cafedot { border-radius: 50%; }
   .leaflet-container { font: inherit; }
@@ -88,6 +101,7 @@
     <div class="card">
       <h2>City</h2>
       <select id="city"></select>
+      <div id="demo">Demo data snapshot — add a Census key (<code>.env</code>) for live data &amp; more cities.</div>
       <div class="toggle"><input type="checkbox" id="showcafes"><label for="showcafes">Show competitor cafes (<span id="ncafes">–</span>)</label></div>
     </div>
     <div class="card">
@@ -222,6 +236,12 @@ function flyTo(geoid) {
   if (l) map.flyToBounds(l.getBounds(), { maxZoom: 13, duration: .8 });
 }
 
+// ---------- city dropdown ----------
+function populateCities(cities, cur) {
+  $("city").innerHTML = Object.entries(cities)
+    .map(([k, v]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${v}</option>`).join("");
+}
+
 // ---------- load a city (one Python call, disk-cached server-side) ----------
 async function loadCity(city) {
   const id = ++reqId;
@@ -243,13 +263,36 @@ async function loadCity(city) {
     }
     d = await fused.runPython("./site_data.py", { city });
   }
-  catch (e) { $("status").textContent = `${e.type || "Error"}: ${e.message}`; throw e; }
+  catch (e) {
+    // Show the failure inline and STOP — never rethrow. A thrown error paints
+    // the app's full-page traceback overlay over the whole example (the exact
+    // first-run failure this example used to hit with no Census key).
+    if (id !== reqId) return;
+    $("status").style.display = "flex";
+    $("status").innerHTML =
+      `<div class="statuscard"><b>Couldn't load ${city}</b>`
+      + `<p>${(e && e.message) || e}</p></div>`;
+    return;
+  }
   if (id !== reqId) return;                    // stale response
+  // No Census key and no bundled data for this city: render an inline setup
+  // prompt instead of a traceback, and still let the user switch cities.
+  if (d && d.needsKey) {
+    populateCities(d.cities, d.city);
+    $("status").style.display = "flex";
+    $("status").innerHTML =
+      `<div class="statuscard"><div class="statusicon">🔑</div>`
+      + `<b>Add a free Census API key</b><p>${d.message}</p>`
+      + `<a href="${d.keySignup}" target="_blank" rel="noopener">Get a free key →</a>`
+      + `<p class="statushint">Or pick <b>Austin</b> above — it ships with bundled `
+      + `demo data, no key needed.</p></div>`;
+    return;
+  }
   DATA = d;
+  // Bundled demo (no live key): tell the user the data is a snapshot.
+  $("demo").style.display = d.cached ? "block" : "none";
   $("ncafes").textContent = d.cafes.length;
-  // city dropdown
-  $("city").innerHTML = Object.entries(d.cities)
-    .map(([k, v]) => `<option value="${k}" ${k===d.city?"selected":""}>${v}</option>`).join("");
+  populateCities(d.cities, d.city);
   // tract polygons
   if (tractLayer) tractLayer.remove();
   layersByGeoid = {};
