@@ -1,5 +1,189 @@
 # Zarr — the guided story (step-driven) — port notes
 
+## Rev 8 (2026-07-21) — steps 5+6 merged: "Reading data: chunks in practice"
+
+**The deck is now 11 steps (0..10).** Old step 5 ("Reading just the chunks
+you need") and old step 6 ("Chunks in practice") were one lesson split in
+two — merged into ONE step at position 5, title **"Reading data: chunks in
+practice"** (`// title TBD — Max may rename` comment beside it). New map:
+0 hook · 1 download · 2 Chunking · 3 Chunk positions · 4 folders ·
+**5 merged reading step** · 6 Sharding · 7 formats · 8 dataset cards ·
+9 playground · 10 receipt (final).
+
+**The merged step — one arc, strictly beat-gated, on the stable-scene cube
+from old step 6:**
+- beat 0 (entry): ghost store + gold ask sliver + the 2.2 MB "you want" bar.
+- beat 1 (click): ONE name chip — `analysed_sst/1242.7.5`, computed live
+  from the MUR tree (`floor(6210/5)=1242` etc., `chunkKey()` on the v2
+  node) — "computed from the position, not looked up".
+- beat 2 (click, centerpiece): the LIVE always-cold S3 read runs front and
+  center (old step 5's pinned dlpanel: /clearcache first, live byte counter
+  off /stats inflight). On arrival: blue MUR box ADDS to the cube, the
+  "store sent" bar uses the MEASURED net_bytes, the Mediterranean patch
+  renders small (110×68) beside the panel, the v2 dot-key footnote lives in
+  this caption. READ_RESULT is gone — produced & consumed inside one mount.
+- beat 3 (click): pink CMIP6 box adds (blue stays) + 80 MB bar + "chunk
+  size is a promise" caption. Button hides.
+- demo paths unchanged in spirit: `?demo=1` (hosted) / `?demo=full` play the
+  measured numbers back at a canned pace, labeled "(canned copy)".
+
+**Deleted:** the 16-chip whole-July mock read (keygrid CSS too), the
+tile-lighting fetch theater, the July paint beat, `ZR.warm()` (its only
+consumer was the July prefetch; `demoSliceMock` stays — the playground demo
+path uses it), module-level `READ_RESULT`, the "8,000× bigger" opt-in
+button. NOTE: the mock cube on the receipt now lights only from playground
+reads on the mini store; its empty-state copy ("the reading step, or the
+playground") still reads true.
+
+**Also:** step 3 gained the mechanics line old beat-1 carried ("a reader
+computes these names and simply fetches those files — no index, no lookup
+service"); CMIP6 dataset card now says "from the reading step" (was
+"all-or-nothing step"); recordTouches/bump wiring intact (receipt lights the
+NASA slab cell after beat 2). Layout note: the stage inner is 822 px — the
+row is cube 372 + gap 18 + right column 420 (panel 300 + 6 + patch 110);
+the first cut (460 col, 150 patch) clipped at the stage edge.
+
+**Verified 2026-07-21** (Playwright chrome headless `--use-angle=metal`,
+1440×830, `/render?path=…&step=N`): 11/11 deep links, 0 pageerrors,
+0 overflow (scroll 830×1440 everywhere). Merged step: 4 beats shot one by
+one; live read cold twice (13 KB→1.7 MB→13 MB in 17.2 s, then 3.4 MB→13 MB
+in 16.6 s; clearcache keeps it honest), measured bar reads 13 MB, blue box
+appears only after arrival, patch paints real thermal Med; receipt in the
+same session shows the lit NASA slab (1242 of 1,289) + ledger row.
+`?demo=full` AND `?demo=1`: all four beats canned + labeled, 0 errors.
+Dataset card → playground (Part 10 of 11) with CMIP6 loaded; playground
+mock read (15 KB / 1 file) lights a receipt cell. Shots: scratchpad
+`merge_shots/`.
+
+## Rev 7 (2026-07-21) — session-4 feedback (16 items)
+
+**Step order changed — the receipt is now the FINAL step:** 0–7 unchanged,
+8 formats, 9 dataset cards, 10 playground, 11 receipt. Steps carry `id:
+"playground"` / `"receipt"`; the dataset cards jump via
+`steps.findIndex(id==="playground")`, NOT `steps.length-1`. The playground's
+Next reads "See your receipt →" (per-step `nextLabel`); the final step's Next
+is "↺ start over" → `go(0)` (no dead "The end"). New act 5 "your receipt"
+(receipt glyph); act 3 "why it matters" badge switched receipt→zarr.
+
+**The big find — the hosted "washed-out cube" (step-11 deep links):** canvas
+is a REPLACED element, so `.pgR canvas { position:absolute; inset:0 }` never
+stretched it — the playground cube always laid out at its intrinsic 300×150
+and drew as a pale patch in the pane's top corner. Fix: explicit
+`width:100%; height:100%`. Companion fixes: `drawIso` now vertically centers
+(flat 2×4 planes used to float at the top) + darker cell strokes; WSF got a
+canned `DEMO_TREES` entry (top 3 pyramid levels, real values measured
+2026-07-21 via the daemon) — it previously had none, so hosted/demo deep links
+to WSF errored "only the canned presets load". All four preset deep links now
+verified live AND demo.
+
+**Test override added:** `?demo=1` emulates the hosted export locally (bridge
+yes, daemon no → `HOSTED=true`), `?demo=full` emulates pure file:// (all
+canned). This is how hosted behavior is exercised without deploying.
+
+Per-step fixes:
+- **0** — subtitle replaced with Max's exact sentence + "the dataset: MUR
+  SST →" link (registry.opendata.aws/mur). Odometer counter replaced by an
+  equation build in the count chip (17,999 × 36,000 → × 6,443 → = 4.17
+  trillion; no digit rolling). Hover grammar rebuilt with NO border boxes:
+  focused component gets a warm glow fill (grid→face, days→slabs,
+  count/bytes→everything), rest dims.
+- **1** — download sim rewritten: scoped refs + one rAF loop (t0 on first
+  frame) so the bar can't race a slow load; bar exaggeration 8×→400× with an
+  on-card note (at 8× it read as frozen — the "hosted flakiness"). The 10 s
+  joke line is now a rotated `.jokepop` sticker at 5 s, anchored to a wrapper
+  AROUND `.oldwin` (the window's `overflow:hidden` clips children), bar
+  visible+running beneath.
+- **2** — the cut is a RATCHET: `targetP = max(targetP, pointer)` — hovering
+  right-to-left never un-cuts. Copy/hints updated ("it only ever cuts
+  forward").
+- **3** — map hover no longer dims the month strip (strip→map dim kept), and
+  it always glows BOTH lat+lon segments (was stale-glow when entering the map
+  after strip/segment hovers).
+- **6** — one stable additive scene (SCENE consts): the store box never
+  changes, beat 2 ADDS the blue MUR chunk, beat 3 ADDS the CMIP6 box while
+  blue stays; ordering store ≫ CMIP6 ≫ MUR ≫ gold ask; fixed canvas-text
+  legend lines appear per beat; canvas 300×264→390×400.
+- **7** — shard definition sentence in the lede ("one bigger file that packs
+  many chunks side by side, with a tiny index at the end…"). hitTest is
+  containing-cell math over the whole grid/strip/table areas — no dead zones
+  between tiles, so no hover flicker (48-sample sweep: 0 misses); ghost dim
+  floor .12→.25. Pre-pack the idle right half carries a "why pack them at
+  all?" text block.
+- **8 (formats)** — fits at 1440×830 (stage is now `flex:1 1 auto;
+  min-height:500px` — fills the viewport instead of fixed 500). Icons redrawn
+  in pixel_icons/icons.js AND re-inlined: `cog` = 3-level overview pyramid of
+  tiles; `parquet` = table with gold header row, column seams, and horizontal
+  row-group bands. preview.html unchanged (reads icons.js).
+
+**Verified 2026-07-21** (Playwright chrome headless `--use-angle=metal`,
+1440×830, `/render?path=…&step=N`, local only per instruction): 12/12 steps
+0 pageerrors 0 overflow; equation frames; 4 chip hovers (no borders, glow+dim);
+bar samples 0.10→0.55 % over 2.5 s + sticker at 5 s; ratchet (right sweep then
+far-left → cut intact) + tile lift; step-3 strip opacity 1 with both segs
+glowing; step-6 three beats stable; step-7 mid-gap hover resolves to a tile;
+step-9 cards → playground (Part 11) with store loaded; all 4 stores deep-linked
+live + `?demo=1` (trees, dim-bars, full-pane cubes); mock read paints in demo;
+receipt lit (16 cells, hover prints `analysed_sst/c/6/3/0 · 15 KB`), start
+over → step 0; `?demo=full` banner + no errors. Shots: scratchpad `s4_shots/`.
+
+## Rev 6 (2026-07-20) — works hosted: browser-side zarr reader, daemon optional
+
+**The bug:** deployed to `open.fused.io`, the mock store never loaded. Root cause:
+every data read went through the local probe daemon (`fused.runPython` → a
+`127.0.0.1:<port>` HTTP server). That only works in the local app, where the
+daemon shares the machine with the browser. On a hosted export `runPython` runs
+in a **remote sandbox**, so every `fetch("http://127.0.0.1:…")` dies with "Failed
+to fetch" — and the old `DEMO = !HAS_FUSED` guard was `false` there (runPython
+*exists*), so it never fell back to canned. Verified live: daemon starts (returns
+a port) but is unreachable from the visitor's browser.
+
+**The fix — one codebase, capability-gated backends (not `HAS_FUSED`):**
+- `MOCK_LIVE = !!window.fused.rawUrl` — the mock store is read **directly in the
+  browser** in BOTH environments. `fused.rawUrl(...)` gives a same-origin,
+  Range-capable `_asset` URL (hosted) / `/api/fs/raw` (local). Bytes are
+  zstd-decoded by an **inlined `fzstd@0.1.1` UMD** (between `FZSTD_INLINE_*`
+  markers; no `</script>` in it — safe to inline like pixel_icons).
+- `S3_LIVE = HAS_FUSED && !HOSTED` — the one real remote-S3 read (step 5 "do it
+  for real") still runs live via the daemon **locally**; hosted plays the
+  measured cost back at a canned pace (`demoSliceMURMed`). `HOSTED =
+  !!window.__FUSED_RENDER__` (the export's manifest seed; `fused.env` is
+  unreliable — see deploy-contract memory).
+- `DEMO = !HAS_BRIDGE` now means only pure `file://` (no bridge) → all canned.
+
+**`ZR` (new module)** — browser reader for the fixed mock store, returns the
+**exact** shapes the daemon's `/tree /ls /rawmeta /slice` produced, so all call
+sites are source-agnostic. `/slice` fetches only the chunks a plane-window
+touches, decodes (C-order strides, generic n-D), assembles native (south-first,
+no `flipDone` — callers flip as before), downsamples ≤160/dim, computes
+vmin/vmax/p2/p98. In-memory chunk cache mirrors the daemon LRU (receipt step +
+replays). `ZR.warm()` prefetches the July slab at boot so step 5 paints instantly.
+`/ls` reads a bundled **`mock_store/mur_sst_mini.zarr/ls_manifest.json`** (full
+200-file list + sizes, generated to match `do_ls`) in one fetch instead of 200
+HEADs.
+
+**Bundling:** added a `<script type="application/fused-bundle">{"include":
+["mock_store/**"]}</script>` manifest in `<head>` so the exporter ships the store
+(computed `rawUrl` paths can't be statically resolved otherwise; whole-folder
+bundling is NOT automatic — the auto-scan shipped 0 assets without this). Files
+are keyed by page-relative path = the `_asset` key = the `rawUrl` key. Dry-run
+`/api/export` → 0 warnings, 203 assets.
+
+**Deployed & verified 2026-07-20** (repoint of the same token
+`mjyttte444gnh4sye2bzjgd5f4`): `_asset` route serves ls_manifest (200 files),
+hero chunk `c/6/2/3` (31232 B, zstd magic `28b52ffd`), zarr.json — all live via
+curl. Served HTML carries fzstd+ZR+MOCK_LIVE and the `__FUSED_RENDER__` seed with
+all 200 asset keys. Reader logic proven correct in node (0 mismatches vs a direct
+block-assembly reference, full plane + boundary-crossing windows). Rendering
+verified headlessly via the **local render route** (`/render?path=…&step=N`,
+CDP — the hosted viewer needs an authenticated session so raw headless gets an
+empty shell): flags correct (`MOCK_LIVE/S3_LIVE/HOSTED`), fzstd loaded, `ZR.slice`
+→ 16 chunks / real −3.9…34.1 °C; steps 0/4/5/8 screenshotted — step 5 clicks
+through all 3 beats and paints a real thermal SST map (35 distinct colors), step
+4 shows the real 200-file tree from the manifest, step 8 the receipt cube.
+CDP notes: use `--remote-allow-origins=*`, pick the `type=="page"` target (not the
+extension bg page), and `--run-all-compositor-stages-before-draw` +
+`captureScreenshot(fromSurface=true)` or the screenshot hangs in headless=new.
+
 ## Rev 5 (2026-07-20) — pixel icon integration (visual garnish only)
 
 `pixel_icons/icons.js` is now **inlined** into `explainer.html` between

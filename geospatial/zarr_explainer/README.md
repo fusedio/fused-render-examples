@@ -1,6 +1,6 @@
 # An Interactive guide to Zarr
 
-A 12-step visual explainer of the Zarr format for someone with zero geospatial
+An 11-step visual explainer of the Zarr format for someone with zero geospatial
 background — told through NASA's MUR sea-surface-temperature record. Chunking,
 computable chunk names, stores-as-folders, reads, sharding, and where Zarr sits
 among the formats, each as a hands-on interactive stage.
@@ -23,8 +23,10 @@ among the formats, each as a hands-on interactive stage.
 
 ## Run it
 
+Live copy (demo mode): https://open.fused.io/mjyttte444gnh4sye2bzjgd5f4
+
 Copy this folder into your Fused Render install and open `explainer.html`.
-Deep-link any step with `?step=0..11`.
+Deep-link any step with `?step=0..10`.
 
 ## Files
 

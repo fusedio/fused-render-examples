@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>An Interactive guide to Zarr</title>
+<!-- Bundle the mock store beside the page so the hosted export can serve its
+     chunks over the _asset route. The browser-side reader (ZR) fetches these
+     with computed rawUrl() paths, which the exporter can't resolve statically —
+     this manifest declares them so they ship and resolve by key. Stripped from
+     the served page by the exporter. -->
+<script type="application/fused-bundle">
+{ "include": ["mock_store/**"] }
+</script>
 <style>
   :root {
     /* warm paper + ink (visual-explainers house style) */
@@ -46,10 +54,15 @@
   .copy b { color:var(--ink); }
   .copy .k { font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:12.5px;
              background:#f3edd9; border-radius:4px; padding:0 4px; }
+  .copy a.dslink { color:var(--gold); text-decoration:none; font-size:12.5px;
+                   border-bottom:1px dotted var(--gold); white-space:nowrap; }
+  .copy a.dslink:hover { color:#8a6508; }
 
   /* ---------- stage ---------- */
+  /* fills whatever height the viewport leaves (min 500px) — no dead band
+     between the stage and the nav on tall screens */
   .stage { background:var(--card); border:1px solid var(--line); border-radius:18px;
-           height:500px; position:relative; overflow:hidden; flex:0 0 auto;
+           min-height:500px; position:relative; overflow:hidden; flex:1 1 auto;
            display:flex; align-items:center; justify-content:center;
            box-shadow:0 2px 10px rgba(90,75,40,.06); }
   .stage-in { display:flex; flex-direction:column; align-items:center; gap:12px;
@@ -112,6 +125,15 @@
   .dlbar i { display:block; height:100%; width:0%; background:linear-gradient(#9db7d8,#7d9cc4); }
   .dlmeta { display:flex; flex-direction:column; gap:2px; margin-top:7px;
             font-variant-numeric:tabular-nums; font-size:11.5px; }
+  /* the "we're joking" sticker — overlays the window, leaves the bar visible */
+  .jokepop { position:absolute; top:-24px; right:-40px; width:236px;
+             background:#fff8e3; border:1.5px solid var(--gold); border-radius:11px;
+             padding:10px 13px; font-size:12px; line-height:1.45; color:#5d5442;
+             box-shadow:0 6px 18px rgba(90,75,40,.28); z-index:2;
+             animation:popin .35s ease both; transform:rotate(3deg); }
+  .jokepop b { color:#7a5807; }
+  @keyframes popin { from{opacity:0; transform:rotate(3deg) scale(.82)}
+                     to{opacity:1; transform:rotate(3deg) scale(1)} }
 
   /* narration log */
   .narr { width:100%; max-width:640px; font-size:12.5px; border:1px solid var(--line);
@@ -189,14 +211,6 @@
             background:#f3edd9; border-radius:8px; padding:8px 10px; margin:0;
             white-space:pre; overflow:hidden; color:#4d4535; }
 
-  /* the 16 computed names (reading step) */
-  .keygrid { display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; width:440px; }
-  .keygrid i { font:600 10.5px "SF Mono",Menlo,monospace; font-style:normal;
-               background:#f3edd9; border-radius:4px; padding:3px 0; color:var(--dim);
-               text-align:center; transition:background .2s, color .2s, opacity .2s; }
-  .keygrid i.hot { background:#d9edf5; color:#155f7d; }
-  .keygrid i.done { background:#e2efe0; color:#2c6b3f; }
-
   /* pinned download panel (real S3 read) — fixed height, never scrolls */
   .dlpanel { width:100%; max-width:300px; border:1px solid var(--line2); border-radius:12px;
              background:#fbf8f0; padding:11px 13px; display:flex; flex-direction:column;
@@ -254,7 +268,10 @@
   .pgL { flex:0 0 340px; display:flex; flex-direction:column; gap:8px; min-width:0; }
   .pgR { flex:1; min-width:0; display:flex; flex-direction:column; }
   .pgR .cwrap { flex:1; position:relative; min-height:0; }
-  .pgR canvas { position:absolute; inset:0; }
+  /* canvas is a replaced element: inset alone does NOT stretch it — without
+     the explicit 100% size it lays out at its intrinsic 300×150 and the cube
+     renders as a washed-out patch in the corner (the hosted step-11 bug) */
+  .pgR canvas { position:absolute; inset:0; width:100%; height:100%; }
   .pg input[type=text] { width:100%; font-size:11px; padding:7px 9px; border:1px solid var(--line2);
         border-radius:8px; background:var(--card); color:var(--ink);
         font-family:"SF Mono",Menlo,monospace; }
@@ -541,27 +558,24 @@
     }
   };
 
-  /* ---- cog : one big raster file with overview pyramid (24 grid) ---- */
+  /* ---- cog : overview pyramid — 3 stacked levels of tiles,
+       full-res at the bottom, smaller toward the top (24 grid) ---- */
   ICONS.cog = {
     grid: 24,
     paint(p) {
-      // page body with a clean folded corner (fold x13..16, y1..4)
-      p.rect(3, 1, 14, 22, "card");
-      p.rect(13, 1, 4, 4, "paper");   // cut the corner
-      p.hline(3, 1, 10, "ink");       // top edge up to the fold
-      p.vline(3, 1, 22, "ink");       // left
-      p.hline(3, 22, 14, "ink");      // bottom
-      p.vline(16, 4, 19, "ink");      // right, below the fold
-      p.px(13, 1, "ink"); p.px(14, 2, "ink"); p.px(15, 3, "ink"); // diagonal
-      p.hline(13, 4, 4, "ink");       // fold underside
-      p.px(13, 2, "line"); p.px(13, 3, "line"); p.px(14, 3, "line"); // flap
-      // overview pyramid: 3 rasters, small on top
-      p.dither(9, 6, 3, 2, "fetch", 9, "fetchSoft");
-      p.frame(8, 5, 5, 4, "ink");
-      p.dither(8, 11, 6, 3, "fetch", 9, "fetchSoft");
-      p.frame(7, 10, 8, 5, "ink");
-      p.dither(6, 17, 9, 3, "fetch", 9, "fetchSoft");
-      p.frame(5, 16, 11, 5, "ink");
+      const levels = [
+        { x: 1, y: 16, w: 22, h: 7, cols: 4 },  // full resolution
+        { x: 4, y: 9,  w: 16, h: 6, cols: 3 },  // 2x overview
+        { x: 8, y: 3,  w: 8,  h: 5, cols: 2 }   // 4x overview
+      ];
+      for (const L of levels) {
+        p.dither(L.x, L.y, L.w, L.h, "fetch", 6, "fetchSoft");
+        // tile cuts: vertical seams + one horizontal seam per level
+        for (let i = 1; i < L.cols; i++)
+          p.vline(L.x + Math.round(i * L.w / L.cols), L.y, L.h, "card");
+        p.hline(L.x, L.y + (L.h >> 1), L.w, "card");
+        p.frame(L.x, L.y, L.w, L.h, "ink");
+      }
     }
   };
 
@@ -587,24 +601,26 @@
     }
   };
 
-  /* ---- parquet : columnar bars (24 grid) ---- */
+  /* ---- parquet : a table partitioned into row groups — gold header row,
+       column seams, horizontal bands = the partitions (24 grid) ---- */
   ICONS.parquet = {
     grid: 24,
     paint(p) {
-      const bars = [
-        { x: 3,  h: 13, c: "fetch" },
-        { x: 8,  h: 18, c: "gold" },
-        { x: 13, h: 9,  c: "fetch" },
-        { x: 18, h: 15, c: "fetch" }
-      ];
-      for (const b of bars) {
-        const y = 21 - b.h;
-        p.dither(b.x, y, 4, b.h, b.c, 9, b.c === "gold" ? "goldSoft" : "fetchSoft");
-        p.frame(b.x, y, 4, b.h, "ink");
-        // row-group segment lines
-        for (let yy = y + 4; yy < 20; yy += 4) p.hline(b.x, yy, 4, "ink");
+      const x = 2, w = 20, cols = [7, 14];   // column seam offsets
+      // header row
+      p.rect(x, 2, w, 4, "goldSoft");
+      p.dither(x, 2, w, 4, "gold", 5, "goldSoft");
+      p.frame(x, 2, w, 4, "ink");
+      // three row-group bands below, separated by paper gaps
+      const groups = [{ y: 7, h: 5 }, { y: 13, h: 5 }, { y: 19, h: 3 }];
+      for (const g of groups) {
+        p.rect(x, g.y, w, g.h, "card");
+        p.dither(x, g.y, w, g.h, "fetchSoft", 4, "card");
+        p.frame(x, g.y, w, g.h, "ink");
+        for (const cx of cols) p.vline(x + cx, g.y, g.h, "ink");
       }
-      p.hline(1, 22, 22, "ink"); // baseline
+      // header column seams line up with the bands' seams
+      for (const cx of cols) p.vline(x + cx, 2, 4, "ink");
     }
   };
 
@@ -935,6 +951,18 @@
 </script>
 
 <script>
+/* FZSTD_INLINE_START — inlined UMD build of fzstd@0.1.1 (MIT, 101arrowz).
+   Relative <script src> doesn't resolve under /render?path=… or the
+   hosted export, so the decoder is embedded verbatim. Exposes window.fzstd
+   with fzstd.decompress(Uint8Array)->Uint8Array. Used by the browser-side
+   zarr reader (ZR) to decode the bundled mock store's zstd chunks without
+   the local probe daemon. To update: re-copy node_modules/fzstd/umd/index.js
+   between these markers (verify it has no literal closing script tag). */
+!function(f){typeof module!='undefined'&&typeof exports=='object'?module.exports=f():typeof define!='undefined'&&define.amd?define(['fzstd',f]):(typeof self!='undefined'?self:this).fzstd=f()}(function(){var _e={};"use strict";var r=ArrayBuffer,t=Uint8Array,e=Uint16Array,n=Int16Array,a=Uint32Array,s=Int32Array,i=function(r,e,n){if(t.prototype.slice)return t.prototype.slice.call(r,e,n);(null==e||e<0)&&(e=0),(null==n||n>r.length)&&(n=r.length);var a=new t(n-e);return a.set(r.subarray(e,n)),a},o=function(r,e,n,a){if(t.prototype.fill)return t.prototype.fill.call(r,e,n,a);for((null==n||n<0)&&(n=0),(null==a||a>r.length)&&(a=r.length);n<a;++n)r[n]=e;return r},u=function(r,e,n,a){if(t.prototype.copyWithin)return t.prototype.copyWithin.call(r,e,n,a);for((null==n||n<0)&&(n=0),(null==a||a>r.length)&&(a=r.length);n<a;)r[e++]=r[n++]};_e.ZstdErrorCode={InvalidData:0,WindowSizeTooLarge:1,InvalidBlockType:2,FSEAccuracyTooHigh:3,DistanceTooFarBack:4,UnexpectedEOF:5};var h=["invalid zstd data","window size too large (>2046MB)","invalid block type","FSE accuracy too high","match distance too far back","unexpected EOF"],f=function(r,t,e){var n=Error(t||h[r]);if(n.code=r,Error.captureStackTrace&&Error.captureStackTrace(n,f),!e)throw n;return n},l=function(r,t,e){for(var n=0,a=0;n<e;++n)a|=r[t++]<<(n<<3);return a},v=function(r,t){return(r[t]|r[t+1]<<8|r[t+2]<<16|r[t+3]<<24)>>>0},c=function(r,e){var n=r[0]|r[1]<<8|r[2]<<16;if(3126568==n&&253==r[3]){var a=r[4],i=a>>5&1,o=a>>2&1,u=3&a,h=a>>6;8&a&&f(0);var c=6-i,b=3==u?4:u,y=l(r,c,b),p=h?1<<h:i,w=l(r,c+=b,p)+(1==h&&256),g=w;if(!i){var d=1<<10+(r[5]>>3);g=d+(d>>3)*(7&r[5])}g>2145386496&&f(1);var m=new t((1==e?w||g:e?0:g)+12);return m[0]=1,m[4]=4,m[8]=8,{b:c+p,y:0,l:0,d:y,w:e&&1!=e?e:m.subarray(12),e:g,o:new s(m.buffer,0,3),u:w,c:o,m:Math.min(131072,g)}}if(25481893==(n>>4|r[3]<<20))return v(r,4)+8;f(0)},b=function(r){for(var t=0;1<<t<=r;++t);return t-1},y=function(a,s,i){var o=4+(s<<3),u=5+(15&a[s]);u>i&&f(3);for(var h=1<<u,l=h,v=-1,c=-1,y=-1,p=h,w=new r(512+(h<<2)),g=new n(w,0,256),d=new e(w,0,256),m=new e(w,512,h),z=512+(h<<1),E=new t(w,z,h),k=new t(w,z+h);v<255&&l>0;){var A=b(l+1),T=o>>3,x=(1<<A+1)-1,F=(a[T]|a[T+1]<<8|a[T+2]<<16)>>(7&o)&x,S=(1<<A)-1,B=x-l-1,I=F&S;if(I<B?(o+=A,F=I):(o+=A+1,F>S&&(F-=B)),g[++v]=--F,-1==F?(l+=F,E[--p]=v):l-=F,!F)do{var U=o>>3;c=(a[U]|a[U+1]<<8)>>(7&o)&3,o+=2,v+=c}while(3==c)}(v>255||l)&&f(0);for(var D=0,M=(h>>1)+(h>>3)+3,W=h-1,O=0;O<=v;++O){var j=g[O];if(j<1)d[O]=-j;else for(y=0;y<j;++y){E[D]=O;do{D=D+M&W}while(D>=p)}}for(D&&f(0),y=0;y<h;++y){var C=d[E[y]]++,H=k[y]=u-b(C);m[y]=(C<<H)-h}return[o+7>>3,{b:u,s:E,n:k,t:m}]},p=function(r,n){var a=0,s=-1,i=new t(292),u=r[n],h=i.subarray(0,256),l=i.subarray(256,268),v=new e(i.buffer,268);if(u<128){var c=y(r,n+1,6),p=c[1],w=c[0]<<3,g=r[n+=u];g||f(0);for(var d=0,m=0,z=p.b,E=z,k=(++n<<3)-8+b(g);!((k-=z)<w);){var A=k>>3;if(h[++s]=p.s[d+=(r[A]|r[A+1]<<8)>>(7&k)&(1<<z)-1],(k-=E)<w)break;h[++s]=p.s[m+=(r[A=k>>3]|r[A+1]<<8)>>(7&k)&(1<<E)-1],z=p.n[d],d=p.t[d],E=p.n[m],m=p.t[m]}++s>255&&f(0)}else{for(s=u-127;a<s;a+=2){var T=r[++n];h[a]=T>>4,h[a+1]=15&T}++n}var x=0;for(a=0;a<s;++a)(I=h[a])>11&&f(0),x+=I&&1<<I-1;var F=b(x)+1,S=1<<F,B=S-x;for(B&B-1&&f(0),h[s++]=b(B)+1,a=0;a<s;++a){var I;++l[h[a]=(I=h[a])&&F+1-I]}var U=new t(S<<1),D=U.subarray(0,S),M=U.subarray(S);for(v[F]=0,a=F;a>0;--a){var W=v[a];o(M,a,W,v[a-1]=W+l[a]*(1<<F-a))}for(v[0]!=S&&f(0),a=0;a<s;++a){var O=h[a];if(O){var j=v[O];o(D,a,j,v[O]=j+(1<<F-O))}}return[n,{n:M,b:F,s:D}]},w=y(new t([81,16,99,140,49,198,24,99,12,33,196,24,99,102,102,134,70,146,4]),0,6)[1],g=y(new t([33,20,196,24,99,140,33,132,16,66,8,33,132,16,66,8,33,68,68,68,68,68,68,68,68,36,9]),0,6)[1],d=y(new t([32,132,16,66,102,70,68,68,68,68,36,73,2]),0,5)[1],m=function(r,t){for(var e=r.length,n=new s(e),a=0;a<e;++a)n[a]=t,t+=1<<r[a];return n},z=new t(new s([0,0,0,0,16843009,50528770,134678020,202050057,269422093]).buffer,0,36),E=m(z,0),k=new t(new s([0,0,0,0,0,0,0,0,16843009,50528770,117769220,185207048,252579084,16]).buffer,0,53),A=m(k,3),T=function(r,t,e){var n=r.length,a=t.length,s=r[n-1],i=(1<<e.b)-1,o=-e.b;s||f(0);for(var u=0,h=e.b,l=(n<<3)-8+b(s)-h,v=-1;l>o&&v<a;){var c=l>>3;t[++v]=e.s[u=(u<<h|(r[c]|r[c+1]<<8|r[c+2]<<16)>>(7&l))&i],l-=h=e.n[u]}l==o&&v+1==a||f(0)},x=function(r,t,e){var n=6,a=t.length+3>>2,s=a<<1,i=a+s;T(r.subarray(n,n+=r[0]|r[1]<<8),t.subarray(0,a),e),T(r.subarray(n,n+=r[2]|r[3]<<8),t.subarray(a,s),e),T(r.subarray(n,n+=r[4]|r[5]<<8),t.subarray(s,i),e),T(r.subarray(n),t.subarray(i),e)},F=function(r,n,a){var s,u=n.b,h=r[u],l=h>>1&3;n.l=1&h;var v=h>>3|r[u+1]<<5|r[u+2]<<13,c=(u+=3)+v;if(1==l){if(u>=r.length)return;return n.b=u+1,a?(o(a,r[u],n.y,n.y+=v),a):o(new t(v),r[u])}if(!(c>r.length)){if(0==l)return n.b=c,a?(a.set(r.subarray(u,c),n.y),n.y+=v,a):i(r,u,c);if(2==l){var m=r[u],F=3&m,S=m>>2&3,B=m>>4,I=0,U=0;F<2?1&S?B|=r[++u]<<4|(2&S&&r[++u]<<12):B=m>>3:(U=S,S<2?(B|=(63&r[++u])<<4,I=r[u]>>6|r[++u]<<2):2==S?(B|=r[++u]<<4|(3&r[++u])<<12,I=r[u]>>2|r[++u]<<6):(B|=r[++u]<<4|(63&r[++u])<<12,I=r[u]>>6|r[++u]<<2|r[++u]<<10)),++u;var D=a?a.subarray(n.y,n.y+n.m):new t(n.m),M=D.length-B;if(0==F)D.set(r.subarray(u,u+=B),M);else if(1==F)o(D,r[u++],M);else{var W=n.h;if(2==F){var O=p(r,u);I+=u-(u=O[0]),n.h=W=O[1]}else W||f(0);(U?x:T)(r.subarray(u,u+=I),D.subarray(M),W)}var j=r[u++];if(j){255==j?j=32512+(r[u++]|r[u++]<<8):j>127&&(j=j-128<<8|r[u++]);var C=r[u++];3&C&&f(0);for(var H=[g,d,w],L=2;L>-1;--L){var Z=C>>2+(L<<1)&3;if(1==Z){var q=new t([0,0,r[u++]]);H[L]={s:q.subarray(2,3),n:q.subarray(0,1),t:new e(q.buffer,0,1),b:0}}else 2==Z?(u=(s=y(r,u,9-(1&L)))[0],H[L]=s[1]):3==Z&&(n.t||f(0),H[L]=n.t[L])}var G=n.t=H,J=G[0],K=G[1],N=G[2],P=r[c-1];P||f(0);var Q=(c<<3)-8+b(P)-N.b,R=Q>>3,V=0,X=(r[R]|r[R+1]<<8)>>(7&Q)&(1<<N.b)-1,Y=(r[R=(Q-=K.b)>>3]|r[R+1]<<8)>>(7&Q)&(1<<K.b)-1,$=(r[R=(Q-=J.b)>>3]|r[R+1]<<8)>>(7&Q)&(1<<J.b)-1;for(++j;--j;){var _=N.s[X],rr=N.n[X],tr=J.s[$],er=J.n[$],nr=K.s[Y],ar=K.n[Y],sr=1<<nr,ir=sr+((r[R=(Q-=nr)>>3]|r[R+1]<<8|r[R+2]<<16|r[R+3]<<24)>>>(7&Q)&sr-1);R=(Q-=k[tr])>>3;var or=A[tr]+((r[R]|r[R+1]<<8|r[R+2]<<16)>>(7&Q)&(1<<k[tr])-1);R=(Q-=z[_])>>3;var ur=E[_]+((r[R]|r[R+1]<<8|r[R+2]<<16)>>(7&Q)&(1<<z[_])-1);if(R=(Q-=rr)>>3,X=N.t[X]+((r[R]|r[R+1]<<8)>>(7&Q)&(1<<rr)-1),R=(Q-=er)>>3,$=J.t[$]+((r[R]|r[R+1]<<8)>>(7&Q)&(1<<er)-1),R=(Q-=ar)>>3,Y=K.t[Y]+((r[R]|r[R+1]<<8)>>(7&Q)&(1<<ar)-1),ir>3)n.o[2]=n.o[1],n.o[1]=n.o[0],n.o[0]=ir-=3;else{var hr=ir-(0!=ur);hr?(ir=3==hr?n.o[0]-1:n.o[hr],hr>1&&(n.o[2]=n.o[1]),n.o[1]=n.o[0],n.o[0]=ir):ir=n.o[0]}for(L=0;L<ur;++L)D[V+L]=D[M+L];M+=ur;var fr=(V+=ur)-ir;if(fr<0){var lr=-fr,vr=n.e+fr;for(lr>or&&(lr=or),L=0;L<lr;++L)D[V+L]=n.w[vr+L];V+=lr,or-=lr,fr=0}for(L=0;L<or;++L)D[V+L]=D[fr+L];V+=or}if(V!=M)for(;M<D.length;)D[V++]=D[M++];else V=D.length;a?n.y+=V:D=i(D,0,V)}else if(a){if(n.y+=B,M)for(L=0;L<B;++L)D[L]=D[M+L]}else M&&(D=i(D,M));return n.b=c,D}f(2)}},S=function(r,e){if(1==r.length)return r[0];for(var n=new t(e),a=0,s=0;a<r.length;++a){var i=r[a];n.set(i,s),s+=i.length}return n};function B(r,t){for(var e=[],n=+!t,a=0,s=0;r.length;){var i=c(r,n||t);if("object"==typeof i){for(n?(t=null,i.w.length==i.u&&(e.push(t=i.w),s+=i.u)):(e.push(t),i.e=0);!i.l;){var o=F(r,i,t);o||f(5),t?i.e=i.y:(e.push(o),s+=o.length,u(i.w,0,o.length),i.w.set(o,i.w.length-o.length))}a=i.b+4*i.c}else a=i;r=r.subarray(a)}return S(e,s)}_e.decompress=B;var I=function(){function r(r){this.ondata=r,this.c=[],this.l=0,this.z=0}return r.prototype.push=function(r,e){if("number"==typeof this.s){var n=Math.min(r.length,this.s);r=r.subarray(n),this.s-=n}var a=r.length+this.l;if(!this.s){if(e){if(!a)return void this.ondata(new t(0),!0);a<5&&f(5)}else if(a<18)return this.c.push(r),void(this.l=a);if(this.l&&(this.c.push(r),r=S(this.c,a),this.c=[],this.l=0),"number"==typeof(this.s=c(r)))return this.push(r,e)}if("number"!=typeof this.s){if(a<(this.z||3))return e&&f(5),this.c.push(r),void(this.l=a);if(this.l&&(this.c.push(r),r=S(this.c,a),this.c=[],this.l=0),!this.z&&a<(this.z=2&r[this.s.b]?4:3+(r[this.s.b]>>3|r[this.s.b+1]<<5|r[this.s.b+2]<<13)))return e&&f(5),this.c.push(r),void(this.l=a);for(this.z=0;;){var s=F(r,this.s);if(!s){e&&f(5);var i=r.subarray(this.s.b);return this.s.b=0,this.c.push(i),void(this.l+=i.length)}if(this.ondata(s,!1),u(this.s.w,0,s.length),this.s.w.set(s,this.s.w.length-s.length),this.s.l){var o=r.subarray(this.s.b);return this.s=4*this.s.c,void this.push(o,e)}}}else e&&f(5)},r}();_e.Decompress=I;return _e})
+/* FZSTD_INLINE_END */
+</script>
+
+<script>
 "use strict";
 /* =====================================================================
    What is Zarr? — a step-driven story.
@@ -967,19 +995,39 @@ function pixIcon(name, size, css){
   return cv;
 }
 
-/* ---------- app bridge ---------- */
-const HAS_FUSED = typeof window.fused !== "undefined" && !!window.fused.runPython;
+/* ---------- app bridge & capability model ----------
+   Three environments, detected by what the bridge can actually do — NOT by a
+   single "is fused present" flag (which mislabels the hosted export):
+     • local FusedRender app  — runPython works AND its 127.0.0.1 daemon is
+       reachable (browser and daemon share the machine) → full power.
+     • hosted export (open.fused.io) — window.fused exists and can read bundled
+       assets via rawUrl/_asset, but runPython's daemon runs in a REMOTE sandbox
+       whose 127.0.0.1 is not the visitor's, so daemon fetches fail. Detected by
+       the manifest seed window.__FUSED_RENDER__ injected before any page script.
+     • standalone file://     — no bridge at all → everything canned.
+   The mock store is read the SAME way in local & hosted: directly in the browser
+   (rawUrl → _asset, zstd-decoded by fzstd). Only the real remote-S3 read needs
+   the daemon, so it stays live locally and falls back to canned when hosted. */
+/* test override: ?demo=1 emulates the HOSTED export (bridge yes, daemon no);
+   ?demo=full emulates pure standalone file:// (everything canned). */
+const FORCE_DEMO = new URLSearchParams(location.search).get("demo");
+const HAS_FUSED  = typeof window.fused !== "undefined" && !!window.fused.runPython && FORCE_DEMO !== "full";
+const HAS_BRIDGE = typeof window.fused !== "undefined" && !!window.fused.rawUrl && FORCE_DEMO !== "full";  // can browser-read bundled assets
+const HOSTED     = !!window.__FUSED_RENDER__ || FORCE_DEMO === "1";                 // deployed export, no local daemon
+const MOCK_LIVE  = HAS_BRIDGE;                 // read the bundled mock store in-browser (local AND hosted)
+const S3_LIVE    = HAS_FUSED && !HOSTED;       // real remote reads need the local probe daemon
 const P = HAS_FUSED && fused.params ? fused.params : (() => {
   const qs = new URLSearchParams(location.search);
   return { get: k => qs.get(k), set: (k, v) => { qs.set(k, v);
            try { history.replaceState(null, "", "?" + qs); } catch(e) {} } };
 })();
 
-const DEMO = !HAS_FUSED;
+const DEMO = !HAS_BRIDGE;   // pure standalone (no bridge): canned values only
 let daemonPort = null, daemonPromise = null;
 function ensureDaemon(){
-  // single-flight: several steps may ask at once, runPython must run once
-  if (DEMO) return Promise.resolve(null);
+  // single-flight: several steps may ask at once, runPython must run once.
+  // Only the local app can reach the daemon; hosted/standalone never start it.
+  if (!S3_LIVE) return Promise.resolve(null);
   if (daemonPort) return Promise.resolve(daemonPort);
   if (!daemonPromise){
     daemonPromise = (async () => {
@@ -997,7 +1045,8 @@ function ensureDaemon(){
   return daemonPromise;
 }
 async function api(path){
-  if (DEMO) throw new Error("demo mode");
+  // daemon-only transport (remote-store reads); mock-store ops go through ZR.
+  if (!S3_LIVE) throw new Error("no probe daemon in this environment");
   await ensureDaemon();
   if (!daemonPort) throw new Error("probe daemon unreachable");
   let res;
@@ -1065,7 +1114,7 @@ function footNote(extra){
   $("#foot").innerHTML = (SES.reqs
     ? `this session: <span class="f">${fmtB(SES.bytes)}</span> traveled the internet in ` +
       `${SES.reqs} request${SES.reqs === 1 ? "" : "s"} — counted by the local probe` +
-      (DEMO ? " (demo: canned copies of measured values)" : "")
+      (!S3_LIVE ? " (canned copies of measured values)" : "")
     : (SES.localReads ? `so far everything ran on the local mini store — nothing traveled the internet` : ""))
     + (extra ? " · " + extra : "");
 }
@@ -1075,6 +1124,7 @@ const treeCache = new Map();
 function loadTree(file){
   if (treeCache.has(file)) return treeCache.get(file);
   const p = (async () => {
+    if (file === MOCK && MOCK_LIVE) return ZR.tree();   // bundled store, read in-browser
     if (DEMO) return DEMO_TREES[file];
     await ensureDaemon();
     if (!daemonPort) return DEMO_TREES[file];
@@ -1099,6 +1149,7 @@ let lsCache = null;
 function loadLs(){
   if (lsCache) return lsCache;
   lsCache = (async () => {
+    if (MOCK_LIVE) return ZR.ls();     // one fetch of the bundled file manifest
     if (DEMO) return DEMO_LS;
     await ensureDaemon();
     if (!daemonPort) return DEMO_LS;
@@ -1111,6 +1162,7 @@ let rawmetaCache = null;
 function loadMockMeta(){
   if (rawmetaCache) return rawmetaCache;
   rawmetaCache = (async () => {
+    if (MOCK_LIVE) return ZR.rawmeta();   // fetch the bundled zarr.json docs directly
     if (DEMO) return DEMO_RAWMETA;
     await ensureDaemon();
     if (!daemonPort) return DEMO_RAWMETA;
@@ -1177,6 +1229,28 @@ const DEMO_TREES = {
       dtype: "float32", itemsize: 4, zarr_format: 2, separator: ".",
       codecs: ["zstd"], units: "K", logical_bytes: 437944320,
       chunk_logical_bytes: 132710400, key_first: "ts/0.0.0", key_last: "ts/3.0.0" },
+  ]},
+  /* WSF: multiscale v3 pyramid — the top 3 levels only (measured 2026-07-21) */
+  [WSF]: { zarr_format: 3, consolidated: true, n_arrays: 52, n_groups: 13,
+    default_var: "0/wsf_tracker", file: WSF, arrays: [
+    { path: "0/wsf_tracker", dims: ["y","x"], shape: [1536433,4007502],
+      chunks: [8192,8192], inner_chunks: [256,256], chunk_grid: [188,490],
+      n_chunks: 92120, dtype: "int8", itemsize: 1, zarr_format: 3, separator: "/",
+      codecs: ["blosc"], units: "", logical_bytes: 6157258320366,
+      chunk_logical_bytes: 67108864, key_first: "0/wsf_tracker/c/0/0",
+      key_last: "0/wsf_tracker/c/187/489" },
+    { path: "1/wsf_tracker", dims: ["y","x"], shape: [768216,2003751],
+      chunks: [8192,8192], inner_chunks: [256,256], chunk_grid: [94,245],
+      n_chunks: 23030, dtype: "int8", itemsize: 1, zarr_format: 3, separator: "/",
+      codecs: ["blosc"], units: "", logical_bytes: 1539313578216,
+      chunk_logical_bytes: 67108864, key_first: "1/wsf_tracker/c/0/0",
+      key_last: "1/wsf_tracker/c/93/244" },
+    { path: "2/wsf_tracker", dims: ["y","x"], shape: [384108,1001875],
+      chunks: [8192,8192], inner_chunks: [256,256], chunk_grid: [47,123],
+      n_chunks: 5781, dtype: "int8", itemsize: 1, zarr_format: 3, separator: "/",
+      codecs: ["blosc"], units: "", logical_bytes: 384828202500,
+      chunk_logical_bytes: 67108864, key_first: "2/wsf_tracker/c/0/0",
+      key_last: "2/wsf_tracker/c/46/122" },
   ]},
 };
 const DEMO_HEADS = {
@@ -1245,6 +1319,169 @@ function demoSliceMURMed(){
     cost: { requests: 1, net_bytes: 13384457, cache_hits: 0, ms: 4541 },
     numeric: true, vmin: 290.19, vmax: 294.35, p2: 290.6, p98: 293.9, values: vals };
 }
+
+/* =====================================================================
+   ZR — browser-side reader for the bundled mock store (NO daemon).
+   The store ships beside the page, so the bridge's rawUrl gives a
+   same-origin, Range-capable _asset URL in BOTH the local app and the
+   hosted export. ZR fetches those and zstd-decodes chunks with the inlined
+   fzstd, returning the SAME object shapes the probe daemon's /tree /ls
+   /rawmeta /slice produce — so every call site stays source-agnostic.
+   Mock store only; real remote stores still go through the daemon (S3_LIVE).
+   ===================================================================== */
+const ZR = (() => {
+  const base = MOCK;                                   // "mock_store/mur_sst_mini.zarr"
+  const assetUrl = rel => window.fused.rawUrl(base + "/" + rel);   // -> /_asset?name=… (or /api/fs/raw locally)
+
+  const txtCache = new Map();
+  function text(rel){
+    if (txtCache.has(rel)) return txtCache.get(rel);
+    const p = fetch(assetUrl(rel)).then(r => {
+      if (!r.ok) throw new Error(`${rel}: ${r.status}`); return r.text(); });
+    txtCache.set(rel, p); p.catch(() => txtCache.delete(rel));
+    return p;
+  }
+  const json = async rel => JSON.parse(await text(rel));
+
+  /* decoded-chunk cache (mirrors the daemon's in-memory LRU for the receipt
+     step): key -> { data: TypedArray, comp: compressed byte size } */
+  const chunkCache = new Map();
+  const TA = { float32: Float32Array, float64: Float64Array, int8: Int8Array,
+               int16: Int16Array, int32: Int32Array, uint8: Uint8Array,
+               uint16: Uint16Array, uint32: Uint32Array };
+  async function chunk(key, dtype){
+    const hit = chunkCache.get(key);
+    if (hit) return { data: hit.data, comp: hit.comp, cached: true };
+    const buf = await fetch(assetUrl(key)).then(r => {
+      if (!r.ok) throw new Error(`${key}: ${r.status}`); return r.arrayBuffer(); });
+    const comp = buf.byteLength;
+    const rawU8 = fzstd.decompress(new Uint8Array(buf));          // zstd -> little-endian bytes
+    const Ctor = TA[dtype] || Float32Array;
+    // fresh 0-offset buffer so the typed-array view is aligned
+    const ab = rawU8.buffer.slice(rawU8.byteOffset, rawU8.byteOffset + rawU8.byteLength);
+    const data = new Ctor(ab);
+    chunkCache.set(key, { data, comp });
+    return { data, comp, cached: false };
+  }
+
+  /* tree: real metadata for the fixed store, in the daemon's /tree shape.
+     DEMO_TREES[MOCK] already carries the measured node fields; the store never
+     changes, so hardcoded-correct == live here — just fix the one canned slip
+     (time is int32, not int64). */
+  let _tree = null;
+  function tree(){
+    if (!_tree){
+      _tree = JSON.parse(JSON.stringify(DEMO_TREES[MOCK]));
+      const tm = _tree.arrays.find(a => a.path === "time");
+      if (tm){ tm.dtype = "int32"; tm.itemsize = 4;
+               tm.logical_bytes = 48; tm.chunk_logical_bytes = 48; }
+    }
+    return Promise.resolve(_tree);
+  }
+  const nodeOf = (t, path) => t.arrays.find(a => a.path === path);
+
+  const ls = () => json("ls_manifest.json");            // one fetch: full file list + sizes
+  async function rawmeta(){                              // the actual zarr.json docs, live
+    const [root, arr] = await Promise.all(
+      [text("zarr.json"), text("analysed_sst/zarr.json")]);
+    return { root: { "zarr.json": root }, arr: { "analysed_sst/zarr.json": arr } };
+  }
+
+  function pct(sorted, p){
+    if (!sorted.length) return null;
+    const i = (sorted.length - 1) * p / 100, lo = Math.floor(i), hi = Math.ceil(i);
+    return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+  }
+
+  /* slice: read a 2-D plane window at a fixed index on the other dims, fetch +
+     decode exactly the chunks it touches, return the daemon's /slice shape
+     (native orientation, no flipDone — callers flip as they already do). */
+  async function slice({ file, var: varName, plane, idx, r0, r1, c0, c1 }){
+    const t = await tree();
+    const a = nodeOf(t, varName);
+    if (!a) throw new Error("unknown array " + varName);
+    const nd = a.shape.length;
+    const [d0, d1] = (plane && plane.length === 2) ? plane : [nd - 2, nd - 1];
+    idx = (idx || []).slice(); while (idx.length < nd) idx.push(0);
+    for (let d = 0; d < nd; d++) idx[d] = clamp(idx[d] | 0, 0, a.shape[d] - 1);
+    const ch = a.chunks || a.shape;
+    const H = a.shape[d0], W = a.shape[d1];
+    r0 = clamp(r0 ?? 0, 0, H - 1); r1 = clamp(r1 ?? H, r0 + 1, H);
+    c0 = clamp(c0 ?? 0, 0, W - 1); c1 = clamp(c1 ?? W, c0 + 1, W);
+
+    // C-order strides inside one chunk
+    const stride = new Array(nd); stride[nd - 1] = 1;
+    for (let d = nd - 2; d >= 0; d--) stride[d] = stride[d + 1] * ch[d + 1];
+    const chunkCoord = idx.map((v, d) => Math.floor(v / ch[d]));   // fixed dims; plane dims overwritten below
+    const localFixed = idx.map((v, d) => v - chunkCoord[d] * ch[d]);
+
+    const y0 = Math.floor(r0 / ch[d0]), y1 = Math.floor((r1 - 1) / ch[d0]);
+    const x0 = Math.floor(c0 / ch[d1]), x1 = Math.floor((c1 - 1) / ch[d1]);
+    const jobs = [];
+    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++){
+      const coords = chunkCoord.slice(); coords[d0] = cy; coords[d1] = cx;
+      jobs.push({ cy, cx, key: chunkKey(a, coords) });
+    }
+
+    const t0 = performance.now();
+    const decoded = await Promise.all(
+      jobs.map(j => chunk(j.key, a.dtype).then(c => ({ ...j, ...c }))));
+
+    const h = r1 - r0, w = c1 - c0;
+    const out = new Float64Array(h * w);
+    const touched = []; let netBytes = 0, reqs = 0, hits = 0;
+    for (const j of decoded){
+      touched.push({ key: j.key, bytes: j.comp, cached: j.cached, ms: 1 });
+      if (j.cached) hits++; else { reqs++; netBytes += j.comp; }
+      const baseY = j.cy * ch[d0], baseX = j.cx * ch[d1];
+      const yLo = Math.max(r0, baseY), yHi = Math.min(r1, baseY + ch[d0]);
+      const xLo = Math.max(c0, baseX), xHi = Math.min(c1, baseX + ch[d1]);
+      const loc = localFixed.slice();
+      for (let gy = yLo; gy < yHi; gy++){
+        loc[d0] = gy - baseY;
+        for (let gx = xLo; gx < xHi; gx++){
+          loc[d1] = gx - baseX;
+          let off = 0; for (let d = 0; d < nd; d++) off += loc[d] * stride[d];
+          out[(gy - r0) * w + (gx - c0)] = j.data[off];
+        }
+      }
+    }
+
+    // stats over finite values (full res), like the daemon's _display
+    const finite = [];
+    for (let i = 0; i < out.length; i++){ const v = out[i]; if (Number.isFinite(v)) finite.push(v); }
+    finite.sort((p, q) => p - q);
+    const vmin = finite.length ? finite[0] : null;
+    const vmax = finite.length ? finite[finite.length - 1] : null;
+
+    // downsample to <=160 per dim; null for NaN/fill (daemon shape)
+    const sy = Math.max(1, Math.ceil(h / 160)), sx = Math.max(1, Math.ceil(w / 160));
+    const values = [];
+    for (let yy = 0; yy < h; yy += sy){
+      const row = [];
+      for (let xx = 0; xx < w; xx += sx){
+        const v = out[yy * w + xx];
+        row.push(Number.isFinite(v) ? Math.round(v * 1e4) / 1e4 : null);
+      }
+      values.push(row);
+    }
+
+    return {
+      var: varName, plane: [d0, d1], idx, window: [r0, r1, c0, c1], shape: a.shape,
+      read_cells: h * w, logical_bytes: h * w * (a.itemsize || 4),
+      planned_chunks: touched.map(k => k.key),
+      n_planned: (y1 - y0 + 1) * (x1 - x0 + 1),
+      touched, n_missing: 0,
+      cost: { requests: reqs, net_bytes: netBytes, cache_hits: hits,
+              ms: Math.round(performance.now() - t0) },
+      units: a.units || "",
+      numeric: true, vmin, vmax, p2: pct(finite, 2), p98: pct(finite, 98),
+      step: [sy, sx], values,
+    };
+  }
+
+  return { tree, ls, rawmeta, slice, chunk };
+})();
 
 /* ---------- chunk-key helpers ---------- */
 function chunkKey(node, coords){
@@ -1417,7 +1654,10 @@ function drawIso(cv, o){
   const slabGap = slabs ? clamp(availH / (slabs + 4), 10, 22) : 0;
   const totalH = ay * 2 + slabs * slabGap + 26;
   if (totalH > availH){ const s = availH / totalH; dw *= s; ax = dw/2; ay = dw/4; }
-  const cx = W * 0.5, cy = 26 + ay;
+  /* center the drawing vertically — flat grids (e.g. 2×4 chunk planes) used to
+     float at the top of an empty canvas and read as half-drawn */
+  const usedH = ay * 2 + slabs * slabGap + 26;
+  const cx = W * 0.5, cy = 26 + ay + Math.max(0, (availH - usedH) * 0.5);
   const ux = ax / gw, uy = ay / gw, vx = -ax / gh, vy = ay / gh;
   const org = { x: cx - (ux*gw + vx*gh)/2, y: cy - (uy*gw + vy*gh)/2 };
   const pt = (r, cc) => ({ x: org.x + cc*ux + r*vx, y: org.y + cc*uy + r*vy });
@@ -1444,7 +1684,7 @@ function drawIso(cv, o){
   for (let r = 0; r < gh; r += stepR) for (let cc = 0; cc < gw; cc += stepC){
     quad(r, cc, Math.min(stepR, gh-r), Math.min(stepC, gw-cc));
     c.fillStyle = "#efe8d5"; c.fill();
-    c.strokeStyle = o.faint ? "#e6dfcc" : "#d6cdb8"; c.lineWidth = 0.7; c.stroke();
+    c.strokeStyle = o.faint ? "#e6dfcc" : "#c8bda0"; c.lineWidth = 0.8; c.stroke();
   }
   if (o.cells) for (const [k, st] of o.cells){
     const [r, cc] = k.split(",").map(Number);
@@ -1493,22 +1733,25 @@ function drawIso(cv, o){
 const steps = [];
 const step = s => steps.push(s);
 const ACT = ["the problem", "zarr's big idea", "files & reading",
-             "why it matters", "try it"];
-const ACT_ICON = ["globe", "bulb", "folder", "receipt", "bolt_fast"];
+             "why it matters", "try it", "your receipt"];
+const ACT_ICON = ["globe", "bulb", "folder", "zarr", "bolt_fast", "receipt"];
 const LEARN = [
   ["learn more: zarr.dev →", "https://zarr.dev"],
   ["learn more: what is Zarr? (Earthmover) →", "https://earthmover.io/blog/what-is-zarr"],
   ["learn more: Cloud-Native Geo guide →", "https://guide.cloudnativegeo.org"],
   ["learn more: zarr.dev →", "https://zarr.dev"],
   ["learn more: Cloud-Native Geo guide →", "https://guide.cloudnativegeo.org"],
+  ["learn more: zarr.dev →", "https://zarr.dev"],
 ];
 
 /* ---- 0 · hook — the dataset builds itself, then hover to explore -------- */
 step({
   act: 0,
   title: "An Interactive guide to Zarr",
-  copy: "How huge datasets live in the cloud — told through NASA's record of the ocean's " +
-        "temperature, <b>every day since 2002</b>.",
+  copy: "An introduction to Zarr, a data format simplifying working with large arrays on " +
+        "the cloud, told through NASA's record of the ocean's temperature, every day " +
+        "since 2002. <a class='dslink' href='https://registry.opendata.aws/mur/' " +
+        "target='_blank' rel='noopener'>the dataset: MUR SST →</a>",
   async mount(st){
     const inn = el("div", "stage-in fadein");
     const cv = planeCanvas(620, 296);
@@ -1531,23 +1774,27 @@ step({
     function draw(){
       if (!st.isConnected) return;
       const { c } = setupCanvas(cv);
-      const dimSlabs = D.focus && D.focus !== "days" && D.focus !== "count";
-      const dimFace  = D.focus === "days" || D.focus === "bytes";
+      /* hover grammar — NO border-box highlights: the focused component GLOWS
+         (warm fill), the rest dims. "count"/"bytes" light up ALL the layers. */
+      const glowFace  = D.focus === "grid" || D.focus === "count" || D.focus === "bytes";
+      const glowSlabs = D.focus === "days" || D.focus === "count" || D.focus === "bytes";
+      const dimFace   = D.focus === "days";
+      const dimSlabs  = D.focus === "grid";
       // time slabs behind
       if (D.slabs > 0){
         const n = Math.max(1, Math.round(SLABS * D.slabs));
         c.globalAlpha = dimSlabs ? .25 : 1;
         for (let s = n; s >= 1; s--){
-          c.fillStyle = D.focus === "days" ? "rgba(245,227,175,.65)" : "rgba(214,205,184,.30)";
-          c.strokeStyle = D.focus === "days" ? "#b8860b" : "rgba(168,158,138,.55)";
-          c.lineWidth = D.focus === "days" ? 1.4 : 1;
+          c.fillStyle = glowSlabs ? "rgba(245,227,175,.75)" : "rgba(214,205,184,.30)";
+          c.strokeStyle = glowSlabs ? "rgba(184,134,11,.7)" : "rgba(168,158,138,.55)";
+          c.lineWidth = 1;
           c.beginPath(); c.roundRect(X + s*9, Y + s*-8, W, H, 3);
           c.fill(); c.stroke();
         }
         c.globalAlpha = 1;
         if (D.slabs >= 1){
           c.font = "12px Georgia, serif";
-          c.fillStyle = D.focus === "days" ? "#7a5807" : "#7b7260";
+          c.fillStyle = glowSlabs ? "#7a5807" : "#7b7260";
           const lbl = `time — ${fmtN(a.shape[0])} days, stacked behind`;
           c.fillText(lbl, X + W + SLABS*9 - c.measureText(lbl).width, Y + SLABS*-8 - 10);
         }
@@ -1557,10 +1804,14 @@ step({
         c.save();
         c.beginPath(); c.rect(X, Y, W * D.grid, H); c.clip();
         paintFace(c, X, Y, W, H, { dim: dimFace ? .8 : 0 });
+        if (glowFace){                                 // warm glow, no border
+          c.fillStyle = "rgba(233,200,105,.30)";
+          c.fillRect(X, Y, W, H);
+        }
         c.restore();
         // the "grid" texture: fine cell lines over the revealed part
         const gc = 24, gr = 12;
-        c.strokeStyle = D.focus === "grid" ? "rgba(184,134,11,.65)" : "rgba(90,75,40,.18)";
+        c.strokeStyle = D.focus === "grid" ? "rgba(184,134,11,.7)" : "rgba(90,75,40,.18)";
         c.lineWidth = D.focus === "grid" ? 1 : .6;
         for (let i = 1; i < gc; i++){
           const gx = X + W*i/gc;
@@ -1570,8 +1821,8 @@ step({
         for (let i = 1; i < gr; i++){
           c.beginPath(); c.moveTo(X, Y + H*i/gr); c.lineTo(X + W*D.grid, Y + H*i/gr); c.stroke();
         }
-        c.strokeStyle = D.focus === "grid" ? "#b8860b" : "#a89e8a";
-        c.lineWidth = D.focus === "grid" ? 2 : 1.2;
+        c.strokeStyle = "#a89e8a";
+        c.lineWidth = 1.2;
         c.strokeRect(X, Y, W, H);
         if (D.grid >= 1){
           c.font = "12px Georgia, serif"; c.fillStyle = D.focus === "grid" ? "#7a5807" : "#7b7260";
@@ -1582,11 +1833,6 @@ step({
           c.translate(X - 12, Y + H/2 + c.measureText(latL).width/2);
           c.rotate(-Math.PI/2); c.fillText(latL, 0, 0); c.restore();
         }
-      }
-      // whole-cube glow for the "temperatures" chip
-      if (D.focus === "count"){
-        c.strokeStyle = "#b8860b"; c.lineWidth = 2.4;
-        c.strokeRect(X - 4, Y + SLABS*-8 - 4, W + SLABS*9 + 8, H - SLABS*-8 + 8);
       }
       // byte annotation for the TB chip
       if (D.focus === "bytes"){
@@ -1621,18 +1867,21 @@ step({
           `${a.shape[1].toLocaleString("en-US")} × ${a.shape[2].toLocaleString("en-US")} cells` },
       { key: "slabs", dur: 1100, cap: `now stack <b>${fmtN(a.shape[0])} of those maps</b> behind ` +
           `each other — one per day since June 2002` },
-      { key: "count", dur: 1300, cap: `count every cell of every map…` },
+      { key: "count", dur: 2400, cap: `multiply it out — every cell of every map…` },
       { key: "bytes", dur: 800,  cap: `at 4 bytes per temperature, that's <b>${fmtB(a.logical_bytes)}</b> ` +
           `of raw numbers — in one public dataset` },
     ];
     let built = false;
-    const countChipV = chipEls[2].querySelector(".v");
     function runPhase(i){
       if (!st.isConnected || i >= PH.length){ finishBuild(); return; }
       const ph = PH[i];
       cap.innerHTML = ph.cap;
-      chipEls[i].classList.remove("hidden0");
+      /* the count chip appears only when its equation resolves (below) */
+      if (ph.key !== "count") chipEls[i].classList.remove("hidden0");
       const t0 = performance.now();
+      const f1 = a.shape[1].toLocaleString("en-US");
+      const f2 = a.shape[2].toLocaleString("en-US");
+      const fd = a.shape[0].toLocaleString("en-US");
       const loop = now => {
         if (!st.isConnected) return;
         const p = clamp((now - t0) / ph.dur, 0, 1);
@@ -1640,9 +1889,17 @@ step({
         if (ph.key === "grid") D.grid = e;
         if (ph.key === "slabs") D.slabs = e;
         if (ph.key === "count"){
+          /* the equation builds in the caption, term by term — the chip
+             only appears once, already holding the resolved total */
           D.count = e;
-          const oneMap = a.shape[1] * a.shape[2];   // start the multiplication at one map
-          countChipV.textContent = fmtN(oneMap + (total - oneMap) * e);
+          if (p < .34){
+            cap.innerHTML = `multiply it out: <b>${f1} × ${f2}</b> cells in one map…`;
+          } else if (p < .68){
+            cap.innerHTML = `…times the stack: <b>${f1} × ${f2} × ${fd}</b>…`;
+          } else {
+            cap.innerHTML = `<b>${f1} × ${f2} × ${fd} = ${fmtN(total)}</b> temperature points`;
+            chipEls[2].classList.remove("hidden0");
+          }
         }
         if (ph.key === "bytes") D.bytes = e;
         draw();
@@ -1654,10 +1911,9 @@ step({
     function finishBuild(){
       if (!st.isConnected) return;
       built = true;
-      countChipV.textContent = fmtN(total);
-      cap.innerHTML = (DEMO
-        ? "demo mode — canned metadata · "
-        : "read live from the store's own metadata · ") +
+      cap.innerHTML = (S3_LIVE
+        ? "read live from the store's own metadata · "
+        : "from the store's published metadata · ") +
         "<b>hover any number</b> to see it in the drawing — then press <b>Start</b>";
       draw();
     }
@@ -1689,15 +1945,21 @@ step({
         "<i>all</i> of it. Say you want <b>one day</b> of sea temperature, around Italy:",
   mount(st){
     const inn = el("div", "stage-in fadein");
+    /* the window clips its children (overflow:hidden for the rounded corners),
+       so the joke sticker anchors to this wrapper instead */
+    const wrap = el("div");
+    wrap.style.cssText = "position:relative;";
     const win = el("div", "oldwin");
     win.innerHTML = `
       <div class="oldbar"><div class="wdots"><i></i><i></i><i></i></div>Downloading…</div>
       <div class="oldbody">
         <div class="fn">ocean_temperature_2002-2020_full.nc &nbsp;·&nbsp; 8.3 TB</div>
-        <div class="dlbar"><i id="dlfill"></i></div>
-        <div class="dlmeta"><span id="dlpct">0.00000%</span><span id="dleta">—</span></div>
+        <div class="dlbar"><i></i></div>
+        <div class="dlmeta"><span data-r="pct">0.00000%</span><span data-r="eta">—</span>
+        <span style="color:#8a8068">bar exaggerated 400× — at true scale it wouldn't visibly move</span></div>
       </div>`;
-    inn.appendChild(win);
+    wrap.appendChild(win);
+    inn.appendChild(wrap);
     inn.appendChild(el("div", "caption",
       `you wanted <b>one day, one sea</b> — <b>2.2&nbsp;MB</b>, ` +
       `<b>0.00003%</b> of this download`));
@@ -1709,29 +1971,36 @@ step({
     inn.appendChild(q);
     st.appendChild(inn);
     const TOTAL = 8349664104000, RATE = 300e6/8;   // bytes/s at 300 Mbit/s
-    const t0 = performance.now();
-    const tick = () => {
+    /* scoped refs + one rAF loop, t0 set on the FIRST FRAME — the bar can't
+       race a slow load or a stale global selector, and moves smoothly */
+    const fill = win.querySelector(".dlbar i");
+    const pctEl = win.querySelector('[data-r="pct"]');
+    const etaEl = win.querySelector('[data-r="eta"]');
+    let t0 = null;
+    const tick = now => {
       if (!st.isConnected) return;
-      const got = (performance.now() - t0) / 1000 * RATE;
+      if (t0 == null) t0 = now;
+      const got = (now - t0) / 1000 * RATE;
       const pct = got / TOTAL * 100;
       const left = (TOTAL - got) / RATE;
-      $("#dlfill") && ($("#dlfill").style.width = Math.max(.5, pct * 8) + "%");  // bar exaggerated 8× or it would look frozen
-      $("#dlpct") && ($("#dlpct").textContent = pct.toFixed(5) + "%  ·  " + fmtB(got) + " of 8.3 TB");
-      $("#dleta") && ($("#dleta").textContent =
-        "time remaining ≈ " + (left/3600).toFixed(1) + " hours (~2.6 days) — estimate at 300 Mbit/s home broadband");
-      setTimeout(tick, 250);
+      fill.style.width = Math.min(99, pct * 400) + "%";
+      pctEl.textContent = pct.toFixed(5) + "%  ·  " + fmtB(got) + " of 8.3 TB";
+      etaEl.textContent =
+        "time remaining ≈ " + (left/3600).toFixed(1) + " hours (~2.6 days) — estimate at 300 Mbit/s home broadband";
+      requestAnimationFrame(tick);
     };
-    tick();
-    setTimeout(() => {                          // 10 s in: drop the act
+    requestAnimationFrame(tick);
+    setTimeout(() => {                          // 5 s in: drop the act
       if (!st.isConnected) return;
       const bar = win.querySelector(".oldbar");
       if (bar) bar.innerHTML = `<div class="wdots"><i></i><i></i><i></i></div>Downloading… (not really)`;
-      const joke = el("div", "fn",
-        `okay, we're joking — <b>nothing is downloading</b>. It's a simulation, but the math is real: ` +
-        `at home-broadband speed this file takes <b>~2.6 days</b>. Madness.`);
-      joke.style.cssText = "margin-top:8px;color:var(--gold)";
-      win.querySelector(".oldbody").appendChild(joke);
-    }, 10000);
+      /* the confession is a sticker OVER the window — the bar keeps running
+         visibly underneath */
+      wrap.appendChild(el("div", "jokepop",
+        `okay, we're joking — <b>nothing is downloading</b>. It's a simulation, ` +
+        `but the math is real: at home-broadband speed this file takes ` +
+        `<b>~2.6 days</b>. Madness.`));
+    }, 5000);
   }
 });
 
@@ -1742,8 +2011,9 @@ const HERO = { dispR: 1, dispC: 3, latC: 2, lonC: 3, t: MOCK_T };
 step({
   act: 1,
   title: "Chunking",
-  copy: "Zarr cuts the data into blocks — <b>chunks</b> — along every axis. After the cut " +
-        "plays, <b>your pointer is the knife</b>: slide to scrub it, rest on a tile to lift one out.",
+  copy: "Zarr cuts the data into blocks — <b>chunks</b> — along every axis. " +
+        "<b>Your pointer is the knife</b>: it only ever cuts forward — rest on a " +
+        "tile to lift one out.",
   async mount(st){
     const inn = el("div", "stage-in fadein");
     const cv = planeCanvas(760, 380);
@@ -1855,7 +2125,7 @@ step({
         if (q < 1 && S.auto) requestAnimationFrame(step);
         else if (S.auto){
           S.heroT = [HERO.dispR, HERO.dispC];           // land with July's tile lifted
-          hint.innerHTML = `<b>slide</b> left ↔ right to scrub the cut · <b>rest on a tile</b> to lift it out`;
+          hint.innerHTML = `the cut is made — <b>rest on a tile</b> to lift it out`;
         }
       };
       requestAnimationFrame(step);
@@ -1865,7 +2135,8 @@ step({
       S.auto = false;
       const r = cv.getBoundingClientRect();
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-      S.targetP = clamp((mx - X + 30) / (W - 20), 0, 1);
+      /* the cut is a RATCHET: the pointer may only advance it, never un-cut */
+      S.targetP = Math.max(S.targetP, clamp((mx - X + 30) / (W - 20), 0, 1));
       // which tile is under the pointer? (approximate by the un-gapped grid)
       const fr = (my - Y) / H, fc = (mx - X) / W;
       if (fr >= 0 && fr < 1 && fc >= 0 && fc < 1 && S.targetP > .6){
@@ -1877,7 +2148,7 @@ step({
       } else {
         S.heroT = null;
         hint.innerHTML = S.targetP < .4
-          ? "slide right — the knife follows your pointer"
+          ? "slide right — the knife only cuts forward"
           : "rest on a tile to lift it out";
       }
       S._dirty = true;
@@ -1996,21 +2267,20 @@ step({
       });
       draw();
     }
-    // hover the map -> lat/lon segments update, changed axis glows; strip fades
+    // hover the map -> BOTH the lat and lon segments glow (the map fixes both
+    // coordinates); the months strip stays fully opaque
     cv.addEventListener("mousemove", ev => {
       const r = cv.getBoundingClientRect();
       const fx = clamp((ev.clientX - r.left - X) / W, 0, .999);
       const fy = clamp((ev.clientY - r.top - Y) / H, 0, .999);
       const dispC = Math.floor(fx * GC), dispR = Math.floor(fy * GR);
       const latC = GR - 1 - dispR, lonC = dispC;
-      const g = new Set();
-      if (latC !== S.latC) g.add(1);
-      if (lonC !== S.lonC) g.add(2);
-      if (g.size){ S.glow = g; S.latC = latC; S.lonC = lonC; render(); }
+      if (latC !== S.latC || lonC !== S.lonC ||
+          !(S.glow.size === 2 && S.glow.has(1) && S.glow.has(2))){
+        S.glow = new Set([1, 2]); S.latC = latC; S.lonC = lonC; render();
+      }
     });
-    /* the hover grammar: whichever axis widget you're on, the other fades */
-    cv.addEventListener("mouseenter", () => stripWrap.classList.add("dim"));
-    cv.addEventListener("mouseleave", () => stripWrap.classList.remove("dim"));
+    /* hovering the strip still dims the map (the month is the focus there) */
     stripWrap.addEventListener("mouseenter", () => cv.classList.add("dim"));
     stripWrap.addEventListener("mouseleave", () => cv.classList.remove("dim"));
     // hover the month strip -> time segment updates
@@ -2033,7 +2303,8 @@ step({
     const a = arrOf(t, "analysed_sst");
     cap.innerHTML = `NASA's full-size store works the same — ` +
       `${fmtN(a.chunk_grid[0])} × ${a.chunk_grid[1]} × ${a.chunk_grid[2]} positions = ` +
-      `<b>${fmtN(a.n_chunks)}</b> file names, all computed`;
+      `<b>${fmtN(a.n_chunks)}</b> file names, all computed · a reader computes these names ` +
+      `and simply fetches those files — <b>no index, no lookup service</b>`;
   }
 });
 
@@ -2236,266 +2507,56 @@ step({
   }
 });
 
-/* ---- 5 · reading data — three slow beats, then the real thing ------------ */
-let READ_RESULT = null;    // the real-store read, kept for the next steps
+/* ---- 5 · reading data: chunks in practice — one arc, beat-gated ------------
+   Merged from the old "Reading just the chunks you need" + "Chunks in
+   practice": one lesson, four beats, ONE live cold read from NASA's S3.
+   Beat 0 the ask · beat 1 the computed name · beat 2 the live read (blue
+   chunk + measured bars + the arrived patch) · beat 3 the CMIP6 comparison. */
 step({
   act: 2,
-  title: "Reading just the chunks you need",   // <!-- title TBD: Max deciding keep/skip -->
-  copy: "A read is three moves: <b>compute the names</b>, <b>fetch those files</b>, " +
-        "<b>paint</b>. Click through them here — then do the same against <b>NASA's " +
-        "full-size store</b>.",
+  title: "Reading data: chunks in practice",   // title TBD — Max may rename
+  copy: "Time to actually read something — <b>one day of sea temperature around " +
+        "Italy</b>, straight from NASA's full-size store. Step through what a " +
+        "reader really does:",
   async mount(st){
     const inn = el("div", "stage-in fadein");
     const row = el("div");
-    row.style.cssText = "display:flex; gap:20px; align-items:flex-start;";
-    const left = el("div");
-    left.style.cssText = "display:flex; flex-direction:column; gap:8px; align-items:center;";
-    const cv = planeCanvas(440, 232);
-    left.appendChild(cv);
-    const keys = el("div", "keygrid");
-    keys.style.visibility = "hidden";
-    left.appendChild(keys);
-    row.appendChild(left);
-    const side = el("div");
-    side.style.cssText = "width:300px; display:flex; flex-direction:column; gap:8px;";
-    const btn = el("button", "small primary", "1 · compute the names →");
-    const btnReal = el("button", "small", "Now do it for real: NASA's store, 8,000× bigger →");
-    btnReal.style.display = "none";
-    side.appendChild(btn); side.appendChild(btnReal);
-    /* the PINNED download panel — fixed height, updates in place, never scrolls */
+    row.style.cssText = "display:flex; gap:18px; align-items:center;";
+    const cube = planeCanvas(372, 400);
+    row.appendChild(cube);
+    const right = el("div");
+    right.style.cssText = "display:flex; flex-direction:column; gap:12px; width:420px; flex:none;";
+    /* beat 1 — the ONE computed file name */
+    const keyWrap = el("div");
+    keyWrap.style.cssText = "display:none; flex-direction:column; gap:4px;";
+    keyWrap.innerHTML = `
+      <div class="keylab">the file that holds it</div>
+      <div class="bigkey" style="font-size:18px"></div>`;
+    right.appendChild(keyWrap);
+    /* beat 2 — the PINNED download panel + the arrived patch beside it */
+    const panelRow = el("div");
+    panelRow.style.cssText = "display:none; gap:6px; align-items:flex-start;";
     const panel = el("div", "dlpanel");
-    panel.style.display = "none";
     panel.innerHTML = `
       <div class="dlh">live · one chunk from NASA's S3</div>
       <canvas class="cube" data-w="270" data-h="54" style="width:270px;height:54px"></canvas>
       <div class="pbar"><i></i></div>
       <div class="dlstat">waiting…</div>`;
-    side.appendChild(panel);
-    row.appendChild(side);
-    inn.appendChild(row);
-    const cap = el("div", "caption",
-      `the wish: <b>the whole July map</b> — ${fmtN(259200)} numbers ` +
-      `from the <span class="z">gold</span> selection`);
-    inn.appendChild(cap);
-    st.appendChild(inn);
-
-    const GR = 4, GC = 4, X = 10, Y = 6, W = 420, H = 210;
-    const lit = new Set();
-    let img = null, medMode = null;
-    function draw(){
-      if (!st.isConnected) return;
-      const { c } = setupCanvas(cv);
-      if (medMode){
-        // the real-store result: the Mediterranean patch, big
-        c.font = "12px Georgia, serif"; c.fillStyle = "#7b7260";
-        c.fillText("the seas around Italy — 2 June 2019 · real NASA data, 1-km cells", X, Y + 8);
-        const mw = 380, mh = 208;
-        c.fillStyle = "#eee7d4";
-        c.fillRect(X + 20, Y + 16, mw, mh);
-        c.imageSmoothingEnabled = true;
-        c.drawImage(medMode, X + 20, Y + 16, mw, mh);
-        c.strokeStyle = "#b8860b"; c.lineWidth = 2;
-        c.strokeRect(X + 20, Y + 16, mw, mh);
-        return;
-      }
-      paintFace(c, X, Y, W, H, { grid: [GR, GC] });
-      c.strokeStyle = "#b8860b"; c.lineWidth = 2.4;      // gold = the wish
-      c.strokeRect(X, Y, W, H);
-      if (img){
-        c.drawImage(img, X, Y, W, H);
-        c.strokeStyle = "rgba(90,75,40,.35)"; c.lineWidth = 1;
-        for (let i = 1; i < GC; i++){ c.beginPath(); c.moveTo(X+W*i/GC, Y); c.lineTo(X+W*i/GC, Y+H); c.stroke(); }
-        for (let i = 1; i < GR; i++){ c.beginPath(); c.moveTo(X, Y+H*i/GR); c.lineTo(X+W, Y+H*i/GR); c.stroke(); }
-        c.strokeStyle = "#a89e8a"; c.strokeRect(X, Y, W, H);
-      }
-      for (const k of lit){
-        const [r, cc] = k.split(",").map(Number);
-        c.fillStyle = img ? "rgba(31,143,184,0)" : "rgba(31,143,184,.4)";
-        if (!img) c.fillRect(X + cc*W/GC, Y + r*H/GR, W/GC, H/GR);
-        c.strokeStyle = "#1f8fb8"; c.lineWidth = 1.6;
-        c.strokeRect(X + cc*W/GC, Y + r*H/GR, W/GC, H/GR);
-      }
-    }
-    draw();
-
-    /* 16 name chips, in display order (top row first) */
-    const chipOf = [];
-    for (let i = 0; i < 16; i++){
-      const dispR = Math.floor(i/4), dispC = i%4;
-      const latC = GR - 1 - dispR, lonC = dispC;
-      const chip = el("i", null, `c/${MOCK_T}/${latC}/${lonC}`);
-      keys.appendChild(chip);
-      chipOf.push(chip);
-    }
-
-    let beat = 0, busy = false, res = null;
-    async function nextBeat(){
-      if (busy) return; busy = true;
-      btn.disabled = true;
-      if (beat === 0){
-        /* beat 1 — compute the names. only the names appear. */
-        keys.style.visibility = "";
-        keys.classList.add("fadein");
-        cap.innerHTML = `<b>move 1 — compute the names.</b> month ${MOCK_T} × lat 0–3 × ` +
-          `lon 0–3 → <b>16 file names</b>, by arithmetic alone`;
-        btn.textContent = "2 · fetch the files →";
-        beat = 1;
-      } else if (beat === 1){
-        /* beat 2 — fetch: tiles light one at a time, ~2 s of choreography */
-        cap.innerHTML = `<b>move 2 — fetch.</b> asking the store for those 16 files, ` +
-          `<span class="f">one file per tile</span>…`;
-        const promise = DEMO ? sleep(120).then(demoSliceMock)
-          : api(`/slice?file=${encodeURIComponent(MOCK)}&var=analysed_sst&plane=1,2` +
-                `&idx=${MOCK_T},0,0&r0=0&r1=360&c0=0&c1=720`);
-        for (let i = 0; i < 16; i++){
-          const dispR = Math.floor(i/4), dispC = i%4;
-          lit.add(`${dispR},${dispC}`);
-          chipOf[i].classList.add("hot");
-          if (i > 0) chipOf[i-1].classList.replace("hot", "done");
-          draw();
-          await sleep(115);
-        }
-        chipOf[15].classList.replace("hot", "done");
-        try { res = await promise; }
-        catch(e){
-          cap.innerHTML = `<span style="color:var(--miss)">${esc(e.message)}</span>`;
-          busy = false; btn.disabled = false; return;
-        }
-        if (!st.isConnected) return;
-        bump(res.cost, "mini-store read", true);
-        recordTouches(res.touched, "mock");
-        cap.innerHTML = `<b>16 files fetched</b> in <b>${Math.max(1, Math.round(res.cost.ms))} ms</b> ` +
-          `(the mini store is on disk) — the slow lighting was for your eyes` +
-          (DEMO ? " (demo: synthesized copy)" : "");
-        btn.textContent = "3 · paint the map →";
-        beat = 2;
-      } else if (beat === 2){
-        /* beat 3 — paint */
-        img = sliceImage(res, THERMAL, true);
-        draw();
-        const toC = k => (k - 273.15).toFixed(1);
-        cap.innerHTML = `<b>move 3 — paint.</b> real ocean temperatures, ` +
-          `<b>${toC(res.vmin)} – ${toC(res.vmax)} °C</b> · now feel what <b>scale</b> does to move 2 →`;
-        btn.style.display = "none";
-        btnReal.style.display = "";
-        btnReal.classList.add("primary");
-        beat = 3;
-      }
-      busy = false;
-      btn.disabled = false;
-    }
-    btn.onclick = nextBeat;
-
-    /* ---- the real S3 read: pinned panel, always cold ---- */
-    const pfill = panel.querySelector(".pbar i");
-    const pstat = panel.querySelector(".dlstat");
-    const pmap = panel.querySelector("canvas");
-    function drawPanelMap(){
-      const { c } = setupCanvas(pmap);
-      paintFace(c, 2, 2, 104, 50, {});
-      /* MUR chunk grid: 11 lat bands × 10 lon blocks; our chunk = (lat 7, lon 5) */
-      c.strokeStyle = "rgba(90,75,40,.25)"; c.lineWidth = .5;
-      for (let i = 1; i < 10; i++){ c.beginPath(); c.moveTo(2 + 104*i/10, 2); c.lineTo(2 + 104*i/10, 52); c.stroke(); }
-      for (let i = 1; i < 11; i++){ c.beginPath(); c.moveTo(2, 2 + 50*i/11); c.lineTo(106, 2 + 50*i/11); c.stroke(); }
-      const dr = 10 - 7, tw = 104/10, th = 50/11;      // lat counted from the south
-      c.fillStyle = "rgba(31,143,184,.75)";
-      c.fillRect(2 + 5*tw, 2 + dr*th, tw, th);
-      c.font = "10.5px Georgia, serif"; c.fillStyle = "#7b7260";
-      c.fillText("← the ONE chunk file", 116, 22);
-      c.fillText("out of 141,790", 116, 36);
-    }
-    const EXPECT = 13.4e6;                          // a cold Mediterranean chunk
-    let running = false;
-    async function runReal(){
-      if (running) return; running = true;
-      btnReal.disabled = true;
-      panel.style.display = "";
-      drawPanelMap();
-      pfill.style.width = "0%";
-      const t0 = performance.now();
-      pstat.innerHTML = `clearing every cache first — this read is <b>always cold</b>, ` +
-        `the wait is the honest cost`;
-      /* make it genuinely cold: the daemon forgets the store entirely.
-         then reopen it once (via /stats) BEFORE racing /slice against the
-         poller — otherwise two concurrent opens can split the meter. */
-      if (!DEMO){
-        try {
-          await api(`/clearcache?file=${encodeURIComponent(MUR)}`);
-          await api(`/stats?file=${encodeURIComponent(MUR)}`);
-        } catch(e){}
-      }
-      let poll = null, seen = 0;
-      if (!DEMO){
-        poll = setInterval(async () => {
-          try {
-            const sres = await api(`/stats?file=${encodeURIComponent(MUR)}`);
-            /* inflight = bytes of the object currently arriving, live */
-            seen = Math.max(seen, sres.net_bytes + (sres.inflight || 0));
-            pfill.style.width = clamp(seen / EXPECT * 100, 1.5, 99) + "%";
-            pstat.innerHTML = `<span class="sz">${fmtB(seen)}</span> of ~13.4 MB · ` +
-              `${((performance.now() - t0)/1000).toFixed(1)} s — one whole chunk must arrive`;
-          } catch(e){}
-        }, 300);
-      } else {
-        poll = setInterval(() => {
-          const p = clamp((performance.now() - t0) / 2500, 0, .99);
-          pfill.style.width = (p * 100) + "%";
-          pstat.innerHTML = `<span class="sz">${fmtB(EXPECT * p)}</span> of ~13.4 MB · ` +
-            `${((performance.now() - t0)/1000).toFixed(1)} s (demo: canned pace)`;
-        }, 200);
-      }
-      let r2;
-      try {
-        r2 = DEMO ? (await sleep(2500), demoSliceMURMed())
-          : await api(`/slice?file=${encodeURIComponent(MUR)}&var=analysed_sst&plane=1,2` +
-                      `&idx=${READ.t},0,0&r0=${READ.r0}&r1=${READ.r1}&c0=${READ.c0}&c1=${READ.c1}`);
-      } catch(e){
-        clearInterval(poll);
-        pstat.innerHTML = `<span style="color:var(--miss)">${esc(e.message)}</span>`;
-        running = false; btnReal.disabled = false; return;
-      }
-      clearInterval(poll);
-      if (!st.isConnected) return;
-      READ_RESULT = r2;
-      bump(r2.cost, "NASA store: Mediterranean, 1 day");
-      recordTouches(r2.touched, "mur");
-      pfill.style.width = "100%";
-      pstat.innerHTML = `<span class="sz">${fmtB(r2.cost.net_bytes)}</span> in ` +
-        `<b>${(r2.cost.ms/1000).toFixed(1)} s</b> — the file ` +
-        `<span class="z mono" style="font-size:10px">analysed_sst/1242.7.5</span>` +
-        (DEMO ? " (demo: canned copy)" : "");
-      medMode = sliceImage(r2, THERMAL, true);
-      keys.style.visibility = "hidden";
-      draw();
-      const toC = k => (k - 273.15).toFixed(1);
-      cap.innerHTML = `1.1 million real temperatures, <b>${toC(r2.vmin)} – ${toC(r2.vmax)} °C</b> · ` +
-        `the other <b>141,789</b> chunks? <b>never touched</b> · ` +
-        `NASA's older store spells names with dots — same idea`;
-      running = false;
-      btnReal.textContent = "↺ do it again — it clears the cache, so it's honest every time";
-      btnReal.disabled = false;
-    }
-    btnReal.onclick = runReal;
-  }
-});
-
-/* ---- 6 · the gotcha — one bar at a time, plus the datacube ---------------- */
-step({
-  act: 2,
-  title: "Chunks in practice",
-  copy: "Storage only hands out <b>whole files</b>: touch one number, receive its entire " +
-        "chunk. How much that hurts is the <i>publisher's</i> choice — step through it:",
-  async mount(st){
-    const inn = el("div", "stage-in fadein");
-    const row = el("div");
-    row.style.cssText = "display:flex; gap:22px; align-items:center;";
-    const cube = planeCanvas(300, 264);
-    row.appendChild(cube);
-    const right = el("div");
-    right.style.cssText = "display:flex; flex-direction:column; gap:14px; width:470px;";
+    panelRow.appendChild(panel);
+    const patchWrap = el("div");
+    patchWrap.style.cssText = "display:none; flex-direction:column; gap:4px; " +
+      "align-items:center; width:110px; flex:none;";
+    const patch = planeCanvas(110, 68);
+    patchWrap.appendChild(patch);
+    const patchCap = el("div", "caption", "the seas around Italy —<br>real 1-km data");
+    patchCap.style.cssText = "font-size:10.5px; line-height:1.35;";
+    patchWrap.appendChild(patchCap);
+    panelRow.appendChild(patchWrap);
+    right.appendChild(panelRow);
+    /* the measured bars — rows accumulate per beat */
     const cmpEl = el("div", "cmp");
     right.appendChild(cmpEl);
-    const beatBtn = el("button", "small primary", "So what did the store send? →");
+    const beatBtn = el("button", "small primary", "1 · compute the file's name →");
     const btnwrap = el("div"); btnwrap.style.cssText = "display:flex; justify-content:center;";
     btnwrap.appendChild(beatBtn);
     right.appendChild(btnwrap);
@@ -2504,10 +2565,8 @@ step({
     const cap = el("div", "caption");
     inn.appendChild(cap);
     st.appendChild(inn);
-    const asked = (READ.r1-READ.r0)*(READ.c1-READ.c0)*2;
-    const murGot = READ_RESULT && READ_RESULT.cost.net_bytes > 0
-      ? READ_RESULT.cost.net_bytes : 13384457;
-    const murMeasured = !!(READ_RESULT && READ_RESULT.cost.net_bytes > 0);
+
+    const asked = (READ.r1-READ.r0)*(READ.c1-READ.c0)*2;   // 2.24 MB of int16
     const cmipBytes = 80221890;
     const max = cmipBytes;
 
@@ -2542,68 +2601,238 @@ step({
           c.fillRect(xx, yy, 1.6, 1.6);
       c.globalAlpha = 1;
     }
-    function drawCube(beat){
+    /* ONE stable scene across all three beats — nothing morphs or re-lays-out.
+       The store box never changes; beat 2 ADDS the blue MUR chunk; beat 3 ADDS
+       the CMIP6 chunk while the blue one stays. Size ordering reads instantly:
+       store ≫ CMIP6 chunk ≫ MUR chunk ≫ your gold ask (not to scale). */
+    const SCENE = {
+      store: { x: 30, y: 316, w: 300, h: 212, d: 42 },
+      cmip:  { x: 76, y: 296, w: 176, h: 106, d: 22 },
+      mur:   { x: 108, y: 274, w: 66, h: 30, d: 8 },
+      ask:   { x: 120, y: 264, w: 14, h: 7, d: 2 },
+    };
+    /* cubePhase: 0 = store + gold ask · 1 = + the blue MUR chunk (only after
+       the read ARRIVES) · 2 = + the pink CMIP6 chunk (blue stays) */
+    function drawCube(phase, murBytes){
       const { c } = setupCanvas(cube);
-      const BX = 26, BY = 232;
-      /* constant context: the whole store as a ghost box — every beat lives inside it */
-      drawBox(c, BX, BY, 226, 148, 40, "rgba(90,75,40,.30)", "rgba(90,75,40,.03)");
+      const B = SCENE;
+      drawBox(c, B.store.x, B.store.y, B.store.w, B.store.h, B.store.d,
+              "rgba(90,75,40,.30)", "rgba(90,75,40,.03)");
+      if (phase >= 2)
+        drawBox(c, B.cmip.x, B.cmip.y, B.cmip.w, B.cmip.h, B.cmip.d,
+                "#c9366b", "rgba(201,54,107,.08)");
+      if (phase >= 1)
+        drawBox(c, B.mur.x, B.mur.y, B.mur.w, B.mur.h, B.mur.d,
+                "#1f8fb8", "rgba(31,143,184,.14)");
+      drawBox(c, B.ask.x, B.ask.y, B.ask.w, B.ask.h, B.ask.d,
+              "#b8860b", "rgba(245,227,175,.95)");
+      /* fixed legend — lines appear per phase, never move */
       c.font = "10.5px Georgia, serif"; c.fillStyle = "#a89e8a";
-      c.fillText("the whole store — 8.3 TB", BX, BY - 200);
-      c.font = "11px Georgia, serif"; c.fillStyle = "#7b7260";
-      if (beat === 0){
-        drawBox(c, BX + 92, BY - 62, 58, 30, 4, "#b8860b", "rgba(245,227,175,.9)");
-        c.fillText("your ask — one sea, 1 day thin", BX, BY + 22);
-      } else if (beat === 1){
-        drawBox(c, BX + 66, BY - 40, 130, 74, 20, "#1f8fb8", "rgba(31,143,184,.12)");
-        drawBox(c, BX + 92, BY - 62, 58, 30, 4, "#b8860b", "rgba(245,227,175,.9)");
-        c.fillText("what traveled (blue) — your ask rides inside", BX, BY + 22);
-      } else {
-        drawBox(c, BX + 30, BY - 16, 180, 118, 34, "#c9366b", "rgba(201,54,107,.10)");
-        drawBox(c, BX + 100, BY - 60, 26, 14, 2, "#b8860b", "rgba(245,227,175,.95)");
-        c.fillText("a CMIP6 chunk — your ask is the speck", BX, BY + 22);
+      c.fillText("the whole store — 8.3 TB", B.store.x, B.store.y - B.store.h - 32);
+      c.font = "11px Georgia, serif";
+      c.fillStyle = "#7a5807";
+      c.fillText("■ your ask — one sea, one day thin (2.2 MB)", 30, 344);
+      if (phase >= 1){
+        c.fillStyle = "#1f6f8f";
+        c.fillText(`■ the chunk that traveled — ${fmtB(murBytes || 13384457)} (stays put)`, 30, 361);
+      }
+      if (phase >= 2){
+        c.fillStyle = "#a52c56";
+        c.fillText("■ one CMIP6 chunk — 80 MB, same ask", 30, 378);
       }
       c.fillStyle = "#a89e8a"; c.font = "10px Georgia, serif";
-      c.fillText("not to scale", 234, 258);
+      c.fillText("not to scale", 322, 396);
+    }
+    function addBar(lb, v, color, note){
+      const rowEl = el("div", "row fadein");
+      rowEl.innerHTML = `<div class="lb">${lb}</div>
+        <div class="tr"><i style="background:${color};width:${Math.max(0.7, v/max*100)}%"></i></div>
+        <div class="val">${fmtB(v)}</div>`;
+      rowEl.querySelector(".tr").title = note;
+      cmpEl.appendChild(rowEl);
     }
 
-    const BEATS = [
-      { lb: `you asked for<br><b>one day, one sea</b>`, v: asked, color: "#b8860b",
-        note: "what you wanted (raw numbers)",
-        cap: `` },
-      { lb: `the ocean store sent<br><b>one whole chunk</b>`, v: murGot, color: "#1f8fb8",
-        note: murMeasured ? "measured on the previous step" : "measured 2026-07-20",
-        cap: `the chunk holding your sea is a <b>5-day block</b> — 6× your ask` },
-      { lb: `a climate store<br><b>would have sent</b>`, v: cmipBytes, color: "#c9366b",
-        note: "CMIP6 world-climate archive (canned object size, measured 2026-07-20)",
-        cap: `CMIP6 packed <b>50 years per chunk</b> — touch one month, receive 80 MB · ` +
-             `<b>chunk size is a promise about how the data will be read</b>` },
-    ];
-    let beat = 0;
-    function show(){
-      const B = BEATS[beat];
-      const rowEl = el("div", "row fadein");
-      rowEl.innerHTML = `<div class="lb">${B.lb}</div>
-        <div class="tr"><i style="background:${B.color};width:${Math.max(0.7, B.v/max*100)}%"></i></div>
-        <div class="val">${fmtB(B.v)}</div>`;
-      rowEl.querySelector(".tr").title = B.note;
-      cmpEl.appendChild(rowEl);
-      drawCube(beat);
-      cap.innerHTML = B.cap;
-      beat++;
-      if (beat === 2) beatBtn.textContent = "And a store built for centuries, not days? →";
-      if (beat >= BEATS.length) beatBtn.style.display = "none";
+    /* the file name, computed live from the store's own metadata when we
+       have it (the same arithmetic the daemon's read will do) */
+    const keyPromise = (async () => {
+      const t = await loadTree(MUR).catch(() => DEMO_TREES[MUR]);
+      const a = arrOf(t, "analysed_sst");
+      const ch = a.chunks || a.shape;
+      const kc = [Math.floor(READ.t / ch[0]),
+                  Math.floor(READ.r0 / ch[1]),
+                  Math.floor(READ.c0 / ch[2])];
+      return { key: chunkKey(a, kc), kc, ch };
+    })();
+
+    /* ---- the real S3 read (beat 2): pinned panel, always cold ---- */
+    const pfill = panel.querySelector(".pbar i");
+    const pstat = panel.querySelector(".dlstat");
+    const pmap = panel.querySelector("canvas");
+    function drawPanelMap(){
+      const { c } = setupCanvas(pmap);
+      paintFace(c, 2, 2, 104, 50, {});
+      /* MUR chunk grid: 11 lat bands × 10 lon blocks; our chunk = (lat 7, lon 5) */
+      c.strokeStyle = "rgba(90,75,40,.25)"; c.lineWidth = .5;
+      for (let i = 1; i < 10; i++){ c.beginPath(); c.moveTo(2 + 104*i/10, 2); c.lineTo(2 + 104*i/10, 52); c.stroke(); }
+      for (let i = 1; i < 11; i++){ c.beginPath(); c.moveTo(2, 2 + 50*i/11); c.lineTo(106, 2 + 50*i/11); c.stroke(); }
+      const dr = 10 - 7, tw = 104/10, th = 50/11;      // lat counted from the south
+      c.fillStyle = "rgba(31,143,184,.75)";
+      c.fillRect(2 + 5*tw, 2 + dr*th, tw, th);
+      c.font = "10.5px Georgia, serif"; c.fillStyle = "#7b7260";
+      c.fillText("← the ONE chunk file", 116, 22);
+      c.fillText("out of 141,790", 116, 36);
     }
-    beatBtn.onclick = show;
-    show();
+    function drawPatch(res){
+      const img = sliceImage(res, THERMAL, true);
+      if (!img) return;
+      const { c } = setupCanvas(patch);
+      c.fillStyle = "#eee7d4"; c.fillRect(0, 0, 110, 68);
+      c.imageSmoothingEnabled = true;
+      c.drawImage(img, 0, 0, 110, 68);
+      c.strokeStyle = "#b8860b"; c.lineWidth = 2;
+      c.strokeRect(1, 1, 108, 66);
+    }
+    const EXPECT = 13.4e6;                          // a cold Mediterranean chunk
+    async function runReal(theKey){
+      panel.parentElement.style.display = "flex";   // panelRow
+      drawPanelMap();
+      pfill.style.width = "0%";
+      const t0 = performance.now();
+      pstat.innerHTML = S3_LIVE
+        ? `clearing every cache first — this read is <b>always cold</b>, ` +
+          `the wait is the honest cost`
+        : `here the numbers are the ones this read really moved (live in the ` +
+          `desktop app / a Fused UDF) — this page can't reach S3 directly`;
+      /* make it genuinely cold: the daemon forgets the store entirely.
+         then reopen it once (via /stats) BEFORE racing /slice against the
+         poller — otherwise two concurrent opens can split the meter.
+         Only the local app has the daemon; hosted/standalone play the
+         measured cost back at a canned pace. */
+      if (S3_LIVE){
+        try {
+          await api(`/clearcache?file=${encodeURIComponent(MUR)}`);
+          await api(`/stats?file=${encodeURIComponent(MUR)}`);
+        } catch(e){}
+      }
+      let poll = null, seen = 0;
+      if (S3_LIVE){
+        poll = setInterval(async () => {
+          try {
+            const sres = await api(`/stats?file=${encodeURIComponent(MUR)}`);
+            /* inflight = bytes of the object currently arriving, live */
+            seen = Math.max(seen, sres.net_bytes + (sres.inflight || 0));
+            pfill.style.width = clamp(seen / EXPECT * 100, 1.5, 99) + "%";
+            pstat.innerHTML = `<span class="sz">${fmtB(seen)}</span> of ~13.4 MB · ` +
+              `${((performance.now() - t0)/1000).toFixed(1)} s — one whole chunk must arrive`;
+          } catch(e){}
+        }, 300);
+      } else {
+        poll = setInterval(() => {
+          const p = clamp((performance.now() - t0) / 2500, 0, .99);
+          pfill.style.width = (p * 100) + "%";
+          pstat.innerHTML = `<span class="sz">${fmtB(EXPECT * p)}</span> of ~13.4 MB · ` +
+            `${((performance.now() - t0)/1000).toFixed(1)} s (played back at a canned pace)`;
+        }, 200);
+      }
+      let r2;
+      try {
+        r2 = S3_LIVE
+          ? await api(`/slice?file=${encodeURIComponent(MUR)}&var=analysed_sst&plane=1,2` +
+                      `&idx=${READ.t},0,0&r0=${READ.r0}&r1=${READ.r1}&c0=${READ.c0}&c1=${READ.c1}`)
+          : (await sleep(2500), demoSliceMURMed());
+      } catch(e){
+        clearInterval(poll);
+        pstat.innerHTML = `<span style="color:var(--miss)">${esc(e.message)}</span>`;
+        throw e;
+      }
+      clearInterval(poll);
+      if (!st.isConnected) return null;
+      bump(r2.cost, "NASA store: Mediterranean, 1 day");
+      recordTouches(r2.touched, "mur");
+      pfill.style.width = "100%";
+      pstat.innerHTML = `<span class="sz">${fmtB(r2.cost.net_bytes)}</span> in ` +
+        `<b>${(r2.cost.ms/1000).toFixed(1)} s</b> — the file ` +
+        `<span class="z mono" style="font-size:10px">${esc(theKey)}</span>` +
+        (!S3_LIVE ? " (canned copy)" : "");
+      return r2;
+    }
+
+    /* ---- the four beats, strictly gated ---- */
+    let beat = 0, busy = false;
+    let lastGot = 13384457;   // the measured chunk size, for beat 3's redraw
+    /* beat 0 — on entry: the store, the gold ask, the asked bar */
+    drawCube(0);
+    addBar(`you want<br><b>one day, one sea</b>`, asked, "#b8860b",
+           "what you asked for (raw numbers)");
+    cap.innerHTML = `you want <b>one day of sea temperature around Italy</b> — ` +
+      `a <b>2.2 MB</b> sliver of an 8.3 TB store`;
+    async function nextBeat(){
+      if (busy) return; busy = true;
+      beatBtn.disabled = true;
+      if (beat === 0){
+        /* beat 1 — the ONE computed name appears */
+        const { key, kc } = await keyPromise;
+        if (!st.isConnected) return;
+        keyWrap.style.display = "flex";
+        keyWrap.classList.add("fadein");
+        keyWrap.querySelector(".bigkey").innerHTML =
+          `<span class="pre">analysed_sst/</span><span class="seg glow">${kc[0]}</span>` +
+          `<span class="pre">.</span><span class="seg glow">${kc[1]}</span>` +
+          `<span class="pre">.</span><span class="seg glow">${kc[2]}</span>`;
+        cap.innerHTML = `day ${READ.t.toLocaleString("en-US")} ÷ 5-day chunks → slab ` +
+          `<b>${kc[0]}</b> · lat band <b>${kc[1]}</b> · lon block <b>${kc[2]}</b> — ` +
+          `<b>computed from the position, not looked up</b>`;
+        beatBtn.textContent = "2 · ask NASA's store for that file →";
+        beat = 1;
+      } else if (beat === 1){
+        /* beat 2 — the live read, front and center; the wait IS the lesson */
+        const { key } = await keyPromise;
+        beatBtn.textContent = "fetching — one whole chunk must arrive…";
+        cap.innerHTML = `asking NASA's store on S3 for that one file — nothing else`;
+        let r2 = null;
+        try { r2 = await runReal(key); }
+        catch(e){ busy = false; beatBtn.disabled = false;
+                  beatBtn.textContent = "2 · ask NASA's store for that file →"; return; }
+        if (!st.isConnected || !r2) return;
+        const got = r2.cost.net_bytes > 0 ? r2.cost.net_bytes : 13384457;
+        lastGot = got;
+        drawCube(1, got);
+        addBar(`the store sent<br><b>one whole chunk</b>`, got, "#1f8fb8",
+               r2.cost.net_bytes > 0 ? "measured just now" : "served by the local cache; cold it's ~13.4 MB");
+        patchWrap.style.display = "flex";
+        patchWrap.classList.add("fadein");
+        drawPatch(r2);
+        const toC = k => (k - 273.15).toFixed(1);
+        cap.innerHTML = `storage hands out <b>whole files</b>: your 2.2 MB ask arrived as a ` +
+          `<b>${fmtB(got)}</b> 5-day chunk — with 1.1 million real temperatures, ` +
+          `<b>${toC(r2.vmin)} – ${toC(r2.vmax)} °C</b> · NASA's older store spells names ` +
+          `with dots — same idea`;
+        beatBtn.textContent = "3 · and a store built for centuries, not days? →";
+        beat = 2;
+      } else if (beat === 2){
+        /* beat 3 — the CMIP6 comparison; the blue chunk stays put */
+        drawCube(2, lastGot);
+        addBar(`a climate store<br><b>would have sent</b>`, cmipBytes, "#c9366b",
+               "CMIP6 world-climate archive (canned object size, measured 2026-07-20)");
+        cap.innerHTML = `CMIP6 packed <b>50 years per chunk</b> — touch one month, receive 80 MB · ` +
+          `<b>chunk size is a promise about how the data will be read</b>`;
+        beatBtn.style.display = "none";
+        beat = 3;
+      }
+      busy = false;
+      beatBtn.disabled = false;
+    }
+    beatBtn.onclick = nextBeat;
   }
 });
 
-/* ---- 7 · sharding — the 16 familiar tiles pack into one file -------------- */
+/* ---- 6 · sharding — the 16 familiar tiles pack into one file -------------- */
 step({
   act: 2,
   title: "Sharding",
   copy: "Small chunks read cheap, but a big dataset becomes <b>millions of tiny files</b>. " +
-        "A <b>shard</b> bundles many chunks into one file, with a tiny index saying where each sits.",
+        "A <b>shard</b> is one bigger file that packs many chunks side by side, with a tiny " +
+        "index at the end recording where each chunk sits.",
   async mount(st){
     const inn = el("div", "stage-in fadein");
     const cv = planeCanvas(760, 330);
@@ -2682,7 +2911,7 @@ step({
         } else {
           const ghost = packed;
           const hot = hov === i;
-          const alpha = ghost ? (hot ? 1 : (dimAll ? .12 : .38)) : 1;
+          const alpha = ghost ? (hot ? 1 : (dimAll ? .25 : .38)) : 1;
           drawTile(c, t, gx, gy, gw, gh, alpha, hot);
           c.font = "600 9px 'SF Mono', Menlo, monospace";
           c.fillStyle = hot ? "#7a5807" : (dimAll ? "rgba(168,158,138,.35)" : "#a89e8a");
@@ -2692,6 +2921,18 @@ step({
       if (!packed && phase === 0){
         c.font = "11px Georgia, serif"; c.fillStyle = "#7b7260";
         c.fillText("16 separate files on storage — every read = one round-trip each", GX, SY + 8);
+        /* the idle right half earns its keep: why tiny files hurt */
+        c.font = "600 13px Georgia, serif"; c.fillStyle = "#4d463a";
+        c.fillText("why pack them at all?", TXX, TXY + 14);
+        c.font = "12.5px Georgia, serif"; c.fillStyle = "#7b7260";
+        ["This mini store: 16 tiles per month.",
+         "NASA's real store: 141,790 files.",
+         "A 10 m global store: 141 million files.",
+         "",
+         "Object storage lists, bills and throttles",
+         "per file — millions of tiny files make",
+         "copying and reading painfully slow."]
+          .forEach((s, i) => c.fillText(s, TXX, TXY + 40 + i * 20));
       }
       if (packed){
         /* the shard file, seen as bytes */
@@ -2743,19 +2984,24 @@ step({
     function hitTest(ev){
       const r = cv.getBoundingClientRect();
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-      for (let i = 0; i < 16; i++){
-        const [gx, gy, gw, gh] = tileRect(T[i]);
-        if (mx >= gx && mx <= gx + gw && my >= gy && my <= gy + gh + 12) return i;
+      /* containing-cell math over the WHOLE grid area — the gaps between
+         tiles belong to their nearest tile, so hover never flickers */
+      const cellW = TW + GAP, cellH = TH + GAP + 13;
+      if (mx >= GX - GAP && mx < GX + 4*cellW && my >= GY - GAP && my < GY + 4*cellH){
+        const col = clamp(Math.floor((mx - GX) / cellW), 0, 3);
+        const rw2 = clamp(Math.floor((my - GY) / cellH), 0, 3);
+        return rw2 * 4 + col;
       }
       if (phase === 1 && anim >= 1){
-        for (let i = 0; i < 16; i++){
-          const [bx, by, bw, bh] = bandRect(i);
-          if (mx >= bx && mx <= bx + bw && my >= by - 2 && my <= by + bh + 2) return i;
+        /* the byte strip: continuous, resolve by byte offset */
+        if (my >= SY - 6 && my <= SY + SH + 6 && mx >= SX && mx <= SX + SW + IW){
+          const f = clamp((mx - SX) / SW, 0, .9999) * totalB;
+          for (let i = 0; i < 16; i++) if (f < offs[i + 1]) return i;
+          return 15;
         }
-        for (let i = 0; i < 16; i++){
-          const [rx, ry, rw, rh] = rowRect(i);
-          if (mx >= rx - 3 && mx <= rx + rw && my >= ry - 1 && my <= ry + rh - 1) return i;
-        }
+        /* the index table: contiguous rows, no dead zones */
+        if (mx >= TXX - 6 && mx <= TXX + 300 && my >= TXY + 16 && my < TXY + 18 + 16*TRH)
+          return clamp(Math.floor((my - (TXY + 18)) / TRH), 0, 15);
       }
       return -1;
     }
@@ -2800,9 +3046,125 @@ step({
   }
 });
 
-/* ---- 8 · the receipt — ledger + the session's chunks lit in a datacube ---- */
+/* ---- 7 · the format landscape — all four on one page ------------------------ */
 step({
   act: 3,
+  title: "Where Zarr sits among the formats",
+  copy: "Zarr's neighbours each solve a different problem. <b>Hover a card</b> to focus on it:",
+  mount(st){
+    const inn = el("div", "stage-in fadein");
+    const grid = el("div", "fmtgrid");
+    inn.appendChild(grid);
+    const cap = el("div", "caption",
+      "files-with-names (Zarr, Parquet) travel well · sealed containers (NetCDF/HDF5) don't");
+    inn.appendChild(cap);
+    st.appendChild(inn);
+
+    function icon(kind){
+      // pixel icons from the inlined library (zarr / cog / netcdf / parquet)
+      const NAME = { zarr: "zarr", cog: "cog", hdf: "netcdf", parquet: "parquet" };
+      return pixIcon(NAME[kind], 64, "margin:1px 0 3px;");
+    }
+    const CARDS = [
+      { kind: "zarr", name: "Zarr", tag: "many small named files",
+        a: "Cuts a grid of numbers into chunk files with computable names.",
+        b: "<b>Shines:</b> huge weather / ocean / satellite cubes in the cloud, many machines reading at once." },
+      { kind: "cog", name: "GeoTIFF (and its cloud cousin, COG)", tag: "one big image file",
+        a: "The standard file for a single map image; the cloud-friendly version arranges " +
+           "its insides so readers can grab one region without the whole file.",
+        b: "<b>Shines:</b> individual satellite images and maps. <b>Struggles:</b> data with " +
+           "more axes than a flat image — like our time × lat × lon cube." },
+      { kind: "hdf", name: "NetCDF / HDF5", tag: "one big scientific container",
+        a: "The classic science formats: the whole cube, metadata and all, sealed in a " +
+           "single clever file.",
+        b: "<b>Shines:</b> archives and laptop analysis. <b>Struggles:</b> over the web — one " +
+           "big file, and everyone contends for it." },
+      { kind: "parquet", name: "Parquet", tag: "Zarr's sibling, for tables",
+        a: "The same cloud trick applied to tables — rows and columns instead of grids " +
+           "of numbers.",
+        b: "<b>Shines:</b> big tabular data (measurements, logs, features). If your data " +
+           "looks like a spreadsheet, this is your Zarr." },
+    ];
+    const cardEls = CARDS.map((C, i) => {
+      const card = el("div", "fmtc");
+      card.appendChild(icon(C.kind));
+      card.appendChild(el("div", "ftag", C.tag));
+      card.appendChild(el("div", "fname", C.name));
+      card.appendChild(el("div", "fline", C.a));
+      card.appendChild(el("div", "fline", C.b));
+      grid.appendChild(card);
+      setTimeout(() => { if (st.isConnected) card.classList.add("in"); }, 150 + i * 220);
+      return card;
+    });
+    /* the hover grammar: the card you're on stays, the rest fade */
+    cardEls.forEach(card => {
+      card.addEventListener("mouseenter", () => cardEls.forEach(x => {
+        x.classList.toggle("dim", x !== card);
+        x.classList.toggle("hot", x === card);
+      }));
+      card.addEventListener("mouseleave", () => cardEls.forEach(x => {
+        x.classList.remove("dim"); x.classList.remove("hot");
+      }));
+    });
+  }
+});
+
+/* ---- 8 · real datasets to explore ------------------------------------------ */
+let PENDING_FILE = null;
+step({
+  act: 3,
+  title: "Real Zarr stores you can open right now",
+  copy: "Every dataset in this story is public — no account, no key. <b>Click one</b> to " +
+        "open it in the playground:",
+  mount(st){
+    const inn = el("div", "stage-in fadein");
+    const grid = el("div", "dsgrid");
+    const DS = [
+      [MUR, "Ocean temperature (MUR)", "this story's real store — every km of sea surface, " +
+        "daily since 2002 · 8.3 TB", "globe"],
+      [GEFS, "35-day weather forecast (NOAA GEFS)", "five axes: forecast start × 31 parallel " +
+        "runs × lead time × lat × lon · sharded v3 · 49 TB", "clock_wait"],
+      [CMIP6, "World climate runs (CMIP6)", "the 80 MB-chunk climate archive from the " +
+        "reading step — model temperature 1850–2014", "cube"],
+      [WSF, "Where humans built things (WSF)", "world settlement footprint at 10 m — " +
+        "92,000 chunks · 8 TB", "chunks_grid"],
+    ];
+    for (const [f, name, desc, glyph] of DS){
+      const cardEl = el("button", "dscard");
+      cardEl.innerHTML = `<div class="dn">${name}</div><div class="dd">${desc}</div>` +
+        `<div class="dgo">open in the playground →</div>`;
+      const dn = cardEl.querySelector(".dn");
+      dn.style.cssText = "display:flex; align-items:center; gap:9px;";
+      dn.prepend(pixIcon(glyph, 28, "flex:none;"));
+      cardEl.onclick = () => {
+        PENDING_FILE = f;
+        P.set && P.set("file", f);
+        go(steps.findIndex(s2 => s2.id === "playground"));   // step 9
+      };
+      grid.appendChild(cardEl);
+    }
+    inn.appendChild(grid);
+    st.appendChild(inn);
+  }
+});
+
+/* ---- 9 · playground --------------------------------------------------------- */
+step({
+  id: "playground",
+  act: 4,
+  nextLabel: "See your receipt →",
+  title: "Your turn: open any Zarr store",
+  copy: "Pick a store, choose an array, drag the gold bars, and read. It starts on the " +
+        "instant <b>mini practice store</b> — the cloud stores are one chip away.",
+  mount(st){
+    st.appendChild(playground());
+  }
+});
+
+/* ---- 10 · the receipt (FINAL step) — ledger + the session's chunks in a datacube ---- */
+step({
+  id: "receipt",
+  act: 5,
   title: "Your data receipt",
   copy: "Step back: here's what your session actually cost. Every chunk you pulled " +
         "glows in the cube — <b>hover one</b> for its file.",
@@ -2976,121 +3338,8 @@ step({
   }
 });
 
-/* ---- 9 · the format landscape — all four on one page ------------------------ */
-step({
-  act: 3,
-  title: "Where Zarr sits among the formats",
-  copy: "Zarr's neighbours each solve a different problem. <b>Hover a card</b> to focus on it:",
-  mount(st){
-    const inn = el("div", "stage-in fadein");
-    const grid = el("div", "fmtgrid");
-    inn.appendChild(grid);
-    const cap = el("div", "caption",
-      "files-with-names (Zarr, Parquet) travel well · sealed containers (NetCDF/HDF5) don't");
-    inn.appendChild(cap);
-    st.appendChild(inn);
-
-    function icon(kind){
-      // pixel icons from the inlined library (zarr / cog / netcdf / parquet)
-      const NAME = { zarr: "zarr", cog: "cog", hdf: "netcdf", parquet: "parquet" };
-      return pixIcon(NAME[kind], 64, "margin:1px 0 3px;");
-    }
-    const CARDS = [
-      { kind: "zarr", name: "Zarr", tag: "many small named files",
-        a: "Cuts a grid of numbers into chunk files with computable names.",
-        b: "<b>Shines:</b> huge weather / ocean / satellite cubes in the cloud, many machines reading at once." },
-      { kind: "cog", name: "GeoTIFF (and its cloud cousin, COG)", tag: "one big image file",
-        a: "The standard file for a single map image; the cloud-friendly version arranges " +
-           "its insides so readers can grab one region without the whole file.",
-        b: "<b>Shines:</b> individual satellite images and maps. <b>Struggles:</b> data with " +
-           "more axes than a flat image — like our time × lat × lon cube." },
-      { kind: "hdf", name: "NetCDF / HDF5", tag: "one big scientific container",
-        a: "The classic science formats: the whole cube, metadata and all, sealed in a " +
-           "single clever file.",
-        b: "<b>Shines:</b> archives and laptop analysis. <b>Struggles:</b> over the web — one " +
-           "big file, and everyone contends for it." },
-      { kind: "parquet", name: "Parquet", tag: "Zarr's sibling, for tables",
-        a: "The same cloud trick applied to tables — rows and columns instead of grids " +
-           "of numbers.",
-        b: "<b>Shines:</b> big tabular data (measurements, logs, features). If your data " +
-           "looks like a spreadsheet, this is your Zarr." },
-    ];
-    const cardEls = CARDS.map((C, i) => {
-      const card = el("div", "fmtc");
-      card.appendChild(icon(C.kind));
-      card.appendChild(el("div", "ftag", C.tag));
-      card.appendChild(el("div", "fname", C.name));
-      card.appendChild(el("div", "fline", C.a));
-      card.appendChild(el("div", "fline", C.b));
-      grid.appendChild(card);
-      setTimeout(() => { if (st.isConnected) card.classList.add("in"); }, 150 + i * 220);
-      return card;
-    });
-    /* the hover grammar: the card you're on stays, the rest fade */
-    cardEls.forEach(card => {
-      card.addEventListener("mouseenter", () => cardEls.forEach(x => {
-        x.classList.toggle("dim", x !== card);
-        x.classList.toggle("hot", x === card);
-      }));
-      card.addEventListener("mouseleave", () => cardEls.forEach(x => {
-        x.classList.remove("dim"); x.classList.remove("hot");
-      }));
-    });
-  }
-});
-
-/* ---- 10 · real datasets to explore ----------------------------------------- */
-let PENDING_FILE = null;
-step({
-  act: 3,
-  title: "Real Zarr stores you can open right now",
-  copy: "Every dataset in this story is public — no account, no key. <b>Click one</b> to " +
-        "open it in the playground:",
-  mount(st){
-    const inn = el("div", "stage-in fadein");
-    const grid = el("div", "dsgrid");
-    const DS = [
-      [MUR, "Ocean temperature (MUR)", "this story's real store — every km of sea surface, " +
-        "daily since 2002 · 8.3 TB", "globe"],
-      [GEFS, "35-day weather forecast (NOAA GEFS)", "five axes: forecast start × 31 parallel " +
-        "runs × lead time × lat × lon · sharded v3 · 49 TB", "clock_wait"],
-      [CMIP6, "World climate runs (CMIP6)", "the 80 MB-chunk climate archive from the " +
-        "all-or-nothing step — model temperature 1850–2014", "cube"],
-      [WSF, "Where humans built things (WSF)", "world settlement footprint at 10 m — " +
-        "92,000 chunks · 8 TB", "chunks_grid"],
-    ];
-    for (const [f, name, desc, glyph] of DS){
-      const cardEl = el("button", "dscard");
-      cardEl.innerHTML = `<div class="dn">${name}</div><div class="dd">${desc}</div>` +
-        `<div class="dgo">open in the playground →</div>`;
-      const dn = cardEl.querySelector(".dn");
-      dn.style.cssText = "display:flex; align-items:center; gap:9px;";
-      dn.prepend(pixIcon(glyph, 28, "flex:none;"));
-      cardEl.onclick = () => {
-        PENDING_FILE = f;
-        P.set && P.set("file", f);
-        go(steps.length - 1);
-      };
-      grid.appendChild(cardEl);
-    }
-    inn.appendChild(grid);
-    st.appendChild(inn);
-  }
-});
-
-/* ---- 11 · playground -------------------------------------------------------- */
-step({
-  act: 4,
-  title: "Your turn: open any Zarr store",
-  copy: "Pick a store, choose an array, drag the gold bars, and read. It starts on the " +
-        "instant <b>mini practice store</b> — the cloud stores are one chip away.",
-  mount(st){
-    st.appendChild(playground());
-  }
-});
-
 /* ================================================================
-   the playground (final step)
+   the playground (step 9)
    ================================================================ */
 function playground(){
   const root = el("div", "pg fadein");
@@ -3114,9 +3363,10 @@ function playground(){
   const readB = el("button", "small primary", "Read this slice");
   btnRow.appendChild(readB);
   L.appendChild(btnRow);
-  const log = el("div", "pgNarr", DEMO
-    ? "demo mode — no probe daemon, so only canned stores are loaded"
-    : "pick a store and read something — the cube shows every chunk it touches");
+  const log = el("div", "pgNarr",
+    S3_LIVE ? "pick a store and read something — the cube shows every chunk it touches"
+    : MOCK_LIVE ? "the mini store reads live right here; the remote stores read live in the FusedRender desktop app"
+    : "demo mode — only the canned mini store reads here");
   L.appendChild(log);
   const cwrap = el("div", "cwrap");
   const cv = el("canvas", "cube");
@@ -3325,11 +3575,16 @@ function playground(){
     say("fetching the chunks your slice touches…");
     let res;
     try {
-      res = DEMO && S.file === MOCK ? (await sleep(150), demoSliceMock())
-        : DEMO ? (() => { throw new Error("demo mode — reads on this store need the live probe"); })()
-        : await api(`/slice?file=${encodeURIComponent(S.file)}&var=${encodeURIComponent(a.path)}` +
+      res = S.file === MOCK && MOCK_LIVE
+        ? await ZR.slice({ file: MOCK, var: a.path, plane: [d0, d1], idx: S.idx,
+                           r0: S.win[0], r1: S.win[1], c0: S.win[2], c1: S.win[3] })
+        : S3_LIVE
+        ? await api(`/slice?file=${encodeURIComponent(S.file)}&var=${encodeURIComponent(a.path)}` +
             `&plane=${d0},${d1}&idx=${S.idx.join(",")}` +
-            `&r0=${S.win[0]}&r1=${S.win[1]}&c0=${S.win[2]}&c1=${S.win[3]}`);
+            `&r0=${S.win[0]}&r1=${S.win[1]}&c0=${S.win[2]}&c1=${S.win[3]}`)
+        : S.file === MOCK
+        ? (await sleep(150), demoSliceMock())
+        : (() => { throw new Error("this store reads live only in the FusedRender desktop app"); })();
     } catch(e){
       say(`<span style="color:var(--miss)">${esc(e.message)}</span>`);
       S.reading = false; updateEst(); return;
@@ -3420,13 +3675,17 @@ function go(i){
     dots.appendChild(d);
   });
   $("#back").disabled = i === 0;
-  $("#next").textContent = i === 0 ? "Start →" : (i === steps.length - 1 ? "The end" : "Next →");
-  $("#next").disabled = i === steps.length - 1;
+  /* the final step (the receipt) has no dead "The end" — it offers a restart */
+  $("#next").textContent = i === 0 ? "Start →"
+    : i === steps.length - 1 ? "↺ start over"
+    : (s.nextLabel || "Next →");
+  $("#next").disabled = false;
   P.set && P.set("step", String(i));
   footNote();
 }
 $("#back").addEventListener("click", () => go(cur - 1));
-$("#next").addEventListener("click", () => go(cur + 1));
+$("#next").addEventListener("click", () =>
+  go(cur === steps.length - 1 ? 0 : cur + 1));   // final step: "↺ start over"
 document.addEventListener("keydown", e => {
   if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
   if (e.key === "ArrowRight" || e.key === " "){ e.preventDefault(); go(cur + 1); }
@@ -3434,10 +3693,12 @@ document.addEventListener("keydown", e => {
 });
 
 (async function boot(){
-  if (DEMO) banner(`<b>demo mode</b> — not inside the FusedRender app, so this page can't spawn its ` +
-    `Python probe. Structure and byte counts are canned copies of values measured on 2026-07-20; ` +
+  if (DEMO) banner(`<b>demo mode</b> — no Fused bridge, so this page can't read the bundled store. ` +
+    `Structure and byte counts are canned copies of values measured on 2026-07-20; ` +
     `open via FusedRender for live requests.`);
-  else ensureDaemon().then(() => { loadTree(MOCK); loadTree(MUR); });   // warm the metadata early
+  if (MOCK_LIVE){ loadTree(MOCK); loadMockMeta(); loadLs(); }              // read the bundled store in-browser
+  if (S3_LIVE) ensureDaemon().then(() => loadTree(MUR));                   // warm the real-store metadata via the daemon
+  else loadTree(MUR);                                                     // canned MUR metadata (hosted / standalone)
   // deep-link: ?step=N works both standalone and under /render?path=…&step=N
   const qsStep = new URLSearchParams(location.search).get("step");
   go(parseInt(qsStep ?? (P.get && P.get("step")) ?? "0", 10) || 0);
