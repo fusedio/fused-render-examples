@@ -331,8 +331,17 @@ def _reexec_in_worktree(ref, passthrough):
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         # Same interpreter → same already-installed deps (pychrome, requests).
-        return subprocess.call([sys.executable, os.path.join(wt, "tests", "check.py"),
-                                *passthrough])
+        rc = subprocess.call([sys.executable, os.path.join(wt, "tests", "check.py"),
+                              *passthrough])
+        # Screenshots landed in the throwaway worktree; copy them into the real
+        # repo's tests/artifacts before it's removed, so they stay inspectable.
+        wt_art = os.path.join(wt, "tests", "artifacts")
+        if os.path.isdir(wt_art):
+            os.makedirs(ARTIFACTS, exist_ok=True)
+            for f in os.listdir(wt_art):
+                if f.endswith(".png"):
+                    shutil.copy2(os.path.join(wt_art, f), os.path.join(ARTIFACTS, f))
+        return rc
     finally:
         subprocess.call(["git", "-C", REPO, "worktree", "remove", "--force", wt],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

@@ -369,10 +369,12 @@ def main(city: str = "austin", radius_km: float = RADIUS_KM, step: str = "view")
     bundle = _bundled(city)
 
     if step == "warm":
-        # Nothing to warm if the city is already servable (bundled demo data or a
-        # filled disk cache) or if there's no key at all — in the keyless case the
-        # view renders the add-a-key prompt rather than polling a doomed fetch.
-        if bundle is not None or os.path.exists(_fetch_city.cache_path(city)) or not key:
+        # Already warm, or keyless → nothing to warm (keyless, the view serves the
+        # bundle or the add-a-key prompt rather than fetching). But with a key the
+        # view does a live _fetch_city even for a bundled city, so the warmer must
+        # still run on a cold cache — otherwise that fetch runs synchronously in
+        # the view call and can blow the bridge timeout.
+        if os.path.exists(_fetch_city.cache_path(city)) or not key:
             return {"ready": True}
         return _warm(city)
 
