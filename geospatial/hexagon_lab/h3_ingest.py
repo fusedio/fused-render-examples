@@ -70,6 +70,12 @@ def _duck():
         import duckdb
         con = duckdb.connect()
         try:
+            # sandboxes (e.g. the hosted serve plane) may have no $HOME, and
+            # duckdb refuses to resolve its extension dir without one
+            con.sql("SET home_directory='/tmp';")
+        except Exception:
+            pass
+        try:
             con.sql("LOAD h3;")
         except Exception:
             con.sql("INSTALL h3 FROM community; LOAD h3;")
