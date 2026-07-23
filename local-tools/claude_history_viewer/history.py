@@ -125,15 +125,19 @@ def _resolve_title(rename, summary, user_text, assistant_text, stem):
 # --------------------------------------------------------------- truncation
 
 def _trunc(s):
+    """-> (text, full_len) where full_len is 0 unless the text was cut."""
     s = s if isinstance(s, str) else ("" if s is None else str(s))
     if len(s) > MAX_BLOCK:
-        return s[:MAX_BLOCK], True
-    return s, False
+        return s[:MAX_BLOCK], len(s)
+    return s, 0
 
 
 def _text_block(kind, text):
-    t, tr = _trunc(text)
-    return {"type": kind, "text": t, "truncated": tr}
+    t, n = _trunc(text)
+    b = {"type": kind, "text": t, "truncated": bool(n)}
+    if n:
+        b["full_len"] = n
+    return b
 
 
 def _flatten_result(content):
@@ -174,13 +178,19 @@ def _norm_block(b):
             pretty = json.dumps(inp, indent=2, ensure_ascii=False)
         except (TypeError, ValueError):
             pretty = str(inp)
-        text, tr = _trunc(pretty)
-        return {"type": "tool_use", "id": b.get("id") or "",
-                "name": b.get("name") or "", "input": text, "truncated": tr}
+        text, n = _trunc(pretty)
+        out = {"type": "tool_use", "id": b.get("id") or "",
+               "name": b.get("name") or "", "input": text, "truncated": bool(n)}
+        if n:
+            out["full_len"] = n
+        return out
     if bt == "tool_result":
-        text, tr = _trunc(_flatten_result(b.get("content")))
-        return {"type": "tool_result", "tool_use_id": b.get("tool_use_id") or "",
-                "text": text, "is_error": bool(b.get("is_error")), "truncated": tr}
+        text, n = _trunc(_flatten_result(b.get("content")))
+        out = {"type": "tool_result", "tool_use_id": b.get("tool_use_id") or "",
+               "text": text, "is_error": bool(b.get("is_error")), "truncated": bool(n)}
+        if n:
+            out["full_len"] = n
+        return out
     if bt == "image":
         return {"type": "image"}
     return None
@@ -308,15 +318,23 @@ def _projects(base):
     if not os.path.isdir(pdir):
         return {"projects": []}
     out = []
-    for name in os.listdir(pdir):
+    try:
+        names = os.listdir(pdir)
+    except OSError as e:
+        return {"error": f"cannot list projects: {e}"}
+    for name in names:
         d = os.path.join(pdir, name)
-        if not os.path.isdir(d):
+        # a project dir can vanish or lose read permission mid-scan; skip, don't die
+        try:
+            if not os.path.isdir(d):
+                continue
+            jsonls = [f for f in os.listdir(d)
+                      if f.endswith(".jsonl") and os.path.isfile(os.path.join(d, f))]
+            if not jsonls:
+                continue
+            mtimes = {f: os.path.getmtime(os.path.join(d, f)) for f in jsonls}
+        except OSError:
             continue
-        jsonls = [f for f in os.listdir(d)
-                  if f.endswith(".jsonl") and os.path.isfile(os.path.join(d, f))]
-        if not jsonls:
-            continue
-        mtimes = {f: os.path.getmtime(os.path.join(d, f)) for f in jsonls}
         newest = max(jsonls, key=lambda f: mtimes[f])
         try:
             path = _probe_cwd(os.path.join(d, newest))

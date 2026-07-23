@@ -42,6 +42,9 @@ sidechains unless `sidechains` param is on (the *filtered* list is what `offset`
 { "type": "image" }                                        # placeholder only
 ```
 
+Blocks cut by §3 additionally carry `"full_len": int` — the original character
+count, which the UI's truncation note displays.
+
 System messages become a single text block from the line's `content`, with `subtype`
 set so the UI can badge it.
 

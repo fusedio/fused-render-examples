@@ -286,6 +286,8 @@ def test_messages_blocks_and_truncation(cdir):
     long_block = a["blocks"][0]
     eq(len(long_block["text"]), 10000, "over-long text truncated to 10000 chars")
     eq(long_block["truncated"], True, "truncated flag set")
+    eq(long_block["full_len"] > 10000, True, "truncated block carries original length")
+    eq("full_len" in a["blocks"][3], False, "short block carries no full_len")
     eq(a["blocks"][1]["text"], "[redacted]", "redacted_thinking rendered as placeholder")
     eq(a["blocks"][2], {"type": "image"}, "image block is a bare placeholder")
 
