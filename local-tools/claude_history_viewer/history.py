@@ -18,6 +18,11 @@ MAX_BLOCK = 10000
 MAX_TITLE = 120
 # how far into the newest file to probe for a cwd (browsing.md §2)
 CWD_PROBE_LINES = 100
+# one-line tool overview cap (transcript.md §2)
+MAX_OVERVIEW = 80
+# tool_use input keys, in priority order, for the overview hint (transcript.md §2)
+OVERVIEW_KEYS = ("description", "command", "file_path", "path", "pattern",
+                 "query", "url", "prompt", "skill")
 
 _RENAME_RE = re.compile(
     r"<local-command-stdout>Session renamed to:\s*(.*?)</local-command-stdout>", re.S)
@@ -97,18 +102,57 @@ def _extract_rename(obj):
     return None
 
 
+def _usage_field(usage, key):
+    try:
+        return int(usage.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _usage_tokens(msg):
     usage = msg.get("usage")
     if not isinstance(usage, dict):
         return 0
-    total = 0
-    for k in ("input_tokens", "output_tokens",
-              "cache_creation_input_tokens", "cache_read_input_tokens"):
-        try:
-            total += int(usage.get(k, 0) or 0)
-        except (TypeError, ValueError):
-            pass
-    return total
+    return sum(_usage_field(usage, k) for k in (
+        "input_tokens", "output_tokens",
+        "cache_creation_input_tokens", "cache_read_input_tokens"))
+
+
+def _usage_wire(msg):
+    """Per-message usage for the wire shape (transcript.md §2), or None when the
+    message carries no usage. Maps disk field names -> in/out/cache_read/cache_write
+    (history-data.md §8)."""
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    return {"in": _usage_field(usage, "input_tokens"),
+            "out": _usage_field(usage, "output_tokens"),
+            "cache_read": _usage_field(usage, "cache_read_input_tokens"),
+            "cache_write": _usage_field(usage, "cache_creation_input_tokens")}
+
+
+def _one_line(s):
+    """Collapse newlines to spaces and cap at MAX_OVERVIEW (transcript.md §2)."""
+    return " ".join(str(s).split("\n")).strip()[:MAX_OVERVIEW]
+
+
+def _overview_tool_use(inp):
+    """First present, non-empty string value among OVERVIEW_KEYS, one-lined."""
+    if not isinstance(inp, dict):
+        return ""
+    for key in OVERVIEW_KEYS:
+        v = inp.get(key)
+        if isinstance(v, str) and v.strip():
+            return _one_line(v)
+    return ""
+
+
+def _overview_tool_result(flat_text):
+    """First non-empty line of the flattened result text, one-lined."""
+    for line in flat_text.split("\n"):
+        if line.strip():
+            return _one_line(line)
+    return ""
 
 
 def _resolve_title(rename, summary, user_text, assistant_text, stem):
@@ -180,14 +224,17 @@ def _norm_block(b):
             pretty = str(inp)
         text, n = _trunc(pretty)
         out = {"type": "tool_use", "id": b.get("id") or "",
-               "name": b.get("name") or "", "input": text, "truncated": bool(n)}
+               "name": b.get("name") or "", "input": text,
+               "overview": _overview_tool_use(inp), "truncated": bool(n)}
         if n:
             out["full_len"] = n
         return out
     if bt == "tool_result":
-        text, n = _trunc(_flatten_result(b.get("content")))
+        flat = _flatten_result(b.get("content"))
+        text, n = _trunc(flat)
         out = {"type": "tool_result", "tool_use_id": b.get("tool_use_id") or "",
-               "text": text, "is_error": bool(b.get("is_error")), "truncated": bool(n)}
+               "text": text, "overview": _overview_tool_result(flat),
+               "is_error": bool(b.get("is_error")), "truncated": bool(n)}
         if n:
             out["full_len"] = n
         return out
@@ -206,7 +253,7 @@ def _normalize(obj):
         return {"uuid": obj.get("uuid"), "kind": "system",
                 "timestamp": obj.get("timestamp"), "model": None,
                 "is_sidechain": bool(obj.get("isSidechain")),
-                "subtype": obj.get("subtype"),
+                "subtype": obj.get("subtype"), "usage": None,
                 "blocks": [_text_block("text", text)]}
     msg = obj.get("message") or {}
     content = msg.get("content")
@@ -222,7 +269,9 @@ def _normalize(obj):
             "timestamp": obj.get("timestamp"),
             "model": msg.get("model") if t == "assistant" else None,
             "is_sidechain": bool(obj.get("isSidechain")),
-            "subtype": None, "blocks": blocks}
+            "subtype": None,
+            "usage": _usage_wire(msg) if t == "assistant" else None,
+            "blocks": blocks}
 
 
 # --------------------------------------------------------------- scans

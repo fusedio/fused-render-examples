@@ -161,14 +161,72 @@ def build_fixture(root):
     os.makedirs(pc)
     open(os.path.join(pc, "notes.txt"), "w").write("not a session")
 
+    # ---- Project D: v1.1 — harness XML, per-message usage, tool overviews ---
+    pd = os.path.join(projects, "-Users-jane-repo-d")
+    os.makedirs(pd)
+    conv = jl(
+        # slash-command display turn (command-name + args) — raw passthrough;
+        # client prettifies per §4a, history.py leaves the text untouched.
+        {"type": "user", "uuid": "d1", "sessionId": "sd",
+         "timestamp": "2024-01-06T10:00:00Z", "cwd": "/Users/jane/repo-d",
+         "message": {"role": "user", "content":
+                     "<command-name>/model</command-name>\n"
+                     "<command-args>opus</command-args>\n"
+                     "<command-message>model</command-message>"}},
+        # a system-reminder span embedded in otherwise-real user text
+        {"type": "user", "uuid": "d2", "sessionId": "sd",
+         "timestamp": "2024-01-06T10:01:00Z",
+         "message": {"role": "user", "content":
+                     "Here is context\n<system-reminder>Be concise.</system-reminder>"}},
+        # usage-carrying assistant with tool_use blocks exercising key priority
+        {"type": "assistant", "uuid": "d3", "sessionId": "sd",
+         "timestamp": "2024-01-06T10:02:00Z",
+         "message": {"role": "assistant", "model": "claude-opus-4", "content": [
+             {"type": "tool_use", "id": "t1", "name": "Bash",
+              "input": {"description": "Run the build", "command": "make"}},
+             {"type": "tool_use", "id": "t2", "name": "Bash",
+              "input": {"command": "ls -la", "file_path": "/x"}},
+             {"type": "tool_use", "id": "t3", "name": "Read",
+              "input": {"file_path": "/a/b.py"}},
+             {"type": "tool_use", "id": "t4", "name": "Grep",
+              "input": {"pattern": "foo.*bar"}},
+             {"type": "tool_use", "id": "t5", "name": "Query",
+              "input": {"query": "select 1"}},
+             {"type": "tool_use", "id": "t6", "name": "Fetch",
+              "input": {"url": "https://example.com"}},
+             {"type": "tool_use", "id": "t7", "name": "Task",
+              "input": {"prompt": "do the thing"}},
+             {"type": "tool_use", "id": "t8", "name": "Skill",
+              "input": {"skill": "my-skill"}},
+             {"type": "tool_use", "id": "t9", "name": "Weird",
+              "input": {"foo": "bar"}},
+             {"type": "tool_use", "id": "t10", "name": "Bad",
+              "input": {"command": 123, "file_path": "/y"}},
+             {"type": "tool_use", "id": "t11", "name": "Multi",
+              "input": {"description": "line1\nline2"}},
+             {"type": "tool_use", "id": "t12", "name": "Long",
+              "input": {"description": "A" * 100}}],
+             "usage": {"input_tokens": 30, "output_tokens": 12,
+                       "cache_creation_input_tokens": 4,
+                       "cache_read_input_tokens": 7}}},
+        # tool_result whose first lines are blank -> overview = first real line
+        {"type": "user", "uuid": "d4", "sessionId": "sd",
+         "timestamp": "2024-01-06T10:03:00Z",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t1",
+              "content": "\n\n  first real line\nsecond line", "is_error": False}]}},
+    )
+    open(os.path.join(pd, "conv.jsonl"), "w").write(conv)
+
     # Deterministic mtimes: A newest (sess1 the freshest so cwd probe hits it),
-    # B older, so projects sort A before B.
+    # then B, then D — so projects sort A, B, D.
     now = time.time()
     os.utime(os.path.join(pa, "sess1.jsonl"), (now, now))
     os.utime(os.path.join(pa, "sess2.jsonl"), (now - 10, now - 10))
     os.utime(os.path.join(pa, "sess3.jsonl"), (now - 20, now - 20))
     os.utime(os.path.join(pa, "sess_empty.jsonl"), (now - 30, now - 30))
     os.utime(os.path.join(pb, "main.jsonl"), (now - 1000, now - 1000))
+    os.utime(os.path.join(pd, "conv.jsonl"), (now - 2000, now - 2000))
 
 
 def test_projects(cdir):
@@ -176,7 +234,7 @@ def test_projects(cdir):
     projs = r.get("projects")
     check(isinstance(projs, list), "projects returns a list")
     slugs = [p["slug"] for p in projs]
-    eq(slugs, ["-Users-jane-repo-a", "-Users-jane-repo-b"],
+    eq(slugs, ["-Users-jane-repo-a", "-Users-jane-repo-b", "-Users-jane-repo-d"],
        "projects sorted by last_modified desc; empty-proj (no jsonl) excluded")
     a = projs[0]
     eq(a["name"], "repo-a", "project name = leaf of cwd-probed path")
@@ -247,15 +305,20 @@ def test_messages(cdir):
     eq(assistant["is_sidechain"], False, "main-thread message not flagged sidechain")
     btypes = [b["type"] for b in assistant["blocks"]]
     eq(btypes, ["thinking", "text", "tool_use"], "assistant block types/order")
+    eq(assistant["usage"], {"in": 100, "out": 50, "cache_read": 5, "cache_write": 10},
+       "assistant usage mapped to in/out/cache_read/cache_write (§2)")
+    eq(msgs[0]["usage"], None, "user message carries usage=null")
     tu = assistant["blocks"][2]
     eq(tu["name"], "Bash", "tool_use name kept")
     eq(tu["id"], "tool1", "tool_use id kept")
     check('"command": "ls"' in tu["input"], "tool_use input pretty-printed JSON")
+    eq(tu["overview"], "ls", "tool_use overview from command key")
     tr = msgs[2]["blocks"][0]
     eq(tr["type"], "tool_result", "tool_result normalized")
     eq(tr["tool_use_id"], "tool1", "tool_result paired id kept")
     eq(tr["text"], "file1\nfile2", "tool_result content flattened to text")
     eq(tr["is_error"], False, "tool_result is_error surfaced")
+    eq(tr["overview"], "file1", "tool_result overview = first non-empty line")
 
 
 def test_messages_sidechains(cdir):
@@ -292,6 +355,41 @@ def test_messages_blocks_and_truncation(cdir):
     eq(a["blocks"][2], {"type": "image"}, "image block is a bare placeholder")
 
 
+def test_overview_and_usage(cdir):
+    r = history.main(action="messages", project="-Users-jane-repo-d",
+                     session="conv.jsonl", claude_dir=cdir)
+    eq(r["total"], 4, "project D has 4 rendered messages")
+    msgs = r["messages"]
+
+    # harness XML is NOT transformed server-side (prettifying is client-side §4a)
+    eq(msgs[0]["kind"], "user", "slash-command turn is a user message")
+    check(msgs[0]["blocks"][0]["text"].startswith("<command-name>/model"),
+          "slash-command XML passes through history.py as raw text")
+    check("<system-reminder>Be concise.</system-reminder>" in msgs[1]["blocks"][0]["text"],
+          "system-reminder span passes through as raw text")
+
+    a = msgs[2]
+    eq(a["usage"], {"in": 30, "out": 12, "cache_read": 7, "cache_write": 4},
+       "per-message usage present on the assistant line")
+    ov = [b["overview"] for b in a["blocks"]]
+    eq(ov[0], "Run the build", "description beats command in key priority")
+    eq(ov[1], "ls -la", "command beats file_path")
+    eq(ov[2], "/a/b.py", "file_path key")
+    eq(ov[3], "foo.*bar", "pattern key")
+    eq(ov[4], "select 1", "query key")
+    eq(ov[5], "https://example.com", "url key")
+    eq(ov[6], "do the thing", "prompt key")
+    eq(ov[7], "my-skill", "skill key")
+    eq(ov[8], "", "no priority key -> empty overview")
+    eq(ov[9], "/y", "non-string value skipped, next key used")
+    eq(ov[10], "line1 line2", "newlines flattened in overview")
+    eq(len(ov[11]), 80, "overview capped at 80 chars")
+
+    tr = msgs[3]["blocks"][0]
+    eq(tr["overview"], "first real line",
+       "tool_result overview skips blank leading lines")
+
+
 def test_messages_containment_and_missing(cdir):
     r = history.main(action="messages", project="-Users-jane-repo-a",
                      session="../secret.jsonl", claude_dir=cdir)
@@ -317,6 +415,7 @@ def main():
         test_messages_sidechains(root)
         test_messages_pagination(root)
         test_messages_blocks_and_truncation(root)
+        test_overview_and_usage(root)
         test_messages_containment_and_missing(root)
         test_unknown_action(root)
     print(f"\n{PASS} passed, {FAIL} failed")
