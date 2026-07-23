@@ -364,9 +364,13 @@ function buildLayers() {
   const src = naive ? S.elev : S.flood;
   const { gw, gh, elev, colLon, rowLat } = S;
 
-  // flooded cell indices (existing water included: rivers & bays rise too)
+  // flooded cell indices (existing water included: rivers & bays rise too).
+  // Managed water (canals) and water cut off by a barrier never floods
+  // (flood=inf server-side) but still IS water today: render it static at 0.
   const cells = [];
-  for (let i = 0; i < src.length; i++) if (src[i] <= Ldm) cells.push(i);
+  for (let i = 0; i < src.length; i++)
+    if (src[i] <= Ldm || elev[i] <= 0) cells.push(i);
+  const wet = i => src[i] <= Ldm;   // rising vs held-at-today's-level
 
   const layers = [
     new deck.TerrainLayer({
@@ -389,9 +393,9 @@ function buildLayers() {
       cellSize: S.cellM * 1.15,
       extruded: true,
       getPosition: i => [colLon[i % gw], rowLat[Math.floor(i / gw) + 1]],
-      getElevation: Math.max(L, 0.06) * EX,
+      getElevation: i => (wet(i) ? Math.max(L, 0.06) : 0.06) * EX,
       getFillColor: i => {
-        const depth = L - Math.max(elev[i] / 10, 0);
+        const depth = wet(i) ? L - Math.max(elev[i] / 10, 0) : 0;
         const t = Math.min(Math.max(depth / 6, 0), 1);
         return [70 - 45 * t, 195 - 115 * t, 250 - 70 * t, 62 + 76 * t];
       },

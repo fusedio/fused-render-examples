@@ -44,6 +44,10 @@ LAND_MIN = 0.1          # m — dry land today can't flood below +0.1 m rise;
 OVERTURE_RELEASE = "2026-06-17.0"
 STAC_COLLECTIONS = f"https://stac.overturemaps.org/{OVERTURE_RELEASE}/collections.parquet"
 WATER_SUBTYPES = ("ocean", "sea", "lake", "river", "lagoon", "bay", "reservoir", "canal")
+# managed water is pumped/locked at its own level — it clamps the DEM and
+# renders as water, but it is NOT a flood seed: a canal only rises if the
+# sea actually reaches it (the Dutch don't let the sea in through canals)
+MANAGED_SUBTYPES = frozenset({"canal", "reservoir"})
 
 
 # ---------------------------------------------------------------- mercator
@@ -96,11 +100,12 @@ def stac_files(con, collection, xmin, ymin, xmax, ymax):
 def _overture_water(xmin, ymin, xmax, ymax):
     """Water polygons intersecting the AOI, clipped + simplified. Cached.
 
-    Returns [[ring, hole, ...], ...] in lon/lat. Slow cold (~10-20 s: reads
+    Returns [{"p": [ring, hole, ...], "m": 0|1}, ...] in lon/lat, where
+    "m"=1 marks managed water (canal/reservoir). Slow cold (~10-20 s: reads
     Overture GeoParquet geometry off S3) — hence its own disk cache entry.
     """
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}"
-    path = os.path.join(_CACHE, f"water_{key}.json")
+    path = os.path.join(_CACHE, f"water2_{key}.json")
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
@@ -114,29 +119,33 @@ def _overture_water(xmin, ymin, xmax, ymax):
         subs = ", ".join(f"'{s}'" for s in WATER_SUBTYPES)
         rows = con.execute(
             f"SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(ST_Intersection(geometry, "
-            f"ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})), {tol})) "
+            f"ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})), {tol})), subtype "
             f"FROM read_parquet([{flist}]) "
             f"WHERE bbox.xmax >= {xmin} AND bbox.xmin <= {xmax} "
             f"AND bbox.ymax >= {ymin} AND bbox.ymin <= {ymax} "
             f"AND subtype IN ({subs}) LIMIT 20000").fetchall()
-        for (gj,) in rows:
+        for gj, subtype in rows:
             if not gj:
                 continue
             g = json.loads(gj)
+            m = 1 if subtype in MANAGED_SUBTYPES else 0
             if g["type"] == "Polygon":
-                polys.append(g["coordinates"])
+                polys.append({"p": g["coordinates"], "m": m})
             elif g["type"] == "MultiPolygon":
-                polys.extend(g["coordinates"])
+                polys.extend({"p": c, "m": m} for c in g["coordinates"])
     con.close()
 
-    polys = [[[[round(x, 5), round(y, 5)] for x, y in ring] for ring in p] for p in polys]
+    for w in polys:
+        w["p"] = [[[round(x, 5), round(y, 5)] for x, y in ring] for ring in w["p"]]
     os.makedirs(_CACHE, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(polys, fh)
     return polys
 
 
-def _rasterize_water(polys, xmin, ymin, xmax, ymax, gh, gw):
+def _rasterize_water(polys, xmin, ymin, xmax, ymax, gh, gw, managed=None):
+    """Rasterize water polygons; `managed` filters on the "m" flag
+    (None = all water, False = seedable only, True = managed only)."""
     import numpy as np
     from PIL import Image, ImageDraw
 
@@ -148,8 +157,10 @@ def _rasterize_water(polys, xmin, ymin, xmax, ymax, gh, gw):
 
     img = Image.new("1", (gw, gh), 0)
     draw = ImageDraw.Draw(img)
-    for rings in polys:
-        for i, ring in enumerate(rings):
+    for w in polys:
+        if managed is not None and bool(w["m"]) != managed:
+            continue
+        for i, ring in enumerate(w["p"]):
             if len(ring) >= 3:
                 draw.polygon(to_px(ring), fill=0 if i else 1)
     return np.asarray(img, dtype=bool)
@@ -322,7 +333,7 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side=""):
 
     bkey = hashlib.sha256(barriers.encode()).hexdigest()[:8] if barriers else "none"
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}_{bkey}_{seed_side or 'any'}"
-    npz = os.path.join(_CACHE, f"grids_v6_{key}.npz")
+    npz = os.path.join(_CACHE, f"grids_v7_{key}.npz")
     if os.path.exists(npz):
         d = np.load(npz)
         return d["elev"], d["flood"], json.loads(str(d["meta"]))
@@ -341,24 +352,28 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side=""):
             Image.fromarray(crop).resize((gw, gh), Image.BILINEAR), dtype=np.float32)
 
     t1 = time.time()
-    wmask = None
+    wmask = seedable = None
     wpolys = _overture_water(xmin, ymin, xmax, ymax)
     if wpolys:
         wmask = _rasterize_water(wpolys, xmin, ymin, xmax, ymax, *crop.shape)
+        # canals/reservoirs are held at a managed level — they clamp the DEM
+        # and render as water, but the sea doesn't come IN through them
+        seedable = _rasterize_water(wpolys, xmin, ymin, xmax, ymax,
+                                    *crop.shape, managed=False)
         crop[wmask & (crop > 0)] = 0.0
     ms_water = round((time.time() - t1) * 1000)
 
     n_barrier_cells = 0
     if barriers:
         n_barrier_cells = _burn_barriers(crop, barriers, xmin, ymin, xmax, ymax)
-        if wmask is not None:
-            wmask = wmask & (crop < 20.0)   # walled cells are no longer seeds
+        if seedable is not None:
+            seedable = seedable & (crop < 20.0)   # walled cells are no longer seeds
 
     # water can only rise out of mapped waterbodies, not out of thin air at
     # the AOI edge (Max: "makes no sense to flood NOLA from the dry side").
     # With seed_side set, only SEA-CONNECTED water rises: a river behind a
     # closed storm-surge barrier is cut off and stays at its own level.
-    seedmask = wmask
+    seedmask = seedable
     if seedmask is not None and seed_side:
         seedmask = _seaward_water(seedmask, seed_side)
     t1 = time.time()
@@ -372,6 +387,10 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side=""):
     # still renders at the 0 m slider position.
     land = ~wmask if wmask is not None else np.ones(crop.shape, dtype=bool)
     flood[land] = np.maximum(flood[land], LAND_MIN)
+    # NOTE: unseeded water (managed canals, a river cut off by a barrier)
+    # keeps flood=inf — "the sea never gets here". The page still renders it
+    # as water via the elev grid (water cells are the only ones with
+    # elev <= 0 after this clamp).
     crop = crop.copy()
     crop[land] = np.maximum(crop[land], LAND_MIN)
 
