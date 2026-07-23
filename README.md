@@ -1,13 +1,26 @@
 # Fused Render examples
 
-A gallery of example projects for **[Fused Render](https://fused.io)** — browse
-them, see what's possible, and copy any one into your own install to make it
-your own.
+A gallery of example projects for **[Fused Render](https://github.com/fusedio/fused-render)** —
+browse them, see what's possible, and copy any one into your own install to
+make it your own.
 
 Each example is a self-contained folder: a Python UDF or two plus an HTML view.
 No build step. To run one, copy its folder into your Fused Render install and
 open the `.html`. Every example works from public data (a few want a free API
 key, noted in their README).
+
+## Get Fused Render
+
+- **macOS**: `brew install --cask fusedio/tap/fused-render`, or download the
+  DMG from the [releases page](https://github.com/fusedio/fused-render/releases).
+- **Windows / Linux**: install the wheel linked in each release's notes
+  (`pip install <wheel-url>`, Python 3.10+), then run `fused-render`.
+
+**New here?** Fused Render seeds a minimal sine-wave demo into
+`~/Documents/Fused` on first run — that's the smallest possible project (one
+`.py`, one `.html`). The smallest example in this gallery is
+[disk_usage](local-tools/disk_usage/): the same two-file shape pointed at your
+own machine, no setup. Start with either, then browse below.
 
 ---
 
@@ -77,3 +90,5 @@ takes a while to fetch is cached to disk on first run.
 - These examples are for exploration and learning. Data sources are public
   (OpenStreetMap, Overture, US Census, Copernicus, Global Forest Watch, Maxar
   Open Data, NOAA); scenarios in the logistics/response demos are illustrative.
+- Licensed under [MIT](LICENSE). Want to add an example? See
+  [CONTRIBUTING.md](CONTRIBUTING.md) for the folder contract and test harness.
