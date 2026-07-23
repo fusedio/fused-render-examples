@@ -139,9 +139,39 @@
   #links a { color: var(--blue); text-decoration: none; }
   #links a:hover { text-decoration: underline; }
 
-  #sqlbox pre { font: 10.5px/1.55 var(--mono); color: #a8d1ff; white-space: pre-wrap;
-                background: #0b1119; border: 1px solid var(--line); border-radius: 8px;
-                padding: 9px; margin-top: 4px; }
+  /* how-it's-built slide deck */
+  #bs-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  #bs-title { font-size: 13.5px; font-weight: 700; flex: 1; }
+  #bs-n { font: 10.5px var(--mono); color: var(--dim); }
+  #bs-nav { display: flex; gap: 4px; }
+  #bs-nav button { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line);
+                   background: none; color: var(--txt); cursor: pointer; font-size: 13px; }
+  #bs-nav button:hover { background: #182231; }
+  #bs-nav button:disabled { opacity: .3; cursor: default; }
+  #bs-dots { display: flex; gap: 5px; justify-content: center; margin-top: 12px; }
+  #bs-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--line);
+                  cursor: pointer; }
+  #bs-dots span.on { background: var(--aqua); }
+  #bs-body { min-height: 210px; }
+  .bslide { display: none; animation: bsin .25s ease; }
+  .bslide.on { display: block; }
+  @keyframes bsin { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; } }
+  #bs-body pre { font: 10px/1.5 var(--mono); color: #a8d1ff; white-space: pre-wrap;
+                 background: #0b1119; border: 1px solid var(--line); border-radius: 8px;
+                 padding: 8px; margin-top: 8px; max-height: 150px; overflow-y: auto; }
+  #bs-body .big { font-size: 17px; font-weight: 750; color: var(--aqua);
+                  font-variant-numeric: tabular-nums; }
+  .flow { display: flex; align-items: center; gap: 6px; margin: 10px 0;
+          font: 10.5px var(--mono); }
+  .flow .fbox { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px;
+                background: #0b1119; text-align: center; flex: 1; line-height: 1.35; }
+  .flow .fbox b { color: var(--aqua); font-weight: 600; display: block; }
+  .flow .arr { color: var(--dim); flex: none; }
+  .kv { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+  .kv span { color: var(--dim); }
+  .kv b { font-variant-numeric: tabular-nums; }
+  .hint { margin-top: 9px; font-size: 11px; color: var(--aqua); }
+  .hint::before { content: "▸ "; }
 </style>
 </head>
 <body>
@@ -183,27 +213,105 @@
         </div>
       </div>
 
-      <div class="card v-build">
-        <h3>why a Python kernel?</h3>
-        <div class="note">This page is plain HTML + deck.gl &mdash; but it has a
-          <b>Python kernel attached</b>. Ask Claude for a standalone HTML flood map and
-          you get a browser sandbox: no DuckDB, no numpy, no S3 &mdash; it can fetch a
-          few MB of GeoJSON and threshold pixels. Here, each city runs real Python once
-          &mdash; DuckDB scans Overture GeoParquet on S3 for every building footprint,
-          scipy + a priority-flood fill work out what water can actually <i>reach</i>
-          &mdash; and the browser receives only the <b>answers</b>, precomputed so the
-          slider never calls Python again.</div>
-        <div class="note" style="margin-top:8px">The two files behind this page are
-          ordinary Python scripts (<span class="mono">flood_mask.py</span>,
-          <span class="mono">overture_stats.py</span>) with a module-level
-          <span class="mono">main()</span>. The page calls them with
-          <span class="mono">fused.runPython(&quot;./flood_mask.py&quot;, params)</span>
-          &mdash; that&rsquo;s the whole integration.</div>
-      </div>
+      <div class="card v-build" id="bslides">
+        <div id="bs-top">
+          <div>
+            <div id="bs-title">where the data lives</div>
+            <div id="bs-n">1 / 6</div>
+          </div>
+          <div id="bs-nav">
+            <button id="bs-prev" title="previous (←)">&larr;</button>
+            <button id="bs-next" title="next (→)">&rarr;</button>
+          </div>
+        </div>
+        <div id="bs-body">
 
-      <div class="card v-build">
-        <h3>live pipeline &mdash; hover to isolate</h3>
-        <div id="steps"></div>
+          <div class="bslide" data-title="where the data lives">
+            <div class="note">Nothing on this page is bundled or pre-baked into the
+              HTML. Every city is assembled live from three public sources:</div>
+            <div class="flow">
+              <div class="fbox"><b>Overture Maps</b>buildings &middot; water<br>GeoParquet on S3</div>
+              <div class="arr">+</div>
+              <div class="fbox"><b>Terrarium</b>elevation tiles<br>AWS open data</div>
+              <div class="arr">+</div>
+              <div class="fbox"><b>Esri</b>satellite<br>imagery tiles</div>
+            </div>
+            <div class="note">A browser can't touch the first one at all &mdash; scanning
+              a 400&nbsp;GB parquet lake needs a query engine, not <span class="mono">fetch()</span>.
+              That's why this page has a <b>Python kernel attached</b>.</div>
+            <div class="hint">pick another city up top &mdash; the next slides show the pipeline run live</div>
+          </div>
+
+          <div class="bslide" data-title="what Python does">
+            <div class="note" style="margin-bottom:8px">One Python run per city: DuckDB
+              scans Overture on S3, numpy + a priority-flood fill compute the minimum sea
+              level that <i>reaches</i> each cell, and the terrain mesh + satellite texture
+              are mosaicked into single images.</div>
+            <div id="steps"></div>
+            <div class="hint">hover a step to isolate its layer in the 3D scene</div>
+          </div>
+
+          <div class="bslide" data-title="the actual query">
+            <div class="note">This SQL ran for the current city &mdash; DuckDB reading
+              Overture's GeoParquet straight off S3, no download, no database server:</div>
+            <pre id="sqltxt">run a city first&hellip;</pre>
+            <div class="note" style="margin-top:8px">It scans only the row groups whose
+              bounding box overlaps the AOI &mdash; a few hundred MB touched out of
+              hundreds of GB.</div>
+          </div>
+
+          <div class="bslide" data-title="water has to get there">
+            <div class="note" style="margin-bottom:9px">The flood model isn't
+              <span class="mono">elevation &lt; level</span> &mdash; that's what a
+              no-kernel page could do. Python runs a connectivity fill from the sea:</div>
+            <div class="seg">
+              <button id="m-conn" class="on">connected flood</button>
+              <button id="m-naive">naive threshold</button>
+            </div>
+            <div id="naivenote">water has to <i>get</i> there &mdash; a basin stays dry until a
+              connected path from the sea exists. Toggle to compare.</div>
+            <div class="foot">model: bathtub + connectivity &mdash; levees thinner than a
+              grid cell vanish, so New Orleans floods sooner here than its real defenses allow.</div>
+          </div>
+
+          <div class="bslide" data-title="what HTML does">
+            <div class="note" style="margin-bottom:9px">Python doesn't return maps or
+              answers to one question &mdash; it returns <b>grids and curves</b>: the flood
+              level of every cell and building. The browser holds them in typed arrays, so
+              the slider is a pure client-side threshold &mdash; deck.gl re-colors 100k+
+              cells per frame, zero Python calls per drag.</div>
+            <div class="brow"><div class="lbl"><span>data queried on S3</span><b>hundreds of GB</b></div>
+              <div class="bar"><div class="fill" style="width:100%;background:#c86bfa"></div></div></div>
+            <div class="brow"><div class="lbl"><span>sent to this page</span><b id="b-recv">0 KB</b></div>
+              <div class="bar"><div class="fill" id="bf-recv" style="width:2%"></div></div></div>
+            <div class="kv"><span>Python calls so far</span><b id="b-calls">0</b></div>
+            <div class="kv"><span>Python calls per slider move</span><b>0</b></div>
+            <div class="hint">drag the slider &mdash; the call counter won't move</div>
+          </div>
+
+          <div class="bslide" data-title="why not just an artifact?">
+            <div class="note">Ask Claude for a standalone HTML flood map and you get a
+              browser sandbox: no DuckDB, no numpy, no S3 &mdash; it can fetch a few MB of
+              GeoJSON and threshold pixels. Fused Render attaches a real Python kernel to
+              the page:</div>
+            <div class="flow" style="margin:10px 0 8px">
+              <div class="fbox"><b>this page</b>index.html<br>deck.gl + slider</div>
+              <div class="arr">&harr;</div>
+              <div class="fbox"><b>Python kernel</b>flood_mask.py<br>overture_stats.py</div>
+              <div class="arr">&harr;</div>
+              <div class="fbox"><b>S3 / web</b>Overture, DEM, imagery</div>
+            </div>
+            <div class="note">The backend is two ordinary Python files with a
+              <span class="mono">main()</span>. The whole integration is one call:</div>
+            <pre style="margin-top:6px">const r = await fused.runPython(
+  "./flood_mask.py", { xmin, ymin, xmax, ymax, barriers });</pre>
+            <div class="note" style="margin-top:8px">Results cache to disk &mdash; the
+              first visitor pays the S3 scan, everyone after gets it in milliseconds. No
+              server to deploy, no build step: edit the .py, reload the page.</div>
+          </div>
+
+        </div>
+        <div id="bs-dots"></div>
       </div>
 
       <div class="card v-explore">
@@ -212,33 +320,6 @@
         <div class="stat"><span>roads</span><b class="hit" id="s-rd">&mdash;</b></div>
         <div class="stat"><span>hospitals / schools</span><b class="hit" id="s-poi">&mdash;</b></div>
         <svg id="chart" viewBox="0 0 316 76" preserveAspectRatio="none"></svg>
-      </div>
-
-      <div class="card v-build">
-        <h3>why not just elevation &lt; level?</h3>
-        <div class="seg">
-          <button id="m-conn" class="on">connected flood</button>
-          <button id="m-naive">naive threshold</button>
-        </div>
-        <div id="naivenote">water has to <i>get</i> there &mdash; a basin stays dry until a
-          connected path from the sea exists. Toggle to compare.</div>
-        <div class="foot">model: bathtub + connectivity on ~15 m cells &mdash; levees thinner
-          than a cell vanish, so New Orleans floods sooner here than its real defenses allow.</div>
-      </div>
-
-      <div class="card v-build">
-        <h3>what crossed the wire</h3>
-        <div class="brow"><div class="lbl"><span>sent to this page</span><b id="b-recv">0 KB</b></div>
-          <div class="bar"><div class="fill" id="bf-recv" style="width:2%"></div></div></div>
-        <div class="brow big"><div class="lbl"><span>data queried on S3</span><b>hundreds of GB</b></div>
-          <div class="bar"><div class="fill" style="width:100%"></div></div></div>
-        <div class="wnote">Python calls: <b id="b-calls">0</b> &nbsp;&middot;&nbsp;
-          per slider move: <b>0</b> &mdash; the slider re-thresholds grids already in memory.</div>
-      </div>
-
-      <div class="card v-build" id="sqlbox">
-        <h3>the buildings query (live)</h3>
-        <pre id="sqltxt">run a city first&hellip;</pre>
       </div>
 
       <div class="card v-explore">
@@ -739,6 +820,35 @@ function setTab(build) {
 $("tab-explore").onclick = () => setTab(false);
 $("tab-build").onclick = () => setTab(true);
 
+/* ---- how-it's-built slide deck */
+const SLIDES = [...document.querySelectorAll(".bslide")];
+let slideI = 0;
+$("bs-dots").innerHTML = SLIDES.map((_, i) => `<span data-i="${i}"></span>`).join("");
+function setSlide(i) {
+  slideI = Math.min(SLIDES.length - 1, Math.max(0, i));
+  SLIDES.forEach((el, j) => el.classList.toggle("on", j === slideI));
+  document.querySelectorAll("#bs-dots span")
+    .forEach((d, j) => d.classList.toggle("on", j === slideI));
+  $("bs-title").textContent = SLIDES[slideI].dataset.title;
+  $("bs-n").textContent = `${slideI + 1} / ${SLIDES.length}`;
+  $("bs-prev").disabled = slideI === 0;
+  $("bs-next").disabled = slideI === SLIDES.length - 1;
+  // leaving the pipeline slide clears any hover-isolated layer
+  if (S.isolate) { S.isolate = null; redraw(); }
+  const u = new URL(location.href);
+  u.searchParams.set("slide", slideI + 1);
+  history.replaceState(null, "", u);
+}
+$("bs-prev").onclick = () => setSlide(slideI - 1);
+$("bs-next").onclick = () => setSlide(slideI + 1);
+document.querySelectorAll("#bs-dots span")
+  .forEach(d => d.onclick = () => setSlide(+d.dataset.i));
+document.addEventListener("keydown", e => {
+  if (!document.body.classList.contains("build")) return;
+  if (e.key === "ArrowLeft") setSlide(slideI - 1);
+  if (e.key === "ArrowRight") setSlide(slideI + 1);
+});
+
 /* ---- boot from URL (?city=&level=&exag=&gates=&tab=) so states are debuggable */
 const Q = urlParams();
 const startPreset = PRESETS.find(p => p.id === Q.get("city")) || PRESETS[0];
@@ -747,6 +857,7 @@ S.gates = Q.get("gates") === "1" && !!startPreset.barriers;
 $("gateschk").checked = S.gates;
 markExag();
 if (Q.get("tab") === "build") setTab(true);
+setSlide(Q.has("slide") ? +Q.get("slide") - 1 : 0);
 document.querySelector(`#presets button[data-id="${startPreset.id}"]`).classList.add("on");
 
 initSteps();

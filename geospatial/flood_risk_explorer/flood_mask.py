@@ -10,11 +10,10 @@ One call per AOI returns everything the 3D scene needs:
     the grid: Terrarium DEM over coastal water is garbage (+6 m in Biscayne
     Bay), real water polygons clamp it to 0
 """
+
 # /// script
 # dependencies = ["numpy", "pillow", "scipy", "shapely", "duckdb"]
 # ///
-
-
 import base64
 import concurrent.futures
 import heapq
@@ -333,7 +332,7 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side=""):
 
     bkey = hashlib.sha256(barriers.encode()).hexdigest()[:8] if barriers else "none"
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}_{bkey}_{seed_side or 'any'}"
-    npz = os.path.join(_CACHE, f"grids_v7_{key}.npz")
+    npz = os.path.join(_CACHE, f"grids_v8_{key}.npz")
     if os.path.exists(npz):
         d = np.load(npz)
         return d["elev"], d["flood"], json.loads(str(d["meta"]))
@@ -376,8 +375,27 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side=""):
     seedmask = seedable
     if seedmask is not None and seed_side:
         seedmask = _seaward_water(seedmask, seed_side)
+
+    # managed water isn't a CONDUIT either: a canal sits below sea level but
+    # its locks/pumps stop the sea running along it into the polders (Max:
+    # +0.25 m drowned all of Rotterdam through the canal grid). For the flood
+    # traversal, a managed cell costs its nearest BANK's elevation — the sea
+    # only crosses a canal by overtopping its banks, exactly like the land
+    # around it. Elev/flood grids still keep the real values.
+    fill = crop
+    if wmask is not None:
+        managed = wmask & ~seedable
+        if managed.any():
+            from scipy import ndimage
+            land = ~wmask & (crop < 19.0)          # exclude burned walls
+            _, (ri, ci) = ndimage.distance_transform_edt(
+                ~land, return_indices=True)
+            bank = np.maximum(crop[ri, ci], LAND_MIN)
+            fill = crop.copy()
+            m = managed & (crop < 19.0)            # never lower a wall
+            fill[m] = bank[m]
     t1 = time.time()
-    flood = _priority_flood(crop, seeds=seedmask)
+    flood = _priority_flood(fill, seeds=seedmask)
     ms_flood = round((time.time() - t1) * 1000)
 
     # 0 m = today's baseline: land that is dry today (not mapped water) can
