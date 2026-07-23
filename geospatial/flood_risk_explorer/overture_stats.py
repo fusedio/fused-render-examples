@@ -191,14 +191,16 @@ def _step_roads(con, bbox):
 # ---------------------------------------------------------------- entrypoint
 
 def main(xmin: float, ymin: float, xmax: float, ymax: float,
-         barriers: str = "", min_area_m2: float = 0.0, seed_side: str = ""):
+         barriers: str = "", min_area_m2: float = 0.0, seed_side: str = "",
+         bank_min: float = 0.0):
     import numpy as np
 
     t0 = time.time()
     bbox = [round(xmin, 4), round(ymin, 4), round(xmax, 4), round(ymax, 4)]
     key = _ckey(bbox, OVERTURE_RELEASE, min_area_m2)
     elev_grid, flood_grid, _ = compute_grids(
-        *bbox, barriers=barriers, seed_side=seed_side)   # cached by flood_mask
+        *bbox, barriers=barriers, seed_side=seed_side,
+        bank_min=bank_min)                               # cached by flood_mask
 
     con = None
     out = {"ready": True, "bbox": bbox, "levels": LEVELS, "timings": {}}

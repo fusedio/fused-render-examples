@@ -318,19 +318,26 @@ def _seaward_water(wmask, seed_side, min_cells=50):
     return np.isin(labels, keep)
 
 
-def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side=""):
+def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side="",
+                  bank_min=0.0):
     """Elevation + connected-flood-level grids for an AOI. Disk-cached.
 
     float32 meters, mercator-linear rows (top row = ymax), water-clamped.
     `barriers` optionally walls off waterways before the flood fill.
     `seed_side` restricts flood seeds to water reachable from those grid
     edges (the open sea) — this is what makes a closed barrier protective.
+    `bank_min` raises riverbanks to a minimum dike height in the flood
+    TRAVERSAL only (see below) — for deltas whose real dikes are thinner
+    than a grid cell.
     """
     import hashlib
 
     import numpy as np
 
+    bank_min = float(bank_min or 0.0)
     bkey = hashlib.sha256(barriers.encode()).hexdigest()[:8] if barriers else "none"
+    if bank_min:
+        bkey += f"_bk{bank_min:g}"
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}_{bkey}_{seed_side or 'any'}"
     npz = os.path.join(_CACHE, f"grids_v8_{key}.npz")
     if os.path.exists(npz):
@@ -394,6 +401,25 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side=""):
             fill = crop.copy()
             m = managed & (crop < 19.0)            # never lower a wall
             fill[m] = bank[m]
+
+    # bank_min: the land immediately bordering seedable water is dike crest
+    # in reality, but 66 m cells average a 10 m-wide dike with the polder
+    # behind it (Rotterdam's banks read ~1.9 m where the real river dikes are
+    # ~5 m, so at +2 m the river "overtopped" everywhere at once). Raise that
+    # 2-cell bank band to at least `bank_min` in the traversal copy only —
+    # the rendered elev/flood values stay real, and above bank_min the water
+    # still pours over and fills everything below it.
+    if bank_min and seedable is not None and seedable.any():
+        from scipy import ndimage
+        # the band includes managed-water cells touching the river, or the
+        # sea slips river -> canal (canal traversal cost is its ~low bank)
+        # and around the dike that way
+        band = (ndimage.binary_dilation(seedable, iterations=2)
+                & ~seedable & (crop < 19.0))
+        if band.any():
+            if fill is crop:
+                fill = crop.copy()
+            fill[band] = np.maximum(fill[band], np.float32(bank_min))
     t1 = time.time()
     flood = _priority_flood(fill, seeds=seedmask)
     ms_flood = round((time.time() - t1) * 1000)
@@ -525,12 +551,13 @@ def _b64_int16_dm(arr):
 # ---------------------------------------------------------------- entrypoint
 
 def main(xmin: float, ymin: float, xmax: float, ymax: float, barriers: str = "",
-         seed_side: str = ""):
+         seed_side: str = "", bank_min: float = 0.0):
     if xmax - xmin > MAX_SPAN_DEG or ymax - ymin > MAX_SPAN_DEG:
         return {"error": "AOI too large"}
 
     t0 = time.time()
-    elev, flood, meta = compute_grids(xmin, ymin, xmax, ymax, barriers, seed_side)
+    elev, flood, meta = compute_grids(xmin, ymin, xmax, ymax, barriers, seed_side,
+                                      bank_min=bank_min)
     png, jpg, ameta = _terrain_assets(xmin, ymin, xmax, ymax)
     return {
         "bbox": [xmin, ymin, xmax, ymax],

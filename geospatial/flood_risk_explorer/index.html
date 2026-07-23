@@ -353,6 +353,10 @@ const PRESETS = [
     cam: { zoom: 12.55, pitch: 54, bearing: -25 } },
   { id: "rotterdam_delta", name: "Rotterdam Delta", bbox: [4.09, 51.85, 4.55, 52.01],
     cam: { zoom: 11.15, pitch: 50, bearing: 0 }, minArea: 250, seedSide: "w",
+    // river dikes are ~5 m NAP but thinner than a 66 m cell, so the banks
+    // read ~1.9 m and at +2 m the river overtopped everywhere at once.
+    // 2.5 m keeps +2 m dry while the +3 m gates scenario keeps its contrast.
+    bankMin: 2.5,
     // permanent defense line, always burned into the DEM. 66 m cells average
     // the real 10 m dunes and bank dikes down to ~1 m, so without it the sea
     // walks straight over the beach and the gates protect nothing. Dune coast
@@ -639,7 +643,7 @@ async function runCity(preset, keepCam) {
   try {
     const r = await py("./flood_mask.py",
       { xmin, ymin, xmax, ymax, barriers: barriersParam(),
-        seed_side: preset.seedSide || "" });
+        seed_side: preset.seedSide || "", bank_min: preset.bankMin || 0 });
     if (token !== S.runToken) return;
     if (r.error) { $("scrimtxt").textContent = r.error; return; }
     S.bbox = r.bbox; S.gw = r.grid_w; S.gh = r.grid_h;
@@ -667,7 +671,7 @@ async function runStats(preset, token) {
     for (let i = 0; i < 120; i++) {
       const r = await py("./overture_stats.py", { xmin, ymin, xmax, ymax,
         barriers: barriersParam(), min_area_m2: preset.minArea || 0,
-        seed_side: preset.seedSide || "" });
+        seed_side: preset.seedSide || "", bank_min: preset.bankMin || 0 });
       if (token !== S.runToken) break;
       if (r.ready) {
         S.stats = r; S.bld = r.buildings.bld;
