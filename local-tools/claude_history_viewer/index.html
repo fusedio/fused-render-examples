@@ -109,6 +109,9 @@
     font-size: 11px; padding-top: 3px; font-variant-numeric: tabular-nums; }
   .msg .gutter .model { display: block; color: var(--faint); font-size: 10px; margin-top: 2px;
     overflow: hidden; text-overflow: ellipsis; }
+  .msg .gutter .tok-chip { display: inline-block; margin-top: 3px; color: var(--muted);
+    font-size: 10px; font-variant-numeric: tabular-nums; cursor: help;
+    border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
   .msg .body { flex: 1; min-width: 0; }
   .bubble {
     border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
@@ -149,13 +152,24 @@
   details.tool .content pre { background: #14130f; border: 1px solid var(--border); border-radius: 6px;
     padding: 10px 12px; overflow-x: auto; margin: 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
   details.tool.error { border-color: #7a3a3a; }
+  details.xml.reminder .content { color: var(--muted); font-style: italic; white-space: pre-wrap; font-size: 12.5px; }
   .tool-name { color: var(--accent); font-family: ui-monospace, Menlo, monospace; }
+  /* one-line tool overview hint in a card summary (§2/§4) */
+  .overview { color: var(--faint); font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+    margin-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .result-text { white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
     color: var(--text); margin: 0; }
   .trunc-note { color: var(--warn); font-size: 11px; margin-top: 6px; font-style: italic; }
 
   .img-chip { display: inline-block; padding: 4px 10px; border: 1px dashed var(--border);
     border-radius: 6px; color: var(--faint); font-size: 12px; margin: 6px 0; }
+
+  /* prettified harness XML in user turns (§4a) */
+  .usertext { white-space: pre-wrap; }
+  .usertext details.block { white-space: normal; }
+  .cmd-chip { display: inline-block; white-space: normal; font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px; background: var(--user-tint); border: 1px solid rgba(110,168,254,0.3);
+    color: var(--user); border-radius: 5px; padding: 1px 8px; }
 
   .system-row { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); }
   .system-row .line { flex: 1; height: 1px; background: var(--border); }
