@@ -15,7 +15,7 @@ key, noted in their README).
 
 <table>
   <tr>
-    <td width="50%"><a href="geospatial/hexagon_lab/"><img src="assets/hexagon_lab.png" alt="Hexagon lab"></a><br><b>Hexagon lab</b><br>Buildings, rasters and release diffs poured into H3 cells — <a href="https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e">live</a>.</td>
+    <td width="50%"><a href="geospatial/hexagon_lab/"><img src="assets/hexagon_lab.png" alt="Hexagon lab"></a><br><b>Hexagon lab</b><br>Six steps from the whole world to one join — an interactive H3 explainer — <a href="https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e">live</a>.</td>
     <td width="50%"><a href="local-tools/visual_claude/"><img src="assets/visual_claude.png" alt="visual-claude"></a><br><b>visual-claude</b><br>A visual settings page for Claude Code, writing to <code>~/.claude</code>.</td>
   </tr>
   <tr>
@@ -31,7 +31,7 @@ key, noted in their README).
 | Example | What it does |
 |---|---|
 | [buildings_to_hexagons](geospatial/buildings_to_hexagons/) | Interactive explainer: every building on Earth as H3 hexes |
-| [hexagon_lab](geospatial/hexagon_lab/) | Three-tab H3 sandbox: buildings, terrain rasters, release diffs ([live](https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e)) |
+| [hexagon_lab](geospatial/hexagon_lab/) | Six-step H3 explainer: globe → neighbors → hierarchy → buildings → rasters → release diff ([live](https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e)) |
 | [cog_range_viewer](geospatial/cog_range_viewer/) | Stream a huge COG with HTTP range requests, no download |
 | [zarr_explainer](geospatial/zarr_explainer/) | An interactive 11-step guide to the Zarr format, on real NASA ocean data ([live](https://open.fused.io/mjyttte444gnh4sye2bzjgd5f4)) |
 | [cog_overview_pyramid](geospatial/cog_overview_pyramid/) | Every resolution level of a COG as an interactive 3D pyramid |
