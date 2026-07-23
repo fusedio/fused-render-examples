@@ -135,10 +135,16 @@ def _connect():
     import duckdb
 
     con = duckdb.connect()
+    # Deployed executors have no $HOME; DuckDB's extension installer needs one.
+    if not os.environ.get("HOME"):
+        con.execute("SET home_directory='/tmp';")
     con.execute("INSTALL httpfs; LOAD httpfs; INSTALL h3 FROM community; LOAD h3;")
     # path-style URLs: the source.coop bucket name contains dots, which breaks
-    # TLS for virtual-host-style addressing.
-    con.execute("CREATE SECRET (TYPE S3, PROVIDER config, REGION 'us-west-2', URL_STYLE 'path');")
+    # TLS for virtual-host-style addressing. Empty KEY_ID/SECRET force anonymous
+    # access — deployed executors carry AWS env credentials that these public
+    # buckets reject (signed request -> 403).
+    con.execute("CREATE SECRET (TYPE S3, PROVIDER config, REGION 'us-west-2', "
+                "URL_STYLE 'path', KEY_ID '', SECRET '');")
     return con
 
 
