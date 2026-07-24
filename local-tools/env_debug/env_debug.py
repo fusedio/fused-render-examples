@@ -1,4 +1,4 @@
-def main():
+def main(check_deps: str = ""):
     """System debug info for the current Python environment.
 
     Returns env var NAMES (never values), the Python version, whether we
@@ -13,8 +13,6 @@ def main():
     import platform
     import importlib
     import importlib.metadata as md
-
-    check_deps: str = ""
 
     # --- Python version ---------------------------------------------------
     python = {
@@ -75,7 +73,12 @@ def main():
         "fused", "pandas", "geopandas", "shapely", "numpy", "pyarrow",
         "duckdb", "requests", "xarray", "rasterio", "matplotlib", "scipy",
     ]
+    import re
+
+    MAX_EXTRA_DEPS = 20
+    valid_name = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
     extra = [d.strip() for d in check_deps.split(",") if d.strip()]
+    extra = [d for d in extra if valid_name.match(d)][:MAX_EXTRA_DEPS]
     deps_to_check = default_deps + [d for d in extra if d not in default_deps]
 
     dependencies = []
