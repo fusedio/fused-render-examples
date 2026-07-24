@@ -126,7 +126,7 @@
     <div id="editor">
       <pre id="hl" aria-hidden="true"></pre>
       <textarea id="sql" spellcheck="false" autocomplete="off" autocapitalize="off"
-                placeholder="SELECT * FROM data" rows="1"></textarea>
+                placeholder="SELECT * FROM read_parquet('data')" rows="1"></textarea>
     </div>
     <button id="run" title="Run query (Enter — Shift+Enter for a newline)">Run</button>
   </div>
@@ -260,7 +260,7 @@
     // Arrow values → display strings. Nested (list/struct) come back as objects;
     // BigInt from 64-bit ints needs an explicit String().
     function cellText(v) {
-      if (v === null || v === undefined) return { text: "", cls: "is-null" };
+      if (v === null || v === undefined) return { text: "NULL", cls: "is-null" };
       if (typeof v === "bigint") return { text: v.toString(), cls: "num" };
       if (typeof v === "number") return { text: String(v), cls: "num" };
       if (typeof v === "object") {
