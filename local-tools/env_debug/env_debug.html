@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Environment debug</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 24px;
+      background: #0e1116; color: #e6edf3;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .sub { color: #8b949e; margin-bottom: 20px; }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 16px; overflow: auto;
+    }
+    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px;
+      color: #8b949e; margin: 0 0 12px; }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+    .kv .k { color: #8b949e; }
+    .kv .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .verdict { font-size: 20px; font-weight: 600; margin-bottom: 12px; }
+    .hosted { color: #3fb950; } .local { color: #58a6ff; }
+    .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px;
+      font-family: ui-monospace, monospace; }
+    .yes { background: #23361f; color: #3fb950; } .no { background: #30363d; color: #8b949e; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { text-align: left; padding: 3px 8px; border-bottom: 1px solid #21262d; }
+    th { color: #8b949e; font-weight: 500; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .cols { column-width: 220px; column-gap: 16px; }
+    .cols div { break-inside: avoid; color: #adbac7; font-size: 13px; }
+    .err { color: #f85149; white-space: pre-wrap; font-family: ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <h1>envdebug</h1>
+  <div class="sub">Environment inspection for the local Python that fused-render runs.</div>
+  <div id="out">Loading…</div>
+
+  <script>
+    const out = document.getElementById("out");
+
+    function badge(v) {
+      return `<span class="badge ${v ? "yes" : "no"}">${v ? "yes" : "no"}</span>`;
+    }
+
+    function render(d) {
+      const py = d.python;
+      const env = d.environment;
+      const hosted = env.verdict.startsWith("hosted");
+
+      const signalsRows = Object.entries(env.signals)
+        .map(([k, v]) => `<tr><td>${k}</td><td>${badge(v)}</td></tr>`).join("");
+
+      const depRows = d.dependencies.map(dep =>
+        `<tr><td class="mono">${dep.name}</td><td>${badge(dep.installed)}</td>` +
+        `<td class="mono">${dep.installed ? (dep.version ?? "") : ""}</td></tr>`
+      ).join("");
+
+      const fusedNames = d.fused_env_var_names.length
+        ? d.fused_env_var_names.map(n => `<div>${n}</div>`).join("")
+        : `<div style="color:#8b949e">(none)</div>`;
+
+      const allNames = d.env_var_names.map(n => `<div>${n}</div>`).join("");
+
+      out.innerHTML = `
+        <div class="grid">
+          <div class="card">
+            <h2>Python</h2>
+            <div class="kv">
+              <span class="k">version</span><span class="v">${py.version}</span>
+              <span class="k">implementation</span><span class="v">${py.implementation}</span>
+              <span class="k">executable</span><span class="v">${py.executable}</span>
+              <span class="k">platform</span><span class="v">${py.platform}</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Fused environment</h2>
+            <div class="verdict ${hosted ? "hosted" : "local"}">${env.verdict}</div>
+            <table><tbody>${signalsRows}</tbody></table>
+          </div>
+
+          <div class="card">
+            <h2>Dependencies</h2>
+            <table>
+              <thead><tr><th>package</th><th>installed</th><th>version</th></tr></thead>
+              <tbody>${depRows}</tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <h2>FUSED_* env var names (${d.fused_env_var_names.length})</h2>
+            <div class="cols">${fusedNames}</div>
+          </div>
+
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>All env var names (${d.env_var_names.length}) — names only, no values</h2>
+            <div class="cols">${allNames}</div>
+          </div>
+        </div>`;
+    }
+
+    async function draw() {
+      out.textContent = "Loading…";
+      try {
+        const data = await fused.runPython("./env_debug.py", {
+          check_deps: fused.params.get("check_deps") || "",
+        });
+        render(data);
+      } catch (err) {
+        out.innerHTML = `<div class="err">${err.type}: ${err.message}\n\n${err.traceback || ""}</div>`;
+      }
+    }
+
+    fused.params.onChange(draw);
+    draw();
+  </script>
+</body>
+</html>
