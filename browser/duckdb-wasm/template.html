@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>DuckDB-WASM preview</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    color: #e8eaed;
+    background: #131417;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* Query editor pinned at the top; results scroll in their own pane below. */
+  #querybar {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2d33;
+    background: #17181c;
+  }
+  /* SQL editor: a transparent <textarea> stacked over a highlighted <pre>.
+     The two MUST render text identically (font, size, padding, line-height,
+     wrapping) so the coloured text under the caret lines up to the pixel. */
+  #editor { position: relative; flex: 1 1 auto; min-width: 0; }
+  #hl, #sql {
+    font: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 7px 10px;
+    margin: 0;
+    border: 1px solid #2a2d33;
+    border-radius: 6px;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+  #hl {
+    position: absolute; inset: 0;
+    pointer-events: none; overflow: hidden;
+    color: #e8eaed; background: #131417;
+  }
+  #sql {
+    position: relative; display: block; width: 100%;
+    min-height: 34px; max-height: 160px;
+    resize: none;              /* height is auto-managed as lines are added */
+    overflow-y: auto;
+    background: transparent;   /* the visible text is the #hl layer beneath */
+    color: transparent;
+    caret-color: #e8eaed;
+  }
+  #sql:focus { outline: 2px solid #3b6ea5; outline-offset: -2px; }
+  #sql::placeholder { color: #6b7075; }
+  /* Token colours for the highlight layer. */
+  .tok-kw  { color: #79c0ff; }
+  .tok-str { color: #a5d6a7; }
+  .tok-num { color: #f0a878; }
+  .tok-com { color: #6b7075; font-style: italic; }
+  .tok-fn  { color: #d2a8ff; }
+  #run {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    font: inherit;
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid #2f6f4f;
+    border-radius: 6px;
+    background: #1e5138;
+    color: #eafff2;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #run:disabled { opacity: 0.5; cursor: default; }
+  #loadbar { flex: 0 0 auto; height: 2px; overflow: hidden; background: transparent; }
+  #loadbar::before {
+    content: ""; display: block; height: 100%; width: 40%; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, #4a9eff, transparent);
+    transform: translateX(-100%); opacity: 0;
+  }
+  #loadbar.active::before { opacity: 1; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(350%); } }
+  #tablewrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #24262b;
+    border-right: 1px solid #24262b;
+    text-align: left; white-space: nowrap;
+    max-width: 360px; overflow: hidden; text-overflow: ellipsis;
+  }
+  th { background: #1b1d21; position: sticky; top: 0; font-weight: 600; z-index: 1; }
+  .coltype { color: #6b7075; font-weight: 400; font-size: 11px; margin-left: 5px; }
+  td.is-null { color: #6b7075; font-style: italic; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #bar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-top: 1px solid #2a2d33; background: #1b1d21;
+  }
+  #bar .side { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 8px; }
+  #bar .side.right { justify-content: flex-end; }
+  #bar button {
+    font: inherit; height: 28px; width: 28px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid #2a2d33; border-radius: 6px; background: #131417;
+    color: #e8eaed; cursor: pointer;
+  }
+  #bar button:disabled { opacity: 0.4; cursor: default; }
+  #rowcount, #engine { color: #9aa0a6; white-space: nowrap; }
+  #engine { font-size: 11px; }
+  #status { padding: 24px; color: #9aa0a6; white-space: pre-wrap; }
+  #status.error { color: #ff6b6b; }
+  #status code { color: #ffb3b3; }
+</style>
+</head>
+<body>
+  <div id="querybar">
+    <div id="editor">
+      <pre id="hl" aria-hidden="true"></pre>
+      <textarea id="sql" spellcheck="false" autocomplete="off" autocapitalize="off"
+                placeholder="SELECT * FROM data" rows="1"></textarea>
+    </div>
+    <button id="run" title="Run query (Enter — Shift+Enter for a newline)">Run</button>
+  </div>
+  <div id="loadbar"></div>
+  <div id="tablewrap"><div id="status">Loading DuckDB-WASM…</div></div>
+  <div id="bar">
+    <div class="side"><span id="engine"></span></div>
+    <div class="side" style="flex:0 0 auto;">
+      <button id="prev" title="Previous page" aria-label="Previous page">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span id="rowcount"></span>
+      <button id="next" title="Next page" aria-label="Next page">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="side right"></div>
+  </div>
+  <script type="module">
+    // DuckDB-WASM preview for Parquet (and any file DuckDB's read_* can open).
+    // Everything runs IN THE BROWSER: the WASM engine is loaded from jsDelivr and
+    // the file is scanned over HTTP with ranged reads straight from the local
+    // fused-render server — no reader.py, no Python round-trip. State (the SQL
+    // text and the page offset) lives in URL params, so the view is refresh-proof.
+    const LIMIT = 100;
+    const el = (id) => document.getElementById(id);
+    const sqlEl = el("sql"), hl = el("hl"), runBtn = el("run"), wrap = el("tablewrap");
+    const prevBtn = el("prev"), nextBtn = el("next");
+    const rowcountEl = el("rowcount"), engineEl = el("engine"), loadbar = el("loadbar");
+
+    const setLoading = (on) => loadbar.classList.toggle("active", !!on);
+    const showStatus = (msg, isErr) => {
+      wrap.innerHTML = `<div id="status"${isErr ? ' class="error"' : ""}></div>`;
+      el("status").innerHTML = msg;
+    };
+    const escapeHtml = (s) => String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+    // ---- SQL syntax highlighting (the #hl layer under the transparent textarea) ----
+    const SQL_KW = new Set(("select from where group by order limit offset as and or not null " +
+      "is in like ilike similar between exists case when then else end asc desc nulls first last " +
+      "distinct all having union except intersect with recursive join left right full inner outer " +
+      "cross natural on using values insert into update delete set create table view schema temporary " +
+      "temp if replace drop alter add column primary key foreign references unique default check " +
+      "cast try_cast at time zone interval date timestamp qualify window over partition sample " +
+      "pivot unpivot describe summarize explain analyze copy to true false").split(" "));
+    // Comments and strings are matched first so keywords inside them aren't
+    // recoloured; a bare word is a keyword (by list) or a function (if a "(" follows).
+    const TOKEN_RE = /(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^']|'')*'|"(?:[^"]|"")*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)/g;
+    function highlight(code) {
+      let out = "", last = 0, m;
+      TOKEN_RE.lastIndex = 0;
+      while ((m = TOKEN_RE.exec(code))) {
+        out += escapeHtml(code.slice(last, m.index));
+        const text = escapeHtml(m[0]);
+        if (m[1]) out += `<span class="tok-com">${text}</span>`;
+        else if (m[2]) out += `<span class="tok-str">${text}</span>`;
+        else if (m[3]) out += `<span class="tok-num">${text}</span>`;
+        else if (SQL_KW.has(m[4].toLowerCase())) out += `<span class="tok-kw">${text}</span>`;
+        else if (code[TOKEN_RE.lastIndex] === "(") out += `<span class="tok-fn">${text}</span>`;
+        else out += text;
+        last = TOKEN_RE.lastIndex;
+      }
+      // Trailing "\n" keeps the <pre>'s last line in step with the textarea
+      // (browsers drop a final newline in a <pre>, which would misalign heights).
+      return out + escapeHtml(code.slice(last)) + "\n";
+    }
+    // Repaint the highlight layer, grow the box to fit (capped by max-height,
+    // after which it scrolls), and keep the layer's scroll in sync with the caret.
+    function paintEditor() {
+      hl.innerHTML = highlight(sqlEl.value);
+      sqlEl.style.height = "auto";
+      sqlEl.style.height = Math.min(sqlEl.scrollHeight, 160) + "px";
+      hl.scrollTop = sqlEl.scrollTop;
+      hl.scrollLeft = sqlEl.scrollLeft;
+    }
+
+    const file = fused.params.get("_file");
+    // The name the file is registered under inside the WASM virtual FS. Bare,
+    // quoted with single quotes in SQL — the real path may contain anything.
+    const VFS_NAME = "data";
+    // What the default (no custom SQL) browse query scans. Kept as a param-free
+    // constant so paging can wrap it; custom SQL bypasses this entirely.
+    const BASE_QUERY = `SELECT * FROM read_parquet('${VFS_NAME}')`;
+
+    // ---- URL-param state ----
+    const currentSql = () => (fused.params.get("sql") || "").trim();
+    function currentOffset() {
+      const n = parseInt(fused.params.get("offset") || "0", 10);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    }
+    // A custom query runs verbatim (its own LIMIT/paging, if any) — we only
+    // auto-page the default browse of the whole file.
+    const isBrowse = () => currentSql() === "";
+
+    let db = null, conn = null, duckdb = null;
+
+    async function initDuckDB() {
+      // Load the ESM build off jsDelivr and pick the WASM bundle the browser can
+      // run (mvp vs. eh/SIMD). The worker script is cross-origin, so wrap it in a
+      // same-origin blob that importScripts()es it — the canonical jsDelivr recipe.
+      duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm");
+      const bundles = duckdb.getJsDelivrBundles();
+      const bundle = await duckdb.selectBundle(bundles);
+      const workerUrl = URL.createObjectURL(
+        new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
+      );
+      const worker = new Worker(workerUrl);
+      const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+      db = new duckdb.AsyncDuckDB(logger, worker);
+      await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+      URL.revokeObjectURL(workerUrl);
+      conn = await db.connect();
+
+      // Point DuckDB at the file over HTTP. fused.rawUrl serves the raw bytes
+      // from the local server with range support, so read_parquet only pulls the
+      // footer + the column chunks a query touches — big files never fully download.
+      // The URL must be absolute: DuckDB fetches it from inside the WASM worker,
+      // which has no page base to resolve a relative "/api/fs/raw?…" against.
+      let rawUrl = fused.rawUrl(file);
+      if (rawUrl.startsWith("/")) rawUrl = location.origin + rawUrl;
+      await db.registerFileURL(VFS_NAME, rawUrl, duckdb.DuckDBDataProtocol.HTTP, false);
+
+      const ver = await conn.query("SELECT version() AS v");
+      engineEl.textContent = "DuckDB-WASM " + ver.get(0).v;
+    }
+
+    // Arrow values → display strings. Nested (list/struct) come back as objects;
+    // BigInt from 64-bit ints needs an explicit String().
+    function cellText(v) {
+      if (v === null || v === undefined) return { text: "", cls: "is-null" };
+      if (typeof v === "bigint") return { text: v.toString(), cls: "num" };
+      if (typeof v === "number") return { text: String(v), cls: "num" };
+      if (typeof v === "object") {
+        try { return { text: JSON.stringify(v), cls: "" }; }
+        catch { return { text: String(v), cls: "" }; }
+      }
+      return { text: String(v), cls: "" };
+    }
+
+    function renderTable(arrow) {
+      const fields = arrow.schema.fields;
+      if (!fields.length) { showStatus("Query returned no columns."); return; }
+      const head = `<tr>${fields.map((f) =>
+        `<th>${escapeHtml(f.name)}<span class="coltype">${escapeHtml(String(f.type).toLowerCase())}</span></th>`
+      ).join("")}</tr>`;
+      const rows = [];
+      for (const row of arrow) {
+        const cells = fields.map((f) => {
+          const { text, cls } = cellText(row[f.name]);
+          const disp = escapeHtml(text);
+          return `<td${cls ? ` class="${cls}"` : ""} title="${disp}">${disp}</td>`;
+        }).join("");
+        rows.push(`<tr>${cells}</tr>`);
+      }
+      if (!rows.length) { showStatus("No rows."); return; }
+      wrap.innerHTML = `<table><thead>${head}</thead><tbody>${rows.join("")}</tbody></table>`;
+    }
+
+    let total = null; // cached row count for the current browse base query
+    let runSeq = 0;
+
+    async function run() {
+      const seq = ++runSeq;
+      setLoading(true);
+      runBtn.disabled = true;
+      const offset = currentOffset();
+      const browse = isBrowse();
+      try {
+        let query;
+        if (browse) {
+          query = `${BASE_QUERY} LIMIT ${LIMIT} OFFSET ${offset}`;
+          // Count once per base query so paging math + the pager total work.
+          if (total === null) {
+            const c = await conn.query(`SELECT count(*)::BIGINT AS n FROM (${BASE_QUERY})`);
+            if (seq !== runSeq) return;
+            total = Number(c.get(0).n);
+          }
+        } else {
+          query = currentSql();
+        }
+        const result = await conn.query(query);
+        if (seq !== runSeq) return;
+        renderTable(result);
+        updateBar(offset, browse, result.numRows);
+      } catch (err) {
+        if (seq !== runSeq) return;
+        showStatus(
+          `<strong>Query error</strong>\n\n<code>${escapeHtml(err.message || String(err))}</code>`,
+          true
+        );
+        rowcountEl.textContent = "";
+        prevBtn.disabled = nextBtn.disabled = true;
+      } finally {
+        if (seq === runSeq) { setLoading(false); runBtn.disabled = false; }
+      }
+    }
+
+    function updateBar(offset, browse, shown) {
+      if (browse) {
+        const from = shown === 0 ? 0 : offset + 1;
+        const to = offset + shown;
+        const totalKnown = typeof total === "number";
+        rowcountEl.textContent =
+          `rows ${from.toLocaleString()}–${to.toLocaleString()} of ${totalKnown ? total.toLocaleString() : "…"}`;
+        prevBtn.disabled = offset <= 0;
+        nextBtn.disabled = totalKnown ? offset + LIMIT >= total : shown < LIMIT;
+      } else {
+        // Custom SQL: no paging — just report the returned row count.
+        rowcountEl.textContent = `${shown.toLocaleString()} row${shown === 1 ? "" : "s"}`;
+        prevBtn.disabled = nextBtn.disabled = true;
+      }
+    }
+
+    // ---- controls: write params, let onChange re-run ----
+    function submitSql() {
+      total = null; // new query → recount
+      fused.params.set("offset", "0");
+      fused.params.set("sql", sqlEl.value.trim());
+    }
+    runBtn.addEventListener("click", submitSql);
+    // Enter runs the query; Shift+Enter (and ⌘/Ctrl+Enter) insert a newline.
+    sqlEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        submitSql();
+      }
+    });
+    // Re-highlight + auto-grow on every edit; keep the layer aligned while scrolling.
+    sqlEl.addEventListener("input", paintEditor);
+    sqlEl.addEventListener("scroll", () => { hl.scrollTop = sqlEl.scrollTop; hl.scrollLeft = sqlEl.scrollLeft; });
+    prevBtn.addEventListener("click", () =>
+      fused.params.set("offset", String(Math.max(0, currentOffset() - LIMIT))));
+    nextBtn.addEventListener("click", () =>
+      fused.params.set("offset", String(currentOffset() + LIMIT)));
+
+    // Re-render on any param change (paging, sql, back/forward). The engine is
+    // set up once; onChange only re-queries.
+    let ready = false;
+    fused.params.onChange(() => { if (ready) { sqlEl.value = currentSql(); paintEditor(); run(); } });
+
+    (async function boot() {
+      if (!file) { showStatus("No file selected (missing _file param).", true); return; }
+      sqlEl.value = currentSql();
+      paintEditor();
+      try {
+        await initDuckDB();
+      } catch (err) {
+        showStatus(
+          `<strong>Failed to load DuckDB-WASM</strong>\n\n<code>${escapeHtml(err.message || String(err))}</code>` +
+          `\n\nThe engine is fetched from jsDelivr — this view needs network access.`,
+          true
+        );
+        return;
+      }
+      ready = true;
+      await run();
+    })();
+  </script>
+</body>
+</html>
