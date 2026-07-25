@@ -38,11 +38,24 @@ def main(check_deps: str = ""):
 
     # Strong signals — any one of these means we're on a hosted Fused runtime.
     # (The /mount/fused-system writability check is what Fused's own
-    # get_writable_dir() uses to decide it's running on the mounted drive.)
+    # get_writable_dir() uses to decide it's running on the mounted drive.
+    # OPENFUSED_DEPLOYED is the backend-injected signal other examples in this
+    # repo gate on; in_realtime/in_batch are execution modes, not deployment
+    # signals — local fused.runPython also runs in realtime, so they're not
+    # used here.)
     strong = {
+        "OPENFUSED_DEPLOYED set": bool(os.environ.get("OPENFUSED_DEPLOYED")),
         "/mount/fused-system writable": _writable("/mount/fused-system"),
         "AWS_LAMBDA_FUNCTION_NAME set": "AWS_LAMBDA_FUNCTION_NAME" in os.environ,
         "AWS_EXECUTION_ENV set": "AWS_EXECUTION_ENV" in os.environ,
+    }
+
+    # Weak/informational — presence alone does NOT imply hosted (a dev may set
+    # FUSED_* vars locally, and in_realtime/in_batch reflect execution mode
+    # rather than deployment), so these are shown but excluded from the verdict.
+    weak = {
+        "/mount exists": os.path.isdir("/mount"),
+        "FUSED_* env var present": len(fused_env_names) > 0,
     }
 
     # Try the in-context signal if the fused package is importable.
@@ -50,17 +63,10 @@ def main(check_deps: str = ""):
         from fused.core._context import get_global_context
 
         ctx = get_global_context()
-        strong["fused context: in_realtime"] = bool(getattr(ctx, "in_realtime", False))
-        strong["fused context: in_batch"] = bool(getattr(ctx, "in_batch", False))
+        weak["fused context: in_realtime"] = bool(getattr(ctx, "in_realtime", False))
+        weak["fused context: in_batch"] = bool(getattr(ctx, "in_batch", False))
     except Exception:
         pass
-
-    # Weak/informational — presence alone does NOT imply hosted (a dev may set
-    # FUSED_* vars locally), so it's shown but excluded from the verdict.
-    weak = {
-        "/mount exists": os.path.isdir("/mount"),
-        "FUSED_* env var present": len(fused_env_names) > 0,
-    }
 
     signals = {**strong, **weak}
     environment = {

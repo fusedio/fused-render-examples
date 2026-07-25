@@ -44,6 +44,10 @@
   <script>
     const out = document.getElementById("out");
 
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function badge(v) {
       return `<span class="badge ${v ? "yes" : "no"}">${v ? "yes" : "no"}</span>`;
     }
@@ -113,7 +117,7 @@
         });
         render(data);
       } catch (err) {
-        out.innerHTML = `<div class="err">${err.type}: ${err.message}\n\n${err.traceback || ""}</div>`;
+        out.innerHTML = `<div class="err">${escapeHtml(`${err.type}: ${err.message}\n\n${err.traceback || ""}`)}</div>`;
       }
     }
 
