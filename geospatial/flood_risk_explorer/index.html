@@ -152,10 +152,18 @@
                border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
                white-space: nowrap; }
 
-  /* the visual chain */
+  /* zone chips — where each stage runs */
+  .zchip { display: inline-block; font: 600 9px var(--mono); letter-spacing: .09em;
+           text-transform: uppercase; border-radius: 5px; padding: 2px 7px; margin-bottom: 7px; }
+  .zchip.web { background: #2b230d; color: #e2c46a; }
+  .zchip.py  { background: #10281a; color: #7fd49a; }
+  .zchip.js  { background: #0c2733; color: var(--aqua); }
+
+  /* the visual chain = the live pipeline */
   #chain { display: flex; gap: 10px; align-items: flex-start; justify-content: center;
-           margin: 26px 0 8px; }
-  .cz { flex: 1; max-width: 220px; min-width: 0; text-align: center; }
+           margin: 24px 0 4px; }
+  .cz { flex: 1; max-width: 228px; min-width: 0; text-align: center; }
+  .cwrap { position: relative; }
   .cz canvas, .czbox { display: block; width: 100%; border-radius: 11px;
                        border: 2px solid var(--line); background: #0b1119; }
   .cz canvas { image-rendering: auto; }
@@ -164,18 +172,30 @@
             color: var(--dim); line-height: 1.45; }
   .srcrow:last-child { border-bottom: none; }
   .srcrow b { display: block; color: var(--txt); font-size: 12px; }
-  .czcap { font-size: 13px; font-weight: 700; margin-top: 9px; }
+  .czcap { font-size: 13px; font-weight: 700; margin-top: 8px; }
   .czsub { font-size: 10.5px; color: var(--dim); margin-top: 4px; line-height: 1.5; }
   .czsub input[type=range] { width: 90%; accent-color: var(--aqua); margin-top: 2px; }
   .czsub .sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px;
-               margin: 0 4px 0 8px; vertical-align: -1px; }
-  .czsub .sw:first-child { margin-left: 0; }
-  .czarr { color: var(--dim); font-size: 20px; margin-top: 58px; flex: none; }
-  .cz[data-g=src]    .czcap { color: #e2c46a; }  .cz[data-g=src] .czbox { border-color: #e2c46a44; }
-  .cz[data-g=elev]   .czcap { color: #7fd49a; }  .cz[data-g=elev] canvas { border-color: #7fd49a44; }
-  .cz[data-g=flood]  .czcap { color: #6aa8ff; }  .cz[data-g=flood] canvas { border-color: #6aa8ff44; }
-  .cz[data-g=thresh] .czcap { color: var(--aqua); } .cz[data-g=thresh] canvas { border-color: #46c8f544; }
-  .cz[data-g=naive]  .czcap { color: #ff8a3d; }  .cz[data-g=naive] canvas { border-color: #ff8a3d44; }
+               margin: 0 4px 0 2px; vertical-align: -1px; }
+  .czstat { font: 10.5px var(--mono); color: var(--dim); margin-top: 6px;
+            min-height: 15px; line-height: 1.5; }
+  .czstat.done { color: var(--txt); }
+  .czstat .ok { color: var(--ok); }
+  .czarr { color: var(--dim); font-size: 20px; margin-top: 84px; flex: none; }
+  .cz.web .czcap { color: #e2c46a; }
+  .cz.py  .czcap { color: #7fd49a; }
+  .cz.js  .czcap { color: var(--aqua); }
+  /* per-panel loading */
+  .cz.loading canvas { opacity: .18; }
+  .cz.loading .cwrap::after { content: ""; position: absolute; left: 50%; top: 50%;
+      width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--line);
+      border-top-color: var(--aqua); border-radius: 50%; animation: rot .8s linear infinite; }
+  /* mini connected/naive toggle on the threshold panel */
+  .miniseg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
+             overflow: hidden; margin-top: 6px; }
+  .miniseg button { font-size: 10px; padding: 3px 9px; background: none; border: none;
+                    color: var(--dim); cursor: pointer; }
+  .miniseg button.on { background: #16283a; color: var(--aqua); }
   /* cross-hover focus */
   #chain .cz, #anatcode .tk { transition: opacity .16s; }
   #chain .cz canvas, #chain .czbox { transition: transform .16s, box-shadow .16s; }
@@ -184,6 +204,17 @@
       box-shadow: 0 8px 26px #000a; }
   #anat.focused .tk:not(.hl) { opacity: .3; }
   #anatcode .tk.hl { box-shadow: 0 0 0 1.5px currentColor; }
+
+  /* the live-SQL drawer, opened from the buildings panel */
+  #sqlbtn { margin-top: 8px; font-size: 10.5px; padding: 4px 11px; border-radius: 999px;
+            border: 1px solid #7fd49a55; background: #10281a; color: #7fd49a; cursor: pointer; }
+  #sqlbtn:hover { border-color: #7fd49a; }
+  #sqldrawer { display: none; max-width: 860px; margin: 16px auto 0; }
+  #sqldrawer.open { display: block; }
+  #sqldrawer pre { font: 10.5px/1.6 var(--mono); color: #a8d1ff; background: #0b1119;
+                   border: 1px solid #7fd49a33; border-radius: 10px; padding: 11px 13px;
+                   white-space: pre-wrap; }
+  #sqldrawer .foot b { color: var(--txt); }
 
   /* the call anatomy */
   #anat { margin: 26px auto 0; max-width: 860px; }
@@ -194,21 +225,21 @@
               white-space: pre-wrap; }
   #anatcode .c { color: #55647a; }
   #anatcode .tk { border-radius: 5px; padding: 1px 6px; cursor: pointer; white-space: nowrap; }
-  .tk.t-src    { background: #2b230d; color: #e2c46a; }
-  .tk.t-elev   { background: #10281a; color: #7fd49a; }
-  .tk.t-flood  { background: #10203a; color: #6aa8ff; }
-  .tk.t-thresh { background: #0c2733; color: var(--aqua); }
-  .tk.t-naive  { background: #2d1a0b; color: #ff8a3d; }
+  .tk.t-py { background: #10281a; color: #7fd49a; }
+  .tk.t-js { background: #0c2733; color: var(--aqua); }
+  #wire { text-align: center; font-size: 11px; color: var(--dim); margin-top: 10px; }
+  #wire b { color: var(--txt); font-variant-numeric: tabular-nums; }
 
-  /* detail cards row */
-  #bts-cards { display: flex; gap: 12px; margin-top: 26px; align-items: flex-start; }
-  #bts-cards .card { flex: 1; min-width: 0; }
-  #bts-cards pre { font: 10px/1.55 var(--mono); color: #a8d1ff; white-space: pre-wrap;
-                   background: #0b1119; border: 1px solid var(--line); border-radius: 8px;
-                   padding: 9px; max-height: 240px; overflow-y: auto; }
-  .kv { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
-  .kv span { color: var(--dim); }
-  .kv b { font-variant-numeric: tabular-nums; }
+  /* vs-artifact, tucked away at the bottom */
+  #vsart { max-width: 860px; margin: 26px auto 0; border: 1px solid var(--line);
+           border-radius: 12px; background: var(--card); padding: 0 16px; }
+  #vsart summary { cursor: pointer; padding: 12px 2px; font-size: 12.5px; color: var(--dim);
+                   user-select: none; list-style: none; }
+  #vsart summary::before { content: "▸ "; color: var(--aqua); }
+  #vsart[open] summary::before { content: "▾ "; }
+  #vsart summary:hover { color: var(--txt); }
+  #vsart[open] summary { border-bottom: 1px solid var(--line); }
+  #vsart .vsbody { padding: 10px 2px 14px; }
   .vsrow { display: flex; gap: 8px; padding: 5px 0; font-size: 11.5px;
            border-bottom: 1px solid #1a2432; align-items: baseline; }
   .vsrow:last-of-type { border-bottom: none; }
@@ -287,7 +318,8 @@
         </div>
 
         <div id="chain">
-          <div class="cz" data-g="src">
+          <div class="cz web" data-g="src">
+            <div class="zchip web">s3 &middot; open web</div>
             <div class="czbox">
               <div class="srcrow"><b>Overture Maps</b>buildings &middot; water &middot; places<br>GeoParquet on S3, ~400 GB</div>
               <div class="srcrow"><b>Terrarium</b>elevation tiles &middot; AWS open data</div>
@@ -297,69 +329,82 @@
             <div class="czsub">a browser can't scan a parquet lake &mdash; a query engine can</div>
           </div>
           <div class="czarr">&rarr;</div>
-          <div class="cz" data-g="elev"><canvas id="cv-elev"></canvas>
+          <div class="cz py" data-g="elev">
+            <div class="zchip py">python kernel</div>
+            <div class="cwrap"><canvas id="cv-elev"></canvas></div>
             <div class="czcap">Python builds the terrain</div>
             <div class="czsub">DEM tiles mosaicked &middot; Overture water clamps coastal noise &middot; dikes &amp; gates burned in (bright lines)</div>
+            <div class="czstat" id="st-terrain"></div>
           </div>
           <div class="czarr">&rarr;</div>
-          <div class="cz" data-g="flood"><canvas id="cv-flood"></canvas>
+          <div class="cz py" data-g="flood">
+            <div class="zchip py">python kernel</div>
+            <div class="cwrap"><canvas id="cv-flood"></canvas></div>
             <div class="czcap">&hellip;then floods it once</div>
             <div class="czsub">priority-flood from the sea: the minimum rise that <i>reaches</i> each cell (bright = floods early, dark = never)</div>
+            <div class="czstat" id="st-flood"></div>
           </div>
           <div class="czarr">&rarr;</div>
-          <div class="cz" data-g="thresh"><canvas id="cv-thresh"></canvas>
+          <div class="cz py" data-g="bld">
+            <div class="zchip py">python kernel &middot; duckdb</div>
+            <div class="cwrap"><canvas id="cv-bld"></canvas></div>
+            <div class="czcap">DuckDB fetches every building</div>
+            <div class="czsub">footprints + heights straight off S3, colored by the level that floods them</div>
+            <div class="czstat" id="st-bld"></div>
+            <button id="sqlbtn">&#9656; show the live query</button>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz js" data-g="thresh">
+            <div class="zchip js">your browser</div>
+            <div class="cwrap"><canvas id="cv-thresh"></canvas></div>
             <div class="czcap">the browser just thresholds</div>
             <div class="czsub"><input id="bts-lvl" type="range" min="0" max="10" step="0.25" value="2"><br>
-              <b id="bts-lvlv" style="color:var(--aqua)">+2.00 m</b> &mdash; drag me: zero Python calls</div>
+              <b id="bts-lvlv" style="color:var(--aqua)">+2.00 m</b> &mdash; drag me: zero Python calls<br>
+              <span class="miniseg"><button id="bm-conn" class="on">connected</button><button id="bm-naive">vs naive</button></span>
+              <span id="bts-fakeline" style="display:none"><br><span class="sw" style="background:#ff8a3d"></span><b
+                id="bts-fake">&mdash;</b> cells <span class="mono">elev &lt; level</span> would wrongly flood</span>
+            </div>
           </div>
-          <div class="czarr">&rarr;</div>
-          <div class="cz" data-g="naive"><canvas id="cv-naive"></canvas>
-            <div class="czcap">why the fill matters</div>
-            <div class="czsub"><span class="sw" style="background:#46c8f5"></span>connected flood
-              <span class="sw" style="background:#ff8a3d"></span><b id="bts-fake">&mdash;</b> cells a naive
-              <span class="mono">elev &lt; level</span> would wrongly flood</div>
-          </div>
+        </div>
+
+        <div id="sqldrawer">
+          <pre id="sqltxt">run a city first&hellip;</pre>
+          <div class="foot">This exact query runs <b>in the Python kernel next to this page</b>
+            &mdash; DuckDB reading Overture's GeoParquet on S3 directly, no download, no database
+            server. Only the row groups overlapping this AOI are touched, and the result is
+            cached to disk for the next visitor.</div>
         </div>
 
         <div id="anat">
           <div class="anath">the whole integration &mdash; hover a piece</div>
-          <pre id="anatcode">const r = await fused.runPython(<span class="tk t-src" data-g="src">"./flood_mask.py"</span>, { xmin, ymin, xmax, ymax, barriers });
+          <pre id="anatcode">const r = await fused.runPython(<span class="tk t-py" data-g="elev">"./flood_mask.py"</span>, { xmin, ymin, xmax, ymax, barriers });
+r.<span class="tk t-py" data-g="elev">elev_b64</span>     <span class="c">// int16 terrain grid &mdash; water-clamped, dikes burned in</span>
+r.<span class="tk t-py" data-g="flood">flood_b64</span>    <span class="c">// int16 "floods at" grid &mdash; one priority-flood, done once</span>
+r.terrain_png + r.texture_jpg    <span class="c">// 3D mesh + satellite skin, mosaicked in Python</span>
 
-r.<span class="tk t-elev" data-g="elev">elev_b64</span>    <span class="c">// int16 terrain grid &mdash; water-clamped, dikes burned in</span>
-r.<span class="tk t-flood" data-g="flood">flood_b64</span>   <span class="c">// int16 "floods at" grid &mdash; one priority-flood, done once</span>
-r.terrain_png + r.texture_jpg   <span class="c">// 3D mesh + satellite skin, mosaicked in Python</span>
+const s = await fused.runPython(<span class="tk t-py" data-g="bld">"./overture_stats.py"</span>, { xmin, ymin, xmax, ymax });
+s.<span class="tk t-py" data-g="bld">buildings</span>    <span class="c">// every footprint + height + the level that floods it, via DuckDB</span>
 
-<span class="tk t-thresh" data-g="thresh">slider</span> &rarr; deck.gl re-thresholds the grids in memory &mdash; <b>0</b> Python calls per drag
-<span class="tk t-naive" data-g="naive">connectivity</span> &rarr; water has to <i>get</i> there: a basin stays dry until a path from the sea exists</pre>
+<span class="tk t-js" data-g="thresh">slider</span> &rarr; deck.gl re-thresholds the grids in memory &mdash; <b>0</b> Python calls per drag</pre>
+          <div id="wire">Python calls <b id="b-calls">0</b> &nbsp;&middot;&nbsp;
+            sent to this page <b id="b-recv">0 KB</b> &nbsp;&middot;&nbsp;
+            queried on S3 <b>hundreds of GB</b></div>
         </div>
 
-        <div id="bts-cards">
-          <div class="card">
-            <h3>this city, live</h3>
-            <div id="steps"></div>
-            <div class="kv" style="margin-top:8px"><span>Python calls</span><b id="b-calls">0</b></div>
-            <div class="kv"><span>sent to this page</span><b id="b-recv">0 KB</b></div>
-            <div class="kv"><span>queried on S3</span><b>hundreds of GB</b></div>
-          </div>
-          <div class="card">
-            <h3>the buildings query (live)</h3>
-            <pre id="sqltxt">run a city first&hellip;</pre>
-            <div class="foot">DuckDB reads Overture's GeoParquet straight off S3 &mdash; only
-              the row groups overlapping the AOI, cached to disk for the next visitor.</div>
-          </div>
-          <div class="card">
-            <h3>vs. asking Claude for an artifact</h3>
-            <div class="vsrow"><span></span><span class="no">browser sandbox</span><span class="yes">page + kernel</span></div>
-            <div class="vsrow"><span>query 400 GB on S3</span><span class="no">no</span><span class="yes">DuckDB</span></div>
+        <details id="vsart">
+          <summary>why couldn't a Claude artifact do this?</summary>
+          <div class="vsbody">
+            <div class="vsrow"><span></span><span class="no">standalone HTML (browser sandbox)</span><span class="yes">this page (kernel attached)</span></div>
+            <div class="vsrow"><span>query 400 GB on S3</span><span class="no">no &mdash; a few MB of fetch()</span><span class="yes">DuckDB</span></div>
             <div class="vsrow"><span>flood connectivity</span><span class="no">no</span><span class="yes">numpy + scipy</span></div>
             <div class="vsrow"><span>terrain mosaicking</span><span class="no">no</span><span class="yes">PIL, server-side</span></div>
-            <div class="vsrow"><span>results persist</span><span class="no">re-fetch</span><span class="yes">disk cache</span></div>
-            <div class="vsrow"><span>deploy</span><span class="no">&mdash;</span><span class="yes">none: edit .py, reload</span></div>
+            <div class="vsrow"><span>results persist</span><span class="no">re-fetch every visit</span><span class="yes">disk cache</span></div>
+            <div class="vsrow"><span>deploy</span><span class="no">&mdash;</span><span class="yes">none: edit the .py, reload</span></div>
             <div class="foot" style="margin-top:9px">The backend is two ordinary Python files
               with a <span class="mono">main()</span> &mdash; the page calls them, that's the
               whole architecture.</div>
           </div>
-        </div>
+        </details>
       </div>
     </div>
   </div>
@@ -622,34 +667,15 @@ async function py(script, params) {
   return r;
 }
 
-/* ------------------------------------------------ pipeline card */
-const STEPS = [
-  { id: "terrain", layer: "terrain", lbl: "terrain mesh", sub: "Terrarium DEM tiles, mosaicked in Python" },
-  { id: "water",   layer: "water",   lbl: "water polygons", sub: "Overture water theme via DuckDB" },
-  { id: "flood",   layer: "water",   lbl: "priority-flood", sub: "min level to reach each cell, numpy + heap" },
-  { id: "bld",     layer: "bld",     lbl: "building footprints", sub: "Overture GeoParquet on S3, heights included" },
-  { id: "pois",    layer: "poi",     lbl: "hospitals & schools", sub: "Overture places" },
-  { id: "roads",   layer: null,      lbl: "roads", sub: "sampled every 40 m" },
-];
-function initSteps() {
-  $("steps").innerHTML = STEPS.map(s =>
-    `<div class="step" id="st-${s.id}" data-layer="${s.layer || ""}">
-       <div class="ic"><div class="dot"></div></div>
-       <div class="lbl">${s.lbl}<small>${s.sub}</small></div>
-       <div class="met" id="stm-${s.id}"></div></div>`).join("");
-  document.querySelectorAll(".step").forEach(el => {
-    el.addEventListener("mouseenter", () => { S.isolate = el.dataset.layer || null; redraw(); });
-    el.addEventListener("mouseleave", () => { S.isolate = null; redraw(); });
-  });
+/* ------------------------------------------------ chain status (build tab) */
+function stat(id, state, txt) {
+  const el = $("st-" + id);
+  el.classList.toggle("done", state === "done");
+  el.innerHTML = (state === "done" ? '<span class="ok">✓</span> ' : "") + (txt || "");
 }
-function setStep(id, state, metric) {
-  const ic = document.querySelector(`#st-${id} .ic`);
-  ic.innerHTML = state === "run" ? '<div class="mini"></div>'
-    : state === "done" ? '<div class="chk">✓</div>' : '<div class="dot"></div>';
-  $(`st-${id}`).classList.toggle("done", state === "done");
-  if (metric != null) $(`stm-${id}`).textContent = metric;
+function panelLoading(g, on) {
+  document.querySelector(`#chain .cz[data-g=${g}]`).classList.toggle("loading", on);
 }
-function resetSteps() { STEPS.forEach(s => setStep(s.id, "idle", "")); }
 
 /* ------------------------------------------------ run a city */
 async function runCity(preset, keepCam) {
@@ -659,10 +685,13 @@ async function runCity(preset, keepCam) {
   if (!preset.barriers) S.gates = false;
   $("gatesrow").style.display = preset.barriers ? "flex" : "none";
   syncUrl();
-  resetSteps(); renderStats(); renderChart();
+  renderStats(); renderChart();
   $("scrim").classList.remove("hide");
   $("scrimtxt").textContent = "building terrain…";
-  ["terrain", "water", "flood"].forEach(id => setStep(id, "run"));
+  ["elev", "flood", "bld", "thresh"].forEach(g => panelLoading(g, true));
+  stat("terrain", "run", "mosaicking…");
+  stat("flood", "run", "flooding…");
+  stat("bld", "run", "");
 
   const [xmin, ymin, xmax, ymax] = preset.bbox;
   if (!keepCam) dk.setProps({ initialViewState: {
@@ -680,12 +709,12 @@ async function runCity(preset, keepCam) {
     S.elev = decodeI16(r.elev_b64); S.flood = decodeI16(r.flood_b64);
     S.terrainPng = r.terrain_png; S.textureJpg = r.texture_jpg;
     precomputeAxes();
-    setStep("terrain", "done", `${r.meta.n_tiles}+${r.meta.n_sat_tiles} tiles · ${r.meta.ms_tiles} ms`);
-    setStep("water", "done", `${r.meta.n_water_polys} polys · ${(r.meta.ms_water / 1000).toFixed(1)} s`);
-    setStep("flood", "done", `${S.gw}×${S.gh} grid · ${r.meta.ms_flood} ms`);
+    stat("terrain", "done", `${r.meta.n_tiles}+${r.meta.n_sat_tiles} tiles · ${r.meta.ms_tiles} ms`);
+    stat("flood", "done", `${S.gw}×${S.gh} grid · ${r.meta.n_water_polys} water polys · ${r.meta.ms_flood} ms`);
     $("scrim").classList.add("hide");
     redraw();
     btsDrawStatic();
+    ["elev", "flood", "thresh"].forEach(g => panelLoading(g, false));
   } catch (e) {
     $("scrimtxt").textContent = "terrain failed: " + e.message;
     return;
@@ -696,7 +725,7 @@ async function runCity(preset, keepCam) {
 async function runStats(preset, token) {
   if (S.statsBusy) return;
   S.statsBusy = true;
-  setStep("bld", "run");
+  stat("bld", "run", "querying S3…");
   const [xmin, ymin, xmax, ymax] = preset.bbox;
   try {
     for (let i = 0; i < 120; i++) {
@@ -706,22 +735,20 @@ async function runStats(preset, token) {
       if (token !== S.runToken) break;
       if (r.ready) {
         S.stats = r; S.bld = r.buildings.bld;
-        setStep("bld", "done",
-          `${r.buildings.total.toLocaleString()} bldgs · ${(r.timings.buildings / 1000).toFixed(1)} s`);
-        setStep("pois", "done", `${r.pois.pois.length}`);
-        setStep("roads", "done", `${r.roads.total_km.toLocaleString()} km`);
+        stat("bld", "done",
+          `${r.buildings.total.toLocaleString()} bldgs · ${(r.timings.buildings / 1000).toFixed(1)} s<br>` +
+          `+ ${r.pois.pois.length} places · ${r.roads.total_km.toLocaleString()} km roads`);
         $("sqltxt").textContent = r.sql;
         renderStats(); renderChart(); redraw();
+        btsDrawBld();
+        panelLoading("bld", false);
         break;
       }
-      const stepId = { buildings: "bld", pois: "pois", roads: "roads" }[r.next_step] || "bld";
-      if (stepId !== "bld") setStep("bld", "done", "");
-      if (stepId === "roads") setStep("pois", "done", "");
-      setStep(stepId, "run", `${r.done}/${r.total}`);
+      stat("bld", "run", `${r.next_step} · ${r.done}/${r.total}`);
       await new Promise(res => setTimeout(res, 450));
     }
   } catch (e) {
-    setStep("bld", "run", "failed — retry?");
+    stat("bld", "run", "failed — retry?");
     console.error(e);
   }
   S.statsBusy = false;
@@ -868,30 +895,78 @@ function btsDrawStatic() {                      // once per city
   });
   btsDrawLive();
 }
-function btsDrawLive() {                        // on mini-slider drag
+let btsMode = "conn";                           // conn | naive (threshold panel)
+function btsDrawLive() {                        // on mini-slider drag / mode switch
   const L = btsLvl, Ldm = L * 10;
-  drawGrid("cv-thresh", i => {
-    const e = S.elev[i] / 10;
-    if (S.flood[i] <= Ldm || e <= 0) {
-      const depth = Math.max(L - Math.max(e, 0), 0);
-      return lerp3([80, 200, 246], [15, 75, 160], Math.min(depth / 6, 1));
-    }
-    const g = 42 + Math.min(e / 15, 1) * 95;               // dry land, faint relief
-    return [g * .85, g * .95, g * .8];
-  });
   let fake = 0;
-  drawGrid("cv-naive", i => {
-    const e = S.elev[i], f = S.flood[i];
-    if (e <= 0) return [11, 34, 58];                       // today's water
-    if (f <= Ldm) return [70, 200, 245];                   // connected flood
-    if (e <= Ldm) { fake++; return [255, 138, 61]; }       // naive-only
-    const g = 34 + Math.min(e / 150, 1) * 60;
-    return [g, g + 6, g + 14];
-  });
+  drawGrid("cv-thresh", btsMode === "naive"
+    ? i => {                                    // show what naive would wrongly flood
+        const e = S.elev[i];
+        if (e <= 0) return [11, 34, 58];                   // today's water
+        if (S.flood[i] <= Ldm) return [70, 200, 245];      // connected flood
+        if (e <= Ldm) { fake++; return [255, 138, 61]; }   // naive-only
+        const g = 34 + Math.min(e / 150, 1) * 60;
+        return [g, g + 6, g + 14];
+      }
+    : i => {
+        const e = S.elev[i] / 10;
+        if (S.flood[i] <= Ldm || e <= 0) {
+          const depth = Math.max(L - Math.max(e, 0), 0);
+          return lerp3([80, 200, 246], [15, 75, 160], Math.min(depth / 6, 1));
+        }
+        const g = 42 + Math.min(e / 15, 1) * 95;           // dry land, faint relief
+        return [g * .85, g * .95, g * .8];
+      });
   $("bts-fake").textContent = fake.toLocaleString();
+  $("bts-fakeline").style.display = btsMode === "naive" ? "" : "none";
   $("bts-lvlv").textContent = `+${L.toFixed(2)} m`;
 }
 $("bts-lvl").addEventListener("input", e => { btsLvl = +e.target.value; btsDrawLive(); });
+function btsSetMode(m) {
+  btsMode = m;
+  $("bm-conn").classList.toggle("on", m === "conn");
+  $("bm-naive").classList.toggle("on", m === "naive");
+  btsDrawLive();
+}
+$("bm-conn").onclick = () => btsSetMode("conn");
+$("bm-naive").onclick = () => btsSetMode("naive");
+
+/* buildings panel: every footprint DuckDB fetched, colored by flood level */
+function btsDrawBld() {
+  const cv = $("cv-bld");
+  if (!cv || !S.bld.length || !S.bbox) return;
+  const K = 2, gw = S.gw * K, gh = S.gh * K;
+  cv.width = gw; cv.height = gh;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#0e1420";
+  ctx.fillRect(0, 0, gw, gh);
+  const [xmin, ymin, xmax, ymax] = S.bbox;
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
+  const my0 = merc(ymax), my1 = merc(ymin);
+  for (const d of S.bld) {
+    const f = d.fl;
+    const c = f > 10 ? [62, 72, 88]
+      : lerp3([120, 205, 250], [12, 55, 125], f / 10);
+    ctx.fillStyle = `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+    ctx.beginPath();
+    const p = d.p;
+    ctx.moveTo((p[0][0] - xmin) / (xmax - xmin) * gw,
+               (my0 - merc(p[0][1])) / (my0 - my1) * gh);
+    for (let i = 1; i < p.length; i++)
+      ctx.lineTo((p[i][0] - xmin) / (xmax - xmin) * gw,
+                 (my0 - merc(p[i][1])) / (my0 - my1) * gh);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+/* the live-SQL drawer */
+$("sqlbtn").onclick = () => {
+  const open = !$("sqldrawer").classList.contains("open");
+  $("sqldrawer").classList.toggle("open", open);
+  $("sqlbtn").innerHTML = open ? "&#9662; hide the query" : "&#9656; show the live query";
+  if (open) $("sqldrawer").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
 
 /* cross-hover: anatomy tokens <-> chain panels */
 function focusG(g) {
@@ -917,7 +992,6 @@ markExag();
 if (Q.get("tab") === "build") setTab(true);
 document.querySelector(`#presets button[data-id="${startPreset.id}"]`).classList.add("on");
 
-initSteps();
 setLevel(Q.has("level") ? +Q.get("level") : 1);
 runCity(startPreset);
 </script>
