@@ -37,7 +37,7 @@ def main(iata: str = "DEL", mode: str = "board", callsign: str = "") -> dict:
       "MAA": {"icao": "VOMM", "name": "Chennai Intl", "city": "Chennai", "country_iso": "IN", "lat": 12.99, "lon": 80.1693},
       "CCU": {"icao": "VECC", "name": "Netaji Subhas Chandra Bose Intl", "city": "Kolkata", "country_iso": "IN", "lat": 22.6547, "lon": 88.4467},
       "HYD": {"icao": "VOHS", "name": "Rajiv Gandhi Intl", "city": "Hyderabad", "country_iso": "IN", "lat": 17.2403, "lon": 78.4294},
-      "GOI": {"icao": "VAGO", "name": "Dabolim (Goa)", "city": "Goa", "country_iso": "IN", "lat": 15.3808, "lon": 73.8314},
+      "GOI": {"icao": "VOGO", "name": "Dabolim (Goa)", "city": "Goa", "country_iso": "IN", "lat": 15.3808, "lon": 73.8314},
       "PAT": {"icao": "VEPT", "name": "Jay Prakash Narayan Intl", "city": "Patna", "country_iso": "IN", "lat": 25.5913, "lon": 85.088},
       "AMD": {"icao": "VAAH", "name": "Sardar Vallabhbhai Patel Intl", "city": "Ahmedabad", "country_iso": "IN", "lat": 23.0772, "lon": 72.6347},
       "PNQ": {"icao": "VAPO", "name": "Pune", "city": "Pune", "country_iso": "IN", "lat": 18.5821, "lon": 73.9197},

@@ -1304,7 +1304,11 @@ function mountModelViewers(root) {
       window.PlaneViewer.mount(el, el.dataset.glb, { reduced: REDUCED }).catch(err => {
         console.warn("3D model failed, falling back to blueprint:", err);
         const sheet = el.closest(".sheet");
-        if (sheet) sheet.classList.remove("has-model");
+        if (sheet) {
+          sheet.classList.remove("has-model");
+          sheet.querySelector(".model-hint")?.remove();
+        }
+        el.remove();
       });
     }
   };
