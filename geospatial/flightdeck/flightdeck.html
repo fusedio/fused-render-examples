@@ -390,19 +390,7 @@ window.dispatchEvent(new Event("planeviewer-ready"));
     font-family: var(--mono); font-size: 10px; color: var(--faint);
     pointer-events: none; user-select: none;
   }
-  .sheet-views {
-    position: absolute; top: 12px; left: 14px; z-index: 3;
-    display: inline-flex; gap: 2px; padding: 2px;
-    border: 1px solid var(--border); border-radius: 8px; background: oklch(0.16 0.015 250 / 0.75);
-  }
-  .sheet-views button {
-    all: unset; cursor: pointer; font-family: var(--mono); font-size: 10.5px;
-    padding: 3px 9px; border-radius: 6px; color: var(--muted); letter-spacing: 0.04em;
-  }
-  .sheet-views button.active { background: var(--surface-2); color: var(--ink); }
-  .sheet.has-model[data-view="model"] .bp-svg { display: none; }
-  .sheet.has-model[data-view="plan"] .model-stage,
-  .sheet.has-model[data-view="plan"] .model-hint { display: none; }
+  .sheet.has-model .bp-svg { display: none; }
   @media (max-width: 760px) { .model-stage { height: 240px; } }
   .sheet-meta {
     position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: flex-start;
@@ -1126,13 +1114,9 @@ function aircraftSheet(d) {
     ac.range_km ? `range <b>${fmtKm(ac.range_km)}</b>` : null,
     ac.ceiling_ft ? `ceiling <b>${ac.ceiling_ft.toLocaleString()} ft</b>` : null,
   ].filter(Boolean);
-  return `<section class="sheet reveal ${glbUrl ? "has-model" : ""}" ${glbUrl ? 'data-view="model"' : ""}>
+  return `<section class="sheet reveal ${glbUrl ? "has-model" : ""}">
     <div class="ghost">${esc(ac.type_icao || "")}</div>
     ${glbUrl ? `
-      <div class="sheet-views">
-        <button data-view="model" class="active">3D</button>
-        <button data-view="plan">BLUEPRINT</button>
-      </div>
       <div class="model-stage" data-glb="${esc(glbUrl)}"></div>
       <div class="model-hint">drag to rotate · scroll to zoom</div>` : ""}
     ${blueprintSVG(ac, color)}
@@ -1320,21 +1304,13 @@ function mountModelViewers(root) {
       window.PlaneViewer.mount(el, el.dataset.glb, { reduced: REDUCED }).catch(err => {
         console.warn("3D model failed, falling back to blueprint:", err);
         const sheet = el.closest(".sheet");
-        if (sheet) { sheet.classList.remove("has-model"); sheet.querySelector(".sheet-views")?.remove(); }
+        if (sheet) sheet.classList.remove("has-model");
       });
     }
   };
   if (window.PlaneViewer) go();
   else window.addEventListener("planeviewer-ready", go, { once: true });
 }
-
-document.addEventListener("click", e => {
-  const btn = e.target.closest(".sheet-views button");
-  if (!btn) return;
-  const sheet = btn.closest(".sheet");
-  sheet.dataset.view = btn.dataset.view;
-  for (const b of sheet.querySelectorAll(".sheet-views button")) b.classList.toggle("active", b === btn);
-});
 
 function renderResults(list) {
   const strip = $("#strip"), main = $("#main");
