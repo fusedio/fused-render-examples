@@ -139,39 +139,82 @@
   #links a { color: var(--blue); text-decoration: none; }
   #links a:hover { text-decoration: underline; }
 
-  /* how-it's-built slide deck */
-  #bs-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-  #bs-title { font-size: 13.5px; font-weight: 700; flex: 1; }
-  #bs-n { font: 10.5px var(--mono); color: var(--dim); }
-  #bs-nav { display: flex; gap: 4px; }
-  #bs-nav button { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line);
-                   background: none; color: var(--txt); cursor: pointer; font-size: 13px; }
-  #bs-nav button:hover { background: #182231; }
-  #bs-nav button:disabled { opacity: .3; cursor: default; }
-  #bs-dots { display: flex; gap: 5px; justify-content: center; margin-top: 12px; }
-  #bs-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--line);
-                  cursor: pointer; }
-  #bs-dots span.on { background: var(--aqua); }
-  #bs-body { min-height: 210px; }
-  .bslide { display: none; animation: bsin .25s ease; }
-  .bslide.on { display: block; }
-  @keyframes bsin { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; } }
-  #bs-body pre { font: 10px/1.5 var(--mono); color: #a8d1ff; white-space: pre-wrap;
-                 background: #0b1119; border: 1px solid var(--line); border-radius: 8px;
-                 padding: 8px; margin-top: 8px; max-height: 150px; overflow-y: auto; }
-  #bs-body .big { font-size: 17px; font-weight: 750; color: var(--aqua);
-                  font-variant-numeric: tabular-nums; }
-  .flow { display: flex; align-items: center; gap: 6px; margin: 10px 0;
-          font: 10.5px var(--mono); }
-  .flow .fbox { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px;
-                background: #0b1119; text-align: center; flex: 1; line-height: 1.35; }
-  .flow .fbox b { color: var(--aqua); font-weight: 600; display: block; }
-  .flow .arr { color: var(--dim); flex: none; }
+  /* ---------- behind the scenes (full-page build tab) ---------- */
+  body.build #scenewrap, body.build #col { display: none; }
+  #bts { display: none; }
+  body.build #bts { display: block; flex: 1; min-height: 0; overflow-y: auto;
+                    border-radius: 14px; }
+  #bts-in { max-width: 1240px; margin: 0 auto; padding: 10px 18px 40px; }
+  #bts-lede h2 { font-size: 21px; letter-spacing: -.01em; margin-bottom: 6px; }
+  #bts-lede p { color: var(--dim); font-size: 13.5px; line-height: 1.6; max-width: 880px; }
+  #bts-lede p b { color: var(--txt); }
+  #bts .mono { font: 11px var(--mono); color: var(--txt); background: #0b1119;
+               border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
+               white-space: nowrap; }
+
+  /* the visual chain */
+  #chain { display: flex; gap: 10px; align-items: flex-start; justify-content: center;
+           margin: 26px 0 8px; }
+  .cz { flex: 1; max-width: 220px; min-width: 0; text-align: center; }
+  .cz canvas, .czbox { display: block; width: 100%; border-radius: 11px;
+                       border: 2px solid var(--line); background: #0b1119; }
+  .cz canvas { image-rendering: auto; }
+  .czbox { text-align: left; padding: 10px 11px; box-sizing: border-box; }
+  .srcrow { padding: 7px 2px; border-bottom: 1px solid #1a2432; font-size: 11px;
+            color: var(--dim); line-height: 1.45; }
+  .srcrow:last-child { border-bottom: none; }
+  .srcrow b { display: block; color: var(--txt); font-size: 12px; }
+  .czcap { font-size: 13px; font-weight: 700; margin-top: 9px; }
+  .czsub { font-size: 10.5px; color: var(--dim); margin-top: 4px; line-height: 1.5; }
+  .czsub input[type=range] { width: 90%; accent-color: var(--aqua); margin-top: 2px; }
+  .czsub .sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px;
+               margin: 0 4px 0 8px; vertical-align: -1px; }
+  .czsub .sw:first-child { margin-left: 0; }
+  .czarr { color: var(--dim); font-size: 20px; margin-top: 58px; flex: none; }
+  .cz[data-g=src]    .czcap { color: #e2c46a; }  .cz[data-g=src] .czbox { border-color: #e2c46a44; }
+  .cz[data-g=elev]   .czcap { color: #7fd49a; }  .cz[data-g=elev] canvas { border-color: #7fd49a44; }
+  .cz[data-g=flood]  .czcap { color: #6aa8ff; }  .cz[data-g=flood] canvas { border-color: #6aa8ff44; }
+  .cz[data-g=thresh] .czcap { color: var(--aqua); } .cz[data-g=thresh] canvas { border-color: #46c8f544; }
+  .cz[data-g=naive]  .czcap { color: #ff8a3d; }  .cz[data-g=naive] canvas { border-color: #ff8a3d44; }
+  /* cross-hover focus */
+  #chain .cz, #anatcode .tk { transition: opacity .16s; }
+  #chain .cz canvas, #chain .czbox { transition: transform .16s, box-shadow .16s; }
+  #chain.focused .cz:not(.hl) { opacity: .22; }
+  #chain .cz.hl canvas, #chain .cz.hl .czbox { transform: scale(1.04);
+      box-shadow: 0 8px 26px #000a; }
+  #anat.focused .tk:not(.hl) { opacity: .3; }
+  #anatcode .tk.hl { box-shadow: 0 0 0 1.5px currentColor; }
+
+  /* the call anatomy */
+  #anat { margin: 26px auto 0; max-width: 860px; }
+  .anath { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em;
+           color: var(--dim); font-weight: 600; margin-bottom: 8px; text-align: center; }
+  #anatcode { font: 12px/1.9 var(--mono); color: #cfd8e4; background: #0b1119;
+              border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px;
+              white-space: pre-wrap; }
+  #anatcode .c { color: #55647a; }
+  #anatcode .tk { border-radius: 5px; padding: 1px 6px; cursor: pointer; white-space: nowrap; }
+  .tk.t-src    { background: #2b230d; color: #e2c46a; }
+  .tk.t-elev   { background: #10281a; color: #7fd49a; }
+  .tk.t-flood  { background: #10203a; color: #6aa8ff; }
+  .tk.t-thresh { background: #0c2733; color: var(--aqua); }
+  .tk.t-naive  { background: #2d1a0b; color: #ff8a3d; }
+
+  /* detail cards row */
+  #bts-cards { display: flex; gap: 12px; margin-top: 26px; align-items: flex-start; }
+  #bts-cards .card { flex: 1; min-width: 0; }
+  #bts-cards pre { font: 10px/1.55 var(--mono); color: #a8d1ff; white-space: pre-wrap;
+                   background: #0b1119; border: 1px solid var(--line); border-radius: 8px;
+                   padding: 9px; max-height: 240px; overflow-y: auto; }
   .kv { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
   .kv span { color: var(--dim); }
   .kv b { font-variant-numeric: tabular-nums; }
-  .hint { margin-top: 9px; font-size: 11px; color: var(--aqua); }
-  .hint::before { content: "▸ "; }
+  .vsrow { display: flex; gap: 8px; padding: 5px 0; font-size: 11.5px;
+           border-bottom: 1px solid #1a2432; align-items: baseline; }
+  .vsrow:last-of-type { border-bottom: none; }
+  .vsrow span { flex: 1; color: var(--dim); }
+  .vsrow .no  { flex: 1; color: #b3684f; }
+  .vsrow .yes { flex: 1; color: var(--ok); }
 </style>
 </head>
 <body>
@@ -213,107 +256,6 @@
         </div>
       </div>
 
-      <div class="card v-build" id="bslides">
-        <div id="bs-top">
-          <div>
-            <div id="bs-title">where the data lives</div>
-            <div id="bs-n">1 / 6</div>
-          </div>
-          <div id="bs-nav">
-            <button id="bs-prev" title="previous (←)">&larr;</button>
-            <button id="bs-next" title="next (→)">&rarr;</button>
-          </div>
-        </div>
-        <div id="bs-body">
-
-          <div class="bslide" data-title="where the data lives">
-            <div class="note">Nothing on this page is bundled or pre-baked into the
-              HTML. Every city is assembled live from three public sources:</div>
-            <div class="flow">
-              <div class="fbox"><b>Overture Maps</b>buildings &middot; water<br>GeoParquet on S3</div>
-              <div class="arr">+</div>
-              <div class="fbox"><b>Terrarium</b>elevation tiles<br>AWS open data</div>
-              <div class="arr">+</div>
-              <div class="fbox"><b>Esri</b>satellite<br>imagery tiles</div>
-            </div>
-            <div class="note">A browser can't touch the first one at all &mdash; scanning
-              a 400&nbsp;GB parquet lake needs a query engine, not <span class="mono">fetch()</span>.
-              That's why this page has a <b>Python kernel attached</b>.</div>
-            <div class="hint">pick another city up top &mdash; the next slides show the pipeline run live</div>
-          </div>
-
-          <div class="bslide" data-title="what Python does">
-            <div class="note" style="margin-bottom:8px">One Python run per city: DuckDB
-              scans Overture on S3, numpy + a priority-flood fill compute the minimum sea
-              level that <i>reaches</i> each cell, and the terrain mesh + satellite texture
-              are mosaicked into single images.</div>
-            <div id="steps"></div>
-            <div class="hint">hover a step to isolate its layer in the 3D scene</div>
-          </div>
-
-          <div class="bslide" data-title="the actual query">
-            <div class="note">This SQL ran for the current city &mdash; DuckDB reading
-              Overture's GeoParquet straight off S3, no download, no database server:</div>
-            <pre id="sqltxt">run a city first&hellip;</pre>
-            <div class="note" style="margin-top:8px">It scans only the row groups whose
-              bounding box overlaps the AOI &mdash; a few hundred MB touched out of
-              hundreds of GB.</div>
-          </div>
-
-          <div class="bslide" data-title="water has to get there">
-            <div class="note" style="margin-bottom:9px">The flood model isn't
-              <span class="mono">elevation &lt; level</span> &mdash; that's what a
-              no-kernel page could do. Python runs a connectivity fill from the sea:</div>
-            <div class="seg">
-              <button id="m-conn" class="on">connected flood</button>
-              <button id="m-naive">naive threshold</button>
-            </div>
-            <div id="naivenote">water has to <i>get</i> there &mdash; a basin stays dry until a
-              connected path from the sea exists. Toggle to compare.</div>
-            <div class="foot">model: bathtub + connectivity &mdash; levees thinner than a
-              grid cell vanish, so New Orleans floods sooner here than its real defenses allow.</div>
-          </div>
-
-          <div class="bslide" data-title="what HTML does">
-            <div class="note" style="margin-bottom:9px">Python doesn't return maps or
-              answers to one question &mdash; it returns <b>grids and curves</b>: the flood
-              level of every cell and building. The browser holds them in typed arrays, so
-              the slider is a pure client-side threshold &mdash; deck.gl re-colors 100k+
-              cells per frame, zero Python calls per drag.</div>
-            <div class="brow"><div class="lbl"><span>data queried on S3</span><b>hundreds of GB</b></div>
-              <div class="bar"><div class="fill" style="width:100%;background:#c86bfa"></div></div></div>
-            <div class="brow"><div class="lbl"><span>sent to this page</span><b id="b-recv">0 KB</b></div>
-              <div class="bar"><div class="fill" id="bf-recv" style="width:2%"></div></div></div>
-            <div class="kv"><span>Python calls so far</span><b id="b-calls">0</b></div>
-            <div class="kv"><span>Python calls per slider move</span><b>0</b></div>
-            <div class="hint">drag the slider &mdash; the call counter won't move</div>
-          </div>
-
-          <div class="bslide" data-title="why not just an artifact?">
-            <div class="note">Ask Claude for a standalone HTML flood map and you get a
-              browser sandbox: no DuckDB, no numpy, no S3 &mdash; it can fetch a few MB of
-              GeoJSON and threshold pixels. Fused Render attaches a real Python kernel to
-              the page:</div>
-            <div class="flow" style="margin:10px 0 8px">
-              <div class="fbox"><b>this page</b>index.html<br>deck.gl + slider</div>
-              <div class="arr">&harr;</div>
-              <div class="fbox"><b>Python kernel</b>flood_mask.py<br>overture_stats.py</div>
-              <div class="arr">&harr;</div>
-              <div class="fbox"><b>S3 / web</b>Overture, DEM, imagery</div>
-            </div>
-            <div class="note">The backend is two ordinary Python files with a
-              <span class="mono">main()</span>. The whole integration is one call:</div>
-            <pre style="margin-top:6px">const r = await fused.runPython(
-  "./flood_mask.py", { xmin, ymin, xmax, ymax, barriers });</pre>
-            <div class="note" style="margin-top:8px">Results cache to disk &mdash; the
-              first visitor pays the S3 scan, everyone after gets it in milliseconds. No
-              server to deploy, no build step: edit the .py, reload the page.</div>
-          </div>
-
-        </div>
-        <div id="bs-dots"></div>
-      </div>
-
       <div class="card v-explore">
         <h3>underwater right now</h3>
         <div class="stat"><span>buildings</span><b class="hit" id="s-bld">&mdash;</b></div>
@@ -328,6 +270,95 @@
           <a href="https://overturemaps.org/" target="_blank">Overture Maps</a>
           <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank">Terrain tiles</a>
           <a href="https://en.wikipedia.org/wiki/Sea_level_rise" target="_blank">Sea level rise</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="bts">
+      <div id="bts-in">
+        <div id="bts-lede">
+          <h2>Behind the scenes</h2>
+          <p>This whole app is <b>one HTML file with a Python kernel attached</b> &mdash;
+            Fused Render runs <span class="mono">flood_mask.py</span> and
+            <span class="mono">overture_stats.py</span> right next to the page. Ask Claude
+            for a standalone HTML flood map and you get a browser sandbox: no DuckDB, no
+            numpy, no S3. These are the <i>actual arrays</i> Python handed this page for
+            the city you have open:</p>
+        </div>
+
+        <div id="chain">
+          <div class="cz" data-g="src">
+            <div class="czbox">
+              <div class="srcrow"><b>Overture Maps</b>buildings &middot; water &middot; places<br>GeoParquet on S3, ~400 GB</div>
+              <div class="srcrow"><b>Terrarium</b>elevation tiles &middot; AWS open data</div>
+              <div class="srcrow"><b>Esri</b>satellite imagery tiles</div>
+            </div>
+            <div class="czcap">public data, too big to fetch</div>
+            <div class="czsub">a browser can't scan a parquet lake &mdash; a query engine can</div>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz" data-g="elev"><canvas id="cv-elev"></canvas>
+            <div class="czcap">Python builds the terrain</div>
+            <div class="czsub">DEM tiles mosaicked &middot; Overture water clamps coastal noise &middot; dikes &amp; gates burned in (bright lines)</div>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz" data-g="flood"><canvas id="cv-flood"></canvas>
+            <div class="czcap">&hellip;then floods it once</div>
+            <div class="czsub">priority-flood from the sea: the minimum rise that <i>reaches</i> each cell (bright = floods early, dark = never)</div>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz" data-g="thresh"><canvas id="cv-thresh"></canvas>
+            <div class="czcap">the browser just thresholds</div>
+            <div class="czsub"><input id="bts-lvl" type="range" min="0" max="10" step="0.25" value="2"><br>
+              <b id="bts-lvlv" style="color:var(--aqua)">+2.00 m</b> &mdash; drag me: zero Python calls</div>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz" data-g="naive"><canvas id="cv-naive"></canvas>
+            <div class="czcap">why the fill matters</div>
+            <div class="czsub"><span class="sw" style="background:#46c8f5"></span>connected flood
+              <span class="sw" style="background:#ff8a3d"></span><b id="bts-fake">&mdash;</b> cells a naive
+              <span class="mono">elev &lt; level</span> would wrongly flood</div>
+          </div>
+        </div>
+
+        <div id="anat">
+          <div class="anath">the whole integration &mdash; hover a piece</div>
+          <pre id="anatcode">const r = await fused.runPython(<span class="tk t-src" data-g="src">"./flood_mask.py"</span>, { xmin, ymin, xmax, ymax, barriers });
+
+r.<span class="tk t-elev" data-g="elev">elev_b64</span>    <span class="c">// int16 terrain grid &mdash; water-clamped, dikes burned in</span>
+r.<span class="tk t-flood" data-g="flood">flood_b64</span>   <span class="c">// int16 "floods at" grid &mdash; one priority-flood, done once</span>
+r.terrain_png + r.texture_jpg   <span class="c">// 3D mesh + satellite skin, mosaicked in Python</span>
+
+<span class="tk t-thresh" data-g="thresh">slider</span> &rarr; deck.gl re-thresholds the grids in memory &mdash; <b>0</b> Python calls per drag
+<span class="tk t-naive" data-g="naive">connectivity</span> &rarr; water has to <i>get</i> there: a basin stays dry until a path from the sea exists</pre>
+        </div>
+
+        <div id="bts-cards">
+          <div class="card">
+            <h3>this city, live</h3>
+            <div id="steps"></div>
+            <div class="kv" style="margin-top:8px"><span>Python calls</span><b id="b-calls">0</b></div>
+            <div class="kv"><span>sent to this page</span><b id="b-recv">0 KB</b></div>
+            <div class="kv"><span>queried on S3</span><b>hundreds of GB</b></div>
+          </div>
+          <div class="card">
+            <h3>the buildings query (live)</h3>
+            <pre id="sqltxt">run a city first&hellip;</pre>
+            <div class="foot">DuckDB reads Overture's GeoParquet straight off S3 &mdash; only
+              the row groups overlapping the AOI, cached to disk for the next visitor.</div>
+          </div>
+          <div class="card">
+            <h3>vs. asking Claude for an artifact</h3>
+            <div class="vsrow"><span></span><span class="no">browser sandbox</span><span class="yes">page + kernel</span></div>
+            <div class="vsrow"><span>query 400 GB on S3</span><span class="no">no</span><span class="yes">DuckDB</span></div>
+            <div class="vsrow"><span>flood connectivity</span><span class="no">no</span><span class="yes">numpy + scipy</span></div>
+            <div class="vsrow"><span>terrain mosaicking</span><span class="no">no</span><span class="yes">PIL, server-side</span></div>
+            <div class="vsrow"><span>results persist</span><span class="no">re-fetch</span><span class="yes">disk cache</span></div>
+            <div class="vsrow"><span>deploy</span><span class="no">&mdash;</span><span class="yes">none: edit .py, reload</span></div>
+            <div class="foot" style="margin-top:9px">The backend is two ordinary Python files
+              with a <span class="mono">main()</span> &mdash; the page calls them, that's the
+              whole architecture.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -588,7 +619,6 @@ async function py(script, params) {
   S.bytes += JSON.stringify(r).length;
   const kb = S.bytes / 1024;
   $("b-recv").textContent = kb > 1024 ? (kb / 1024).toFixed(1) + " MB" : Math.round(kb) + " KB";
-  $("bf-recv").style.width = Math.min(2 + kb / 120, 100) + "%";
   return r;
 }
 
@@ -655,6 +685,7 @@ async function runCity(preset, keepCam) {
     setStep("flood", "done", `${S.gw}×${S.gh} grid · ${r.meta.ms_flood} ms`);
     $("scrim").classList.add("hide");
     redraw();
+    btsDrawStatic();
   } catch (e) {
     $("scrimtxt").textContent = "terrain failed: " + e.message;
     return;
@@ -753,28 +784,6 @@ function setLevel(v) {
 }
 $("slider").addEventListener("input", e => setLevel(+e.target.value));
 
-$("m-conn").onclick = () => setMode("conn");
-$("m-naive").onclick = () => setMode("naive");
-function setMode(m) {
-  S.mode = m;
-  $("m-conn").classList.toggle("on", m === "conn");
-  $("m-naive").classList.toggle("on", m === "naive");
-  redraw();
-  if (!S.elev) return;
-  const Ldm = S.level * 10;
-  let naiveN = 0, connN = 0;
-  for (let i = 0; i < S.elev.length; i++) {
-    const e = S.elev[i];
-    if (e <= 0 || e > Ldm) continue;
-    naiveN++;
-    if (S.flood[i] <= Ldm) connN++;
-  }
-  const fake = naiveN - connN;
-  $("naivenote").innerHTML = m === "naive"
-    ? `now flooding <b>${fake.toLocaleString()}</b> extra cells that water can't actually reach at +${S.level.toFixed(2)} m.`
-    : `the connected fill keeps <b>${fake.toLocaleString()}</b> low-lying cells dry that a naive threshold would flood at +${S.level.toFixed(2)} m.`;
-}
-
 const EXAGS = [1, 3, 6];
 EXAGS.forEach(x => {
   const b = document.createElement("button");
@@ -824,33 +833,78 @@ function setTab(build) {
 $("tab-explore").onclick = () => setTab(false);
 $("tab-build").onclick = () => setTab(true);
 
-/* ---- how-it's-built slide deck */
-const SLIDES = [...document.querySelectorAll(".bslide")];
-let slideI = 0;
-$("bs-dots").innerHTML = SLIDES.map((_, i) => `<span data-i="${i}"></span>`).join("");
-function setSlide(i) {
-  slideI = Math.min(SLIDES.length - 1, Math.max(0, i));
-  SLIDES.forEach((el, j) => el.classList.toggle("on", j === slideI));
-  document.querySelectorAll("#bs-dots span")
-    .forEach((d, j) => d.classList.toggle("on", j === slideI));
-  $("bs-title").textContent = SLIDES[slideI].dataset.title;
-  $("bs-n").textContent = `${slideI + 1} / ${SLIDES.length}`;
-  $("bs-prev").disabled = slideI === 0;
-  $("bs-next").disabled = slideI === SLIDES.length - 1;
-  // leaving the pipeline slide clears any hover-isolated layer
-  if (S.isolate) { S.isolate = null; redraw(); }
-  const u = new URL(location.href);
-  u.searchParams.set("slide", slideI + 1);
-  history.replaceState(null, "", u);
+/* ---- behind the scenes: draw the ACTUAL grids Python returned */
+let btsLvl = 2.0;
+
+function drawGrid(cvId, colorFn) {
+  const cv = $(cvId);
+  if (!cv || !S.elev) return;
+  const { gw, gh } = S;
+  cv.width = gw; cv.height = gh;
+  const ctx = cv.getContext("2d");
+  const img = ctx.createImageData(gw, gh);
+  const d = img.data;
+  for (let i = 0; i < gw * gh; i++) {
+    const c = colorFn(i);
+    d[4 * i] = c[0]; d[4 * i + 1] = c[1]; d[4 * i + 2] = c[2]; d[4 * i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
 }
-$("bs-prev").onclick = () => setSlide(slideI - 1);
-$("bs-next").onclick = () => setSlide(slideI + 1);
-document.querySelectorAll("#bs-dots span")
-  .forEach(d => d.onclick = () => setSlide(+d.dataset.i));
-document.addEventListener("keydown", e => {
-  if (!document.body.classList.contains("build")) return;
-  if (e.key === "ArrowLeft") setSlide(slideI - 1);
-  if (e.key === "ArrowRight") setSlide(slideI + 1);
+const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t,
+                            a[2] + (b[2] - a[2]) * t];
+
+function btsDrawStatic() {                      // once per city
+  drawGrid("cv-elev", i => {
+    const e = S.elev[i] / 10;
+    if (e <= 0) return [11, 34, 58];                       // water
+    if (e >= 19) return [255, 236, 170];                   // burned dikes/gates
+    return lerp3([34, 62, 46], [212, 196, 150], Math.min(e / 12, 1) ** 0.55);
+  });
+  drawGrid("cv-flood", i => {
+    const f = S.flood[i] / 10;
+    if (f <= 0) return [70, 200, 245];                     // the sea itself
+    if (f > 10) return [14, 19, 28];                       // never reached
+    return lerp3([120, 205, 250], [12, 55, 125], f / 10);
+  });
+  btsDrawLive();
+}
+function btsDrawLive() {                        // on mini-slider drag
+  const L = btsLvl, Ldm = L * 10;
+  drawGrid("cv-thresh", i => {
+    const e = S.elev[i] / 10;
+    if (S.flood[i] <= Ldm || e <= 0) {
+      const depth = Math.max(L - Math.max(e, 0), 0);
+      return lerp3([80, 200, 246], [15, 75, 160], Math.min(depth / 6, 1));
+    }
+    const g = 42 + Math.min(e / 15, 1) * 95;               // dry land, faint relief
+    return [g * .85, g * .95, g * .8];
+  });
+  let fake = 0;
+  drawGrid("cv-naive", i => {
+    const e = S.elev[i], f = S.flood[i];
+    if (e <= 0) return [11, 34, 58];                       // today's water
+    if (f <= Ldm) return [70, 200, 245];                   // connected flood
+    if (e <= Ldm) { fake++; return [255, 138, 61]; }       // naive-only
+    const g = 34 + Math.min(e / 150, 1) * 60;
+    return [g, g + 6, g + 14];
+  });
+  $("bts-fake").textContent = fake.toLocaleString();
+  $("bts-lvlv").textContent = `+${L.toFixed(2)} m`;
+}
+$("bts-lvl").addEventListener("input", e => { btsLvl = +e.target.value; btsDrawLive(); });
+
+/* cross-hover: anatomy tokens <-> chain panels */
+function focusG(g) {
+  $("chain").classList.toggle("focused", !!g);
+  $("anat").classList.toggle("focused", !!g);
+  document.querySelectorAll("#chain .cz")
+    .forEach(z => z.classList.toggle("hl", z.dataset.g === g));
+  document.querySelectorAll("#anatcode .tk")
+    .forEach(t => t.classList.toggle("hl", t.dataset.g === g));
+}
+document.querySelectorAll("#anatcode .tk, #chain .cz").forEach(el => {
+  el.addEventListener("mouseenter", () => focusG(el.dataset.g));
+  el.addEventListener("mouseleave", () => focusG(null));
 });
 
 /* ---- boot from URL (?city=&level=&exag=&gates=&tab=) so states are debuggable */
@@ -861,7 +915,6 @@ S.gates = Q.get("gates") === "1" && !!startPreset.barriers;
 $("gateschk").checked = S.gates;
 markExag();
 if (Q.get("tab") === "build") setTab(true);
-setSlide(Q.has("slide") ? +Q.get("slide") - 1 : 0);
 document.querySelector(`#presets button[data-id="${startPreset.id}"]`).classList.add("on");
 
 initSteps();
