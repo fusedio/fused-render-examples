@@ -439,7 +439,12 @@ const PRESETS = [
   { id: "miami_beach", name: "Miami Beach", bbox: [-80.180, 25.750, -80.090, 25.830],
     cam: { zoom: 12.55, pitch: 55, bearing: -35 } },
   { id: "new_orleans", name: "New Orleans", bbox: [-90.107, 29.915, -90.013, 29.995],
-    cam: { zoom: 12.5, pitch: 53, bearing: -20 } },
+    cam: { zoom: 12.5, pitch: 53, bearing: -20 },
+    // the sea only gets in via the Mississippi (S/E edges) — City Park's
+    // lakes/bayous are pumped drainage, not flood seeds. Levees (~4.5 m
+    // hurricane protection) are thinner than a grid cell, so raise the
+    // riverbanks in the flood traversal; below +4 m the city stays dry.
+    seedSide: "se", bankMin: 4 },
   { id: "san_francisco", name: "San Francisco", bbox: [-122.466, 37.730, -122.364, 37.810],
     cam: { zoom: 12.5, pitch: 55, bearing: -30 } },
   { id: "hong_kong", name: "Hong Kong", bbox: [114.116, 22.250, 114.204, 22.330],
@@ -560,7 +565,10 @@ function buildLayers() {
       bounds: S.bbox,
       elevationDecoder: { rScaler: 256 * EX, gScaler: EX, bScaler: EX / 256,
                           offset: -32768 * EX },
-      meshMaxError: 3.5,
+      // 1.0, not 3.5: coarse triangles sit metres above true ground in flat
+      // cities and BURY the shallow water columns (Miami showed flooded-red
+      // buildings standing on dry-looking mesh)
+      meshMaxError: 1.0,
       loaders: [loaders.TerrainLoader],
       loadOptions: { worker: false },
       pickable: true,

@@ -42,11 +42,18 @@ LAND_MIN = 0.1          # m — dry land today can't flood below +0.1 m rise;
 
 OVERTURE_RELEASE = "2026-06-17.0"
 STAC_COLLECTIONS = f"https://stac.overturemaps.org/{OVERTURE_RELEASE}/collections.parquet"
-WATER_SUBTYPES = ("ocean", "sea", "lake", "river", "lagoon", "bay", "reservoir", "canal")
+# Overture tags big coastal water inconsistently: Victoria Harbour is
+# subtype='physical', class='bay' — a subtype-only filter dropped ~99% of
+# Hong Kong's water area (unclamped Terrarium garbage → grey mesh spikes in
+# the harbour). Match on subtype OR class.
+WATER_SUBTYPES = ("ocean", "sea", "lake", "river", "lagoon", "bay",
+                  "reservoir", "canal", "water")
+WATER_CLASSES = ("bay", "strait", "lagoon", "sea", "ocean")
 # managed water is pumped/locked at its own level — it clamps the DEM and
 # renders as water, but it is NOT a flood seed: a canal only rises if the
 # sea actually reaches it (the Dutch don't let the sea in through canals)
 MANAGED_SUBTYPES = frozenset({"canal", "reservoir"})
+MANAGED_CLASSES = frozenset({"drain", "ditch", "basin", "wastewater"})
 
 
 # ---------------------------------------------------------------- mercator
@@ -104,7 +111,7 @@ def _overture_water(xmin, ymin, xmax, ymax):
     Overture GeoParquet geometry off S3) — hence its own disk cache entry.
     """
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}"
-    path = os.path.join(_CACHE, f"water2_{key}.json")
+    path = os.path.join(_CACHE, f"water3_{key}.json")
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
@@ -116,18 +123,19 @@ def _overture_water(xmin, ymin, xmax, ymax):
         tol = (xmax - xmin) / MAX_GRID
         flist = ", ".join(f"'{f}'" for f in files)
         subs = ", ".join(f"'{s}'" for s in WATER_SUBTYPES)
+        klass = ", ".join(f"'{c}'" for c in WATER_CLASSES)
         rows = con.execute(
             f"SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(ST_Intersection(geometry, "
-            f"ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})), {tol})), subtype "
+            f"ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})), {tol})), subtype, class "
             f"FROM read_parquet([{flist}]) "
             f"WHERE bbox.xmax >= {xmin} AND bbox.xmin <= {xmax} "
             f"AND bbox.ymax >= {ymin} AND bbox.ymin <= {ymax} "
-            f"AND subtype IN ({subs}) LIMIT 20000").fetchall()
-        for gj, subtype in rows:
+            f"AND (subtype IN ({subs}) OR class IN ({klass})) LIMIT 20000").fetchall()
+        for gj, subtype, klass_ in rows:
             if not gj:
                 continue
             g = json.loads(gj)
-            m = 1 if subtype in MANAGED_SUBTYPES else 0
+            m = 1 if (subtype in MANAGED_SUBTYPES or klass_ in MANAGED_CLASSES) else 0
             if g["type"] == "Polygon":
                 polys.append({"p": g["coordinates"], "m": m})
             elif g["type"] == "MultiPolygon":
@@ -339,7 +347,7 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side="",
     if bank_min:
         bkey += f"_bk{bank_min:g}"
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}_{bkey}_{seed_side or 'any'}"
-    npz = os.path.join(_CACHE, f"grids_v8_{key}.npz")
+    npz = os.path.join(_CACHE, f"grids_v9_{key}.npz")
     if os.path.exists(npz):
         d = np.load(npz)
         return d["elev"], d["flood"], json.loads(str(d["meta"]))
@@ -499,9 +507,9 @@ def _terrain_assets(xmin, ymin, xmax, ymax):
     from PIL import Image
 
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}"
-    ppath = os.path.join(_CACHE, f"terrain2_{key}.png")
-    jpath = os.path.join(_CACHE, f"texture2_{key}.jpg")
-    mpath = os.path.join(_CACHE, f"assets2_{key}.json")
+    ppath = os.path.join(_CACHE, f"terrain3_{key}.png")
+    jpath = os.path.join(_CACHE, f"texture3_{key}.jpg")
+    mpath = os.path.join(_CACHE, f"assets3_{key}.json")
     if all(os.path.exists(p) for p in (ppath, jpath, mpath)):
         with open(ppath, "rb") as f1, open(jpath, "rb") as f2, open(mpath) as f3:
             return f1.read(), f2.read(), json.load(f3)
