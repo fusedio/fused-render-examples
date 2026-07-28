@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Japan Transit Navigator</title>
+<script type="application/fused-bundle">
+{"include": ["vendor/*", "data/*"]}
+</script>
+<style>
+  :root {
+    --paper: #f6f5f1; --panel: #ffffff; --ink: #17191d; --sub: #6a7280;
+    --hair: #e4e1d8; --amber: #b07f10; --amber-bright: #d99a15;
+    --c0: #d7263d; --c1: #00875a; --c2: #0072bc; --c3: #7d4cbb; --c4: #e67e22;
+    --loc: #b9a77c;
+    --shadow: 0 2px 14px rgba(23,25,29,.13), 0 0 0 1px rgba(23,25,29,.06);
+  }
+  * { margin: 0; box-sizing: border-box; font-family: Bahnschrift, 'Yu Gothic UI', 'Segoe UI', sans-serif; }
+  html, body { height: 100%; overflow: hidden; background: var(--paper); color: var(--ink); }
+  #map { position: absolute; inset: 0; }
+  .maplibregl-ctrl-bottom-right { bottom: 26px; }
+
+  .linestrip { height: 3px; background: linear-gradient(90deg,
+    var(--c0) 0 22%, var(--c1) 22% 46%, var(--c2) 46% 68%, var(--c3) 68% 86%, var(--c4) 86%); }
+
+  /* ---------- search pill ---------- */
+  #search { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    width: min(430px, calc(100vw - 24px)); background: var(--panel); border-radius: 10px;
+    box-shadow: var(--shadow); overflow: visible; z-index: 30; }
+  #search .linestrip { border-radius: 10px 10px 0 0; }
+  .srow { display: flex; align-items: center; gap: 8px; padding: 6px 12px; }
+  .srow + .srow { border-top: 1px solid var(--hair); }
+  .srow .dot { width: 9px; height: 9px; border-radius: 50%; border: 2.5px solid var(--ink); flex: none; }
+  .srow .dot.dest { background: var(--ink); }
+  .srow input { flex: 1; border: 0; outline: 0; font-size: 13.5px; padding: 5px 0;
+    background: transparent; color: var(--ink); min-width: 0; }
+  .srow input::placeholder { color: #a8adb8; }
+  .sbtn { border: 0; background: transparent; color: var(--sub); cursor: pointer;
+    font-size: 13px; padding: 4px 6px; border-radius: 6px; flex: none; }
+  .sbtn:hover { background: var(--paper); color: var(--ink); }
+  #results { position: absolute; top: 100%; left: 0; right: 0; margin-top: 6px;
+    background: var(--panel); border-radius: 10px; box-shadow: var(--shadow);
+    max-height: 320px; overflow: auto; display: none; }
+  .res { display: flex; align-items: baseline; gap: 10px; padding: 8px 14px; cursor: pointer; }
+  .res:hover, .res.sel { background: #f1efe8; }
+  .res .jp { font-size: 15px; font-weight: 600; }
+  .res .ro { font-size: 10.5px; letter-spacing: 1.6px; color: var(--sub); text-transform: uppercase; }
+  .res .lines { margin-left: auto; display: flex; gap: 4px; flex: none; }
+  .res .lc { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ---------- layer chips ---------- */
+  #chips { position: absolute; top: 14px; left: 14px; display: flex; flex-direction: column;
+    gap: 6px; align-items: flex-start; z-index: 25; }
+  .chip { display: flex; align-items: center; gap: 7px; background: var(--panel);
+    border-radius: 15px; padding: 5px 13px; font-size: 11.5px; cursor: pointer;
+    box-shadow: var(--shadow); user-select: none; white-space: nowrap; }
+  .chip i { width: 14px; height: 5px; border-radius: 2px; display: inline-block; }
+  .chip i.round { width: 8px; height: 8px; border-radius: 50%; }
+  .chip.off { opacity: .38; }
+  .chip .jp { color: var(--sub); font-size: 10.5px; }
+
+  /* ---------- route drawer ---------- */
+  #drawer { position: absolute; right: 14px; top: 74px; bottom: 46px; width: 308px;
+    background: var(--panel); border-radius: 12px; box-shadow: var(--shadow);
+    display: none; flex-direction: column; z-index: 26; overflow: hidden; }
+  #drawer.open { display: flex; }
+  #drawer .linestrip { flex: none; }
+  .dhead { padding: 12px 16px 10px; border-bottom: 1px solid var(--hair); }
+  .dhead .dest-jp { font-size: 21px; font-weight: 700; line-height: 1.1; }
+  .dhead .dest-ro { font-size: 10.5px; letter-spacing: 2.5px; color: var(--sub); text-transform: uppercase; }
+  .dhead .sum { display: flex; align-items: baseline; gap: 12px; margin-top: 8px; }
+  .dhead .time { font-size: 20px; font-weight: 700; color: var(--amber);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .dhead .meta { font-size: 11px; color: var(--sub); }
+  .altrow { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+    background: var(--paper); border-radius: 8px; padding: 3px 6px; }
+  .altrow button { border: 0; background: transparent; color: var(--ink); cursor: pointer;
+    font-size: 15px; padding: 2px 8px; border-radius: 6px; line-height: 1; }
+  .altrow button:hover { background: var(--hair); }
+  .altrow button:disabled { color: #c6c9d0; cursor: default; background: transparent; }
+  .altrow .alabel { flex: 1; text-align: center; font-size: 11px; color: var(--sub); }
+  .altrow .alabel b { color: var(--ink); }
+  .dclose, .dmin { position: absolute; top: 10px; border: 0; background: transparent;
+    color: var(--sub); cursor: pointer; font-size: 15px; padding: 4px 7px; border-radius: 6px; }
+  .dclose { right: 8px; } .dmin { right: 36px; }
+  .dclose:hover, .dmin:hover { background: var(--paper); color: var(--ink); }
+  #itin { flex: 1; overflow-y: auto; padding: 14px 16px 6px 20px; }
+  .dfoot { padding: 9px 16px 11px; border-top: 1px solid var(--hair); font-size: 10px;
+    color: var(--sub); line-height: 1.45; }
+  .dfoot a { color: var(--c2); text-decoration: none; }
+
+  /* door-strip itinerary (D3-joined) */
+  .leg { position: relative; padding: 0 0 4px 22px; }
+  .leg .bar { position: absolute; left: 6px; top: 6px; bottom: -6px; width: 6px; border-radius: 3px; }
+  .leg.last .bar { display: none; }
+  .leg .node { position: absolute; left: 1px; top: 0; width: 10px; height: 10px;
+    border-radius: 50%; background: #fff; border: 3px solid var(--ink); z-index: 1; }
+  .leg .st-jp { font-size: 14.5px; font-weight: 700; line-height: 1.05; }
+  .leg .st-ro { font-size: 9.5px; letter-spacing: 1.8px; color: var(--sub); text-transform: uppercase; }
+  .leg .ride { margin: 7px 0 10px; }
+  .leg .ln { font-size: 12px; font-weight: 600; }
+  .leg .ln .badge { display: inline-block; padding: 1px 7px; border-radius: 9px;
+    color: #fff; font-size: 10px; letter-spacing: .5px; margin-right: 6px; }
+  .leg .lmeta { font-size: 10.5px; color: var(--sub); margin-top: 2px; }
+  .leg .stops-t { font-size: 10.5px; color: var(--c2); cursor: pointer; margin-top: 2px; }
+  .leg .stoplist { display: none; margin: 4px 0 2px; }
+  .leg .stoplist.open { display: block; }
+  .leg .stop { font-size: 11px; color: var(--sub); padding: 2px 0 2px 2px; position: relative; }
+  .leg .stop::before { content: ''; position: absolute; left: -19px; top: 7px; width: 6px;
+    height: 6px; border-radius: 50%; background: #fff; border: 2px solid currentColor; }
+  .xfer { position: relative; padding: 4px 0 14px 22px; }
+  .xfer .bar { position: absolute; left: 6px; top: -4px; bottom: 0; width: 0;
+    border-left: 6px dotted var(--amber-bright); }
+  .xfer .tx { font-size: 11px; color: var(--amber); font-weight: 600; }
+  .xfer .warn { font-size: 10px; color: var(--sub); margin-top: 1px; }
+
+  /* collapsed route pill */
+  #routepill { position: absolute; right: 14px; top: 74px; background: var(--ink);
+    color: #fff; border-radius: 18px; padding: 8px 16px; font-size: 13px; cursor: pointer;
+    box-shadow: var(--shadow); display: none; z-index: 26; }
+  #routepill b { color: var(--amber-bright); font-variant-numeric: tabular-nums; }
+
+  /* ---------- signboard card (station click) ---------- */
+  #card { position: absolute; display: none; width: 250px; background: var(--panel);
+    border-radius: 10px; box-shadow: var(--shadow); z-index: 40; overflow: hidden; }
+  #card .topbar { height: 5px; }
+  #card .body { padding: 10px 14px 12px; }
+  #card .jp { font-size: 19px; font-weight: 700; }
+  #card .ro { font-size: 10px; letter-spacing: 2.5px; color: var(--sub); text-transform: uppercase; margin-bottom: 6px; }
+  #card .cl { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 9px; }
+  #card .cl span { font-size: 10px; color: var(--sub); display: flex; align-items: center; gap: 4px; }
+  #card .cl i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  #card .acts { display: flex; gap: 6px; }
+  .abtn { flex: 1; border: 1px solid var(--hair); background: var(--paper); border-radius: 7px;
+    padding: 6px 4px; font-size: 11px; cursor: pointer; color: var(--ink); }
+  .abtn:hover { border-color: var(--ink); }
+  .abtn.pri { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+  /* ---------- reach legend ---------- */
+  #reachleg { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border-radius: 9px; box-shadow: var(--shadow);
+    padding: 8px 14px 6px; display: none; z-index: 25; }
+  #reachleg .t { font-size: 10px; letter-spacing: 1.5px; color: var(--sub); margin-bottom: 4px; }
+
+  /* ---------- footer ---------- */
+  #foot { position: absolute; left: 10px; bottom: 8px; font-size: 9.5px; color: #9aa0ab;
+    background: rgba(246,245,241,.85); padding: 2px 8px; border-radius: 5px; z-index: 20; }
+  #foot a { color: #9aa0ab; }
+
+  /* boot veil */
+  #veil { position: absolute; inset: 0; background: var(--paper); z-index: 100;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+  #veil .linestrip { width: 190px; border-radius: 2px; }
+  #veil .t { font-size: 13px; color: var(--sub); letter-spacing: 3px; }
+  #veil.gone { display: none; }
+
+  .maplibregl-ctrl-attrib { font-size: 9px; }
+  @media (max-width: 720px) { #drawer { width: calc(100vw - 28px); } }
+</style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="search">
+    <div class="linestrip"></div>
+    <div class="srow">
+      <span class="dot"></span>
+      <input id="from-in" placeholder="From — 出発駅 (Tokyo, Shinjuku, 京都…)" autocomplete="off">
+      <button class="sbtn" id="swap" title="Swap">⇅</button>
+    </div>
+    <div class="srow">
+      <span class="dot dest"></span>
+      <input id="to-in" placeholder="To — 到着駅" autocomplete="off">
+      <button class="sbtn" id="clear" title="Clear route">✕</button>
+    </div>
+    <div id="results"></div>
+  </div>
+
+  <div id="chips"></div>
+
+  <div id="drawer">
+    <div class="linestrip"></div>
+    <button class="dmin" title="Minimize">—</button>
+    <button class="dclose" title="Close route">✕</button>
+    <div class="dhead">
+      <div class="dest-jp" id="d-jp"></div>
+      <div class="dest-ro" id="d-ro"></div>
+      <div class="sum">
+        <span class="time" id="d-time"></span>
+        <span class="meta" id="d-meta"></span>
+      </div>
+      <div class="altrow" id="altrow" style="display:none">
+        <button id="alt-prev" title="Previous option (←)">‹</button>
+        <span class="alabel" id="alt-label"></span>
+        <button id="alt-next" title="Next option (→)">›</button>
+      </div>
+    </div>
+    <div id="itin"></div>
+    <div class="dfoot">Times are estimates from track distance & typical speeds — not a timetable.
+      Verify with <a id="gmaps" href="#" target="_blank" rel="noopener">Google Maps</a> before you ride.</div>
+  </div>
+  <div id="routepill"></div>
+
+  <div id="card">
+    <div class="topbar linestrip"></div>
+    <div class="body">
+      <div class="jp"></div>
+      <div class="ro"></div>
+      <div class="cl"></div>
+      <div class="acts">
+        <button class="abtn" id="c-from">From here</button>
+        <button class="abtn pri" id="c-to">To here</button>
+        <button class="abtn" id="c-reach" title="Color every station by travel time from here" style="flex:none;width:44px">⏱</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="reachleg"><div class="t" id="rl-t">TRAVEL TIME FROM —</div><svg id="rl-svg" width="240" height="26"></svg></div>
+
+  <div id="foot">MLIT N02-23 railways · GeoNames postal localities · © OpenStreetMap © CARTO</div>
+
+  <div id="veil"><div class="linestrip"></div><div class="t" id="veil-t">日本 · LOADING NETWORK</div>
+    <button id="veil-retry" style="display:none;border:1px solid #c9c4b8;background:#fff;color:#17191d;
+      border-radius:8px;padding:7px 18px;font-size:12px;cursor:pointer;font-family:inherit">Reload</button></div>
+
+<script>
+(async () => {
+"use strict";
+const loadScript = rel => new Promise((ok, bad) => {
+  const s = document.createElement("script"); s.src = fused.rawUrl(rel);
+  s.onload = ok; s.onerror = () => bad(new Error("failed to load " + rel));
+  document.head.appendChild(s);
+});
+const loadCss = rel => new Promise((ok, bad) => {
+  const l = document.createElement("link"); l.rel = "stylesheet"; l.href = fused.rawUrl(rel);
+  l.onload = ok; l.onerror = () => bad(new Error("failed to load " + rel));
+  document.head.appendChild(l);
+});
+await loadCss("./vendor/maplibre-gl.css");
+await Promise.all([loadScript("./vendor/maplibre-gl.js"),
+                   loadScript("./vendor/deck.gl.min.js"),
+                   loadScript("./vendor/d3.min.js")]);
+
+const P = fused.params;
+const CAT_COLORS = [[215,38,61],[0,135,90],[0,114,188],[125,76,187],[230,126,34]];
+const CAT_CSS = ["var(--c0)","var(--c1)","var(--c2)","var(--c3)","var(--c4)"];
+const CAT_NAMES = ["Shinkansen","JR","Metro","Private rail","Tram & mono"];
+const LOC_COLOR = [185,167,124];
+
+/* ---------------- romaji helpers ---------------- */
+const macron = s => s.replace(/aa/g,"ā").replace(/ii/g,"ī").replace(/uu/g,"ū")
+  .replace(/ee/g,"ē").replace(/ou/g,"ō").replace(/oo/g,"ō")
+  .replace(/Aa/g,"Ā").replace(/Ii/g,"Ī").replace(/Uu/g,"Ū").replace(/Ee/g,"Ē")
+  .replace(/Ou/g,"Ō").replace(/Oo/g,"Ō");
+const searchNorm = s => s.toLowerCase().normalize("NFD").replace(/[̀-̄͢]/g,"")
+  .replace(/ou/g,"o").replace(/oo/g,"o").replace(/uu/g,"u").replace(/aa/g,"a")
+  .replace(/ii/g,"i").replace(/ee/g,"e").replace(/[^a-z0-9぀-ヿ一-鿿]/g,"");
+
+/* ---------------- state ---------------- */
+let stations = [], searchIdx = [], groupsById = new Map();
+let railData = null;   // per-category binary path data (built once, reused by reference)
+let postal = null;     // {positions: Float32Array, length}
+let routes = [], route = null, iso = null, isoOrigin = null;
+let postalNames = null, postalPref = null, postalNamesLoading = false, postalMeta = null;
+const NLAYERS = 7;   // shinkansen jr metro private tram stations localities
+
+function layerState() {
+  const s = P.get("lyr") || "1111110";
+  return Array.from({ length: NLAYERS }, (_, i) => s[i] === "1");
+}
+function setLayerState(arr) { P.set("lyr", arr.map(b => b ? "1" : "0").join("")); }
+
+/* ---------------- map ---------------- */
+function rasterStyle(tiles, attribution) {
+  return { version: 8, sources: { base: { type: "raster", tiles, tileSize: 256, attribution, maxzoom: 20 } },
+           layers: [{ id: "base", type: "raster", source: "base" }] };
+}
+const LIGHT = rasterStyle(["a","b","c","d"].map(s =>
+  `https://${s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png`), "© OpenStreetMap © CARTO");
+const cam0 = (P.get("cam") || "37.3,136.9,4.85").split(",").map(Number);
+const map = new maplibregl.Map({ container: "map", style: LIGHT,
+  center: [cam0[1], cam0[0]], zoom: cam0[2], attributionControl: false });
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+const overlay = new deck.MapboxOverlay({ interleaved: false, layers: [], pickingRadius: 6 });
+map.addControl(overlay);
+let lastCam = P.get("cam") || "";
+let lastStationsOn = null;
+map.on("moveend", () => {
+  const c = map.getCenter();
+  const s = `${c.lat.toFixed(4)},${c.lng.toFixed(4)},${map.getZoom().toFixed(2)}`;
+  if (s !== lastCam) { lastCam = s; P.set("cam", s); }
+});
+map.on("zoom", () => {
+  const vis = map.getZoom() >= 7.5 ? Math.min(1, (map.getZoom() - 7.5) / 1.5) : 0;
+  if (vis !== lastStationsOn) { lastStationsOn = vis; updateLayers(); }
+});
+
+/* ---------------- data load ---------------- */
+const grab = (path, kind) => fetch(fused.rawUrl(path)).then(r => {
+  if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`);
+  return kind === "json" ? r.json() : r.arrayBuffer();
+});
+async function loadAll() {
+  const [meta, postalBuf, railMeta, railBuf, staJ] = await Promise.all([
+    grab("./data/postal_meta.json", "json"),
+    grab("./data/postal.bin", "bin"),
+    grab("./data/rail_meta.json", "json"),
+    grab("./data/rail.bin", "bin"),
+    grab("./data/stations.json", "json"),
+  ]);
+  postalMeta = meta;
+  postal = { positions: new Float32Array(postalBuf), length: meta.count };
+  railData = {
+    names: railMeta.names,
+    cats: railMeta.cats.map(m => ({
+      data: {
+        length: m.paths,
+        startIndices: new Uint32Array(railBuf, m.idx, m.paths + 1),
+        attributes: { getPath: { value: new Float32Array(railBuf, m.pos, m.verts * 2), size: 2 } },
+      },
+      nameIdx: new Uint16Array(railBuf, m.name, m.paths),
+    })),
+  };
+  stations = staJ;
+
+  // one display point per group + search index (merge same-name nearby groups)
+  const byGroup = new Map();
+  for (const s of stations) {
+    if (!byGroup.has(s.g)) byGroup.set(s.g, { g: s.g, n: s.n, r: s.r, x: s.x, y: s.y, lines: [] });
+    const e = byGroup.get(s.g);
+    if (!e.lines.some(l => l.ln === s.ln)) e.lines.push({ ln: s.ln, lr: s.lr, c: s.c, op: s.op });
+  }
+  groupsById = byGroup;
+  const byName = new Map();
+  for (const e of byGroup.values()) {
+    const key = searchNorm(e.r) + "|" + e.n;
+    if (!byName.has(key)) byName.set(key, []);
+    let merged = false;
+    for (const ent of byName.get(key)) {
+      if (Math.hypot(ent.x - e.x, ent.y - e.y) < 0.012) {   // ~1.2 km
+        ent.groups.push(e.g); ent.lines.push(...e.lines); merged = true; break;
+      }
+    }
+    if (!merged) byName.get(key).push({ n: e.n, r: e.r, x: e.x, y: e.y, groups: [e.g], lines: [...e.lines] });
+  }
+  for (const arr of byName.values()) for (const ent of arr) {
+    const seen = new Set();
+    ent.lines = ent.lines.filter(l => !seen.has(l.ln) && seen.add(l.ln));
+    ent.norm = searchNorm(ent.r);
+    ent.disp = macron(ent.r);
+    searchIdx.push(ent);
+  }
+  searchIdx.sort((a, b) => b.lines.length - a.lines.length);
+
+  document.getElementById("veil").classList.add("gone");
+  updateLayers();
+  restoreFromParams();
+}
+
+/* ---------------- deck layers ---------------- */
+let staticLayers = [];
+function updateLayers() {
+  staticLayers = buildStaticLayers();
+  pushLayers();
+}
+function pushLayers() {
+  const layers = route ? [...staticLayers, makePulseLayer()] : staticLayers;
+  overlay.setProps({ layers });
+}
+function makePulseLayer() {
+  return new deck.ScatterplotLayer({
+    id: "route-pulse", data: [pulsePoint()], getPosition: d => d,
+    getFillColor: [217, 154, 21, 235], getRadius: 50, radiusMinPixels: 4.5, radiusMaxPixels: 8,
+  });
+}
+function buildStaticLayers() {
+  const on = layerState();
+  const dim = route || iso;
+  const layers = [];
+  if (on[6] && postal) {
+    if (!postalNames && !postalNamesLoading) loadPostalNames();
+    layers.push(new deck.ScatterplotLayer({
+      id: "localities", data: { length: postal.length, attributes: { getPosition: { value: postal.positions, size: 2 } } },
+      getFillColor: [...LOC_COLOR, dim ? 40 : 110], getRadius: 300, radiusMinPixels: 1.4, radiusMaxPixels: 4,
+      stroked: false, pickable: true,
+    }));
+  }
+  const railAlpha = dim ? 38 : 205;
+  for (let c = 4; c >= 0 && railData; c--) {
+    if (!on[c]) continue;
+    layers.push(new deck.PathLayer({
+      id: "rail-" + c, data: railData.cats[c].data, _pathType: "open",
+      getColor: [...CAT_COLORS[c], railAlpha],
+      getWidth: c === 0 ? 2.8 : 1.7, widthUnits: "pixels",
+      widthMinPixels: c === 0 ? 2.4 : 1.4, pickable: !dim,
+    }));
+  }
+  const z = map.getZoom();
+  if (on[5] && z >= 7.5) {
+    const pts = [...groupsById.values()];
+    const fade = Math.min(1, (z - 7.5) / 1.5);
+    layers.push(new deck.ScatterplotLayer({
+      id: "stations", data: pts, getPosition: d => [d.x, d.y],
+      getFillColor: [255, 255, 255, (dim ? 70 : 235) * fade],
+      getLineColor: [23, 25, 29, (dim ? 70 : 235) * fade],
+      getRadius: 40, radiusMinPixels: 1.6, radiusMaxPixels: 6, stroked: true,
+      lineWidthMinPixels: 1.2, pickable: true,
+    }));
+  }
+  if (iso) {
+    const scale = d3.scaleSequential(t => d3.interpolateRgbBasis(["#0072bc","#00875a","#d99a15","#d7263d","#6e1423"])(t)).domain([0, 300]);
+    layers.push(new deck.ScatterplotLayer({
+      id: "iso", data: iso, getPosition: d => [d.x, d.y],
+      getFillColor: d => { const c = d3.rgb(scale(Math.min(d.m, 300))); return [c.r, c.g, c.b, 210]; },
+      getRadius: 60, radiusMinPixels: 2.4, radiusMaxPixels: 8, stroked: false, pickable: true,
+    }));
+  }
+  if (route) {
+    for (const [ri, alt] of routes.entries()) {
+      if (alt === route) continue;
+      const flat = alt.legs.filter(l => l.type === "ride").flatMap(l => l.path);
+      layers.push(new deck.PathLayer({
+        id: "alt-" + ri, data: [{ path: flat, ri }], getPath: d => d.path,
+        getColor: [120, 127, 140, 130], getWidth: 3, widthUnits: "pixels", widthMinPixels: 2.5,
+        capRounded: true, jointRounded: true, pickable: true,
+      }));
+    }
+    for (const [i, leg] of route.legs.entries()) {
+      if (leg.type !== "ride" || !leg.path.length) continue;
+      layers.push(new deck.PathLayer({
+        id: "route-halo-" + i, data: [leg], getPath: d => d.path,
+        getColor: [255, 255, 255, 240], getWidth: 7.5, widthUnits: "pixels", widthMinPixels: 7,
+        capRounded: true, jointRounded: true,
+      }));
+      layers.push(new deck.PathLayer({
+        id: "route-" + i, data: [leg], getPath: d => d.path,
+        getColor: [...CAT_COLORS[leg.cat], 255], getWidth: 4, widthUnits: "pixels", widthMinPixels: 3.6,
+        capRounded: true, jointRounded: true,
+      }));
+    }
+    const ends = routeEndpoints();
+    layers.push(new deck.ScatterplotLayer({
+      id: "route-ends", data: ends, getPosition: d => [d.x, d.y],
+      getFillColor: [255, 255, 255, 255], getLineColor: [23, 25, 29, 255],
+      getRadius: 60, radiusMinPixels: 5, radiusMaxPixels: 9, stroked: true, lineWidthMinPixels: 2.6,
+    }));
+  }
+  return layers;
+}
+overlay.setProps({
+  getTooltip: info => {
+      if (!info.layer) return null;
+      if (info.index == null || info.index < 0) return null;
+      if (info.layer.id === "localities") {   // binary layer: picks carry index, no object
+        if (!postalNames) return null;
+        const pref = postalPref ? (postalMeta.prefs[postalPref[info.index]] || "") : "";
+        return { html: `<b>${postalNames.n[info.index]}</b><br>
+          <span style="font-size:10px;color:#6a7280">${pref} · 〒${postalNames.c[info.index]}</span>`,
+          style: { background: "#fff", color: "#17191d", borderRadius: "8px", fontSize: "12px" } };
+      }
+      if (info.layer.id.startsWith("rail-")) {
+        const cat = railData.cats[+info.layer.id.slice(5)];
+        const [jp, ro] = railData.names[cat.nameIdx[info.index]];
+        return { html: `<b>${jp}</b><br><span style="font-size:10px;letter-spacing:1px">${macron(ro).toUpperCase()}</span>`,
+          style: { background: "#fff", color: "#17191d", borderRadius: "8px", fontSize: "12px" } };
+      }
+      if (!info.object) return null;
+      if (info.layer.id === "stations") {
+        const d = info.object;
+        return { html: `<div style="font-family:Bahnschrift,'Yu Gothic UI',sans-serif;padding:2px 4px">
+          <div style="font-size:14px;font-weight:700">${d.n}</div>
+          <div style="font-size:9px;letter-spacing:2px;color:#9aa">${macron(d.r).toUpperCase()}</div></div>`,
+          style: { background: "#fff", color: "#17191d", borderRadius: "8px", boxShadow: "0 2px 10px rgba(0,0,0,.18)" } };
+      }
+      if (info.layer.id === "iso")
+        return { html: `<b>${info.object.n}</b> · ~${Math.round(info.object.m)} min`,
+          style: { background: "#fff", color: "#17191d", borderRadius: "8px", fontSize: "12px" } };
+      if (info.layer.id.startsWith("alt-")) {
+        const alt = routes[info.object.ri];
+        return { html: `<b>${alt.tag || "Option"}</b> · ~${Math.round(alt.totalMins)} min — click to switch`,
+          style: { background: "#fff", color: "#17191d", borderRadius: "8px", fontSize: "12px" } };
+      }
+      return null;
+    },
+  onClick: info => {
+    if (info.object && info.layer && info.layer.id === "stations") showCard(info.object, info.x, info.y);
+    else if (info.object && info.layer && info.layer.id.startsWith("alt-")) setAlt(info.object.ri);
+    else hideCard();
+  },
+});
+
+async function loadPostalNames() {
+  postalNamesLoading = true;
+  const [names, prefBuf] = await Promise.all([
+    fetch(fused.rawUrl("./data/postal_names.json")).then(r => r.json()),
+    fetch(fused.rawUrl("./data/postal_pref.bin")).then(r => r.arrayBuffer()),
+  ]);
+  postalNames = names;
+  postalPref = new Uint8Array(prefBuf);
+  postalNamesLoading = false;
+}
+
+/* route pulse animation */
+let routeFlat = null;
+function routeEndpoints() {
+  const stops = route.legs.filter(l => l.type === "ride").flatMap(l => l.stops);
+  const first = route.legs.find(l => l.type === "start");
+  const pts = [];
+  if (first) pts.push({ x: first.x, y: first.y });
+  if (stops.length) pts.push({ x: stops[stops.length - 1].x, y: stops[stops.length - 1].y });
+  return pts;
+}
+function pulsePoint() {
+  if (!routeFlat || !routeFlat.length) return [0, 0];
+  const t = (performance.now() / 9000) % 1;
+  const idx = t * (routeFlat.length - 1), i = Math.floor(idx), f = idx - i;
+  const a = routeFlat[i], b = routeFlat[Math.min(i + 1, routeFlat.length - 1)];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+}
+function tickPulse() {
+  setInterval(() => {
+    if (route && !document.hidden) pushLayers();
+  }, 200);
+}
+
+/* ---------------- search ---------------- */
+const fromIn = document.getElementById("from-in"), toIn = document.getElementById("to-in");
+const resultsEl = d3.select("#results");
+let activeInput = null;
+function doSearch(q) {
+  const nq = searchNorm(q);
+  if (!nq || nq.length < 2) { resultsEl.style("display", "none"); return; }
+  const hits = [];
+  for (const e of searchIdx) {
+    let score = -1;
+    if (e.norm.startsWith(nq)) score = 2 + (e.norm === nq ? 2 : 0);
+    else if (e.norm.includes(nq)) score = 1;
+    else if (e.n.includes(q)) score = 3;
+    if (score > 0) { hits.push([score, e]); if (hits.length > 200) break; }
+  }
+  hits.sort((a, b) => b[0] - a[0] || b[1].lines.length - a[1].lines.length);
+  const top = hits.slice(0, 9).map(h => h[1]);
+  const rows = resultsEl.style("display", top.length ? "block" : "none")
+    .selectAll(".res").data(top, d => d.groups[0]);
+  rows.exit().remove();
+  const enter = rows.enter().append("div").attr("class", "res");
+  enter.append("span").attr("class", "jp");
+  enter.append("span").attr("class", "ro");
+  enter.append("span").attr("class", "lines");
+  const all = enter.merge(rows).order();
+  all.select(".jp").text(d => d.n);
+  all.select(".ro").text(d => d.disp);
+  all.select(".lines").html(d => d.lines.slice(0, 6).map(l =>
+    `<i class="lc" style="background:${CAT_CSS[l.c]}"></i>`).join(""));
+  all.on("mousedown", (ev, d) => { ev.preventDefault(); pickStation(d); });
+}
+function pickStation(entry) {
+  const val = `${entry.n} ${entry.disp}`;
+  const gs = entry.groups.join(",");
+  if (activeInput === toIn) { toIn.value = val; P.set("to", gs); P.set("toL", val); }
+  else { fromIn.value = val; P.set("from", gs); P.set("fromL", val); }
+  P.set("alt", "");
+  resultsEl.style("display", "none");
+  maybeRoute();
+}
+for (const inp of [fromIn, toIn]) {
+  inp.addEventListener("focus", () => { activeInput = inp; doSearch(inp.value); });
+  inp.addEventListener("input", () => { activeInput = inp; doSearch(inp.value); });
+  inp.addEventListener("blur", () => setTimeout(() => resultsEl.style("display", "none"), 150));
+}
+document.getElementById("swap").onclick = () => {
+  const f = P.get("from") || "", t = P.get("to") || "";
+  const fl = P.get("fromL") || "", tl = P.get("toL") || "";
+  P.set("from", t); P.set("to", f); P.set("fromL", tl); P.set("toL", fl);
+  P.set("alt", "");
+  syncInputs(); maybeRoute();
+};
+document.getElementById("clear").onclick = () => {
+  for (const k of ["from", "to", "fromL", "toL", "reach", "alt"]) P.set(k, "");
+  routes = []; route = null; iso = null; routeFlat = null;
+  syncInputs(); renderDrawer(); updateLayers(); renderReachLegend();
+};
+function syncInputs() {
+  fromIn.value = P.get("fromL") || "";
+  toIn.value = P.get("toL") || "";
+}
+
+/* ---------------- routing ---------------- */
+async function maybeRoute() {
+  const f = P.get("from"), t = P.get("to");
+  if (P.get("reach") === "1" && f) return runIso();
+  iso = null; renderReachLegend();
+  if (!f || !t) { routes = []; route = null; routeFlat = null; renderDrawer(); updateLayers(); return; }
+  try {
+    const r = await fused.runPython("./route.py", { from_g: f, to_g: t });
+    if (!r.ok) { routes = []; route = null; routeFlat = null; renderDrawer("No rail path found between these stations."); updateLayers(); return; }
+    routes = r.routes;
+    setAlt(Math.min(parseInt(P.get("alt") || "0", 10) || 0, routes.length - 1));
+    fitToRoute();
+  } catch (err) {
+    console.error("route failed:", err);
+    renderDrawer(err.message || "route failed");
+  }
+}
+function setAlt(i) {
+  if (!routes.length) return;
+  i = ((i % routes.length) + routes.length) % routes.length;
+  P.set("alt", String(i));
+  route = routes[i];
+  routeFlat = route.legs.filter(l => l.type === "ride").flatMap(l => l.path);
+  renderDrawer();
+  updateLayers();
+}
+function fitToRoute() {
+  if (!routeFlat || !routeFlat.length) return;
+  let minX = 180, minY = 90, maxX = -180, maxY = -90;
+  for (const [x, y] of routeFlat) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  map.fitBounds([[minX, minY], [maxX, maxY]], { padding: { top: 110, bottom: 60, left: 60, right: 340 }, duration: 900, maxZoom: 13 });
+}
+
+async function runIso() {
+  const f = P.get("from");
+  if (!f) return;
+  try {
+    const r = await fused.runPython("./route.py", { mode: "iso", from_g: f });
+    iso = r.iso; isoOrigin = P.get("fromL") || "origin";
+    routes = []; route = null; routeFlat = null;
+    renderDrawer(); updateLayers(); renderReachLegend();
+  } catch (err) { console.error(err); }
+}
+
+/* ---------------- drawer (D3 door-strip) ---------------- */
+const drawer = document.getElementById("drawer"), pill = document.getElementById("routepill");
+function renderDrawer(errMsg) {
+  if (!route) {
+    drawer.classList.remove("open"); pill.style.display = "none";
+    if (errMsg) { pill.style.display = "block"; pill.innerHTML = errMsg; setTimeout(() => pill.style.display = "none", 4000); }
+    return;
+  }
+  const min = P.get("rmin") === "1";
+  drawer.classList.toggle("open", !min);
+  pill.style.display = min ? "block" : "none";
+  const rides = route.legs.filter(l => l.type === "ride");
+  const lastStop = rides.length ? rides[rides.length - 1].stops.at(-1) : null;
+  const xfers = route.legs.filter(l => l.type === "transfer").length;
+  const lo = Math.round(route.totalMins), hi = Math.round(route.totalMins * 1.25);
+  if (lastStop) {
+    document.getElementById("d-jp").textContent = lastStop.n;
+    document.getElementById("d-ro").textContent = macron(lastStop.r).toUpperCase();
+  }
+  document.getElementById("d-time").textContent = `~${lo}–${hi} min`;
+  document.getElementById("d-meta").textContent =
+    `${xfers} transfer${xfers === 1 ? "" : "s"} · ${route.totalKm} km · all-stops estimate`;
+  pill.innerHTML = lastStop ? `${lastStop.n} · <b>~${lo} min</b> ▸` : "";
+
+  const altrow = document.getElementById("altrow");
+  altrow.style.display = routes.length > 1 ? "flex" : "none";
+  if (routes.length > 1) {
+    const i = routes.indexOf(route);
+    const tag = route.tagR || route.tag || "";
+    document.getElementById("alt-label").innerHTML =
+      `<b>${i + 1} / ${routes.length}</b> · ${tag}`;
+  }
+
+  const fromL = (P.get("fromL") || "").split(" ")[0], toL = (P.get("toL") || "").split(" ")[0];
+  document.getElementById("gmaps").href =
+    `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromL + "駅, Japan")}&destination=${encodeURIComponent(toL + "駅, Japan")}&travelmode=transit`;
+
+  // build display sequence: start node, ride blocks, transfer blocks
+  const seq = [];
+  let prevRideOp = null;
+  for (const l of route.legs) {
+    if (l.type === "start") seq.push({ k: "node", jp: l.n, ro: l.r });
+    else if (l.type === "transfer") seq.push({ k: "xfer", jp: l.n, ro: l.r, mins: l.mins, prevOp: prevRideOp, leg: l });
+    else { seq.push({ k: "ride", leg: l }); prevRideOp = l.operator; }
+  }
+  // merge: transfer op-change warning needs the *next* ride operator
+  for (let i = 0; i < seq.length; i++) {
+    if (seq[i].k === "xfer") {
+      const next = seq.slice(i + 1).find(s => s.k === "ride");
+      seq[i].opChange = next && seq[i].prevOp && next.leg.operator !== seq[i].prevOp
+        ? { from: seq[i].prevOp, to: next.leg.operator } : null;
+    }
+  }
+
+  const itin = d3.select("#itin");
+  itin.selectAll("*").remove();
+  let node = null;
+  for (let i = 0; i < seq.length; i++) {
+    const s = seq[i];
+    if (s.k === "node") {
+      node = itin.append("div").attr("class", "leg");
+      node.append("div").attr("class", "node");
+      node.append("div").attr("class", "st-jp").text(s.jp);
+      node.append("div").attr("class", "st-ro").text(macron(s.ro).toUpperCase());
+    } else if (s.k === "ride") {
+      const leg = s.leg;
+      const host = node || itin.append("div").attr("class", "leg");
+      host.append("div").attr("class", "bar").style("background", CAT_CSS[leg.cat]);
+      const ride = host.append("div").attr("class", "ride");
+      const ln = ride.append("div").attr("class", "ln");
+      ln.append("span").attr("class", "badge").style("background", CAT_CSS[leg.cat])
+        .text(CAT_NAMES[leg.cat]);
+      ln.append("span").text(` ${leg.line}`);
+      ride.append("div").attr("class", "lmeta")
+        .text(`${macron(leg.lineR)} · ${leg.operator} · ~${Math.round(leg.mins)} min · ${leg.km} km`);
+      const tog = ride.append("div").attr("class", "stops-t")
+        .text(`${leg.nStops} stop${leg.nStops === 1 ? "" : "s"} ▸`);
+      const list = ride.append("div").attr("class", "stoplist").style("color", CAT_CSS[leg.cat]);
+      for (const st of leg.stops) {
+        const row = list.append("div").attr("class", "stop");
+        row.append("b").style("color", "var(--ink)").text(st.n + " ");
+        row.append("span").text(macron(st.r));
+      }
+      tog.on("click", () => {
+        const open = list.classed("open");
+        list.classed("open", !open);
+        tog.text(`${leg.nStops} stop${leg.nStops === 1 ? "" : "s"} ${open ? "▸" : "▾"}`);
+      });
+      // arrival node for this ride
+      const arr = leg.stops.at(-1);
+      const isLast = !seq.slice(i + 1).some(x => x.k === "ride");
+      const nd = itin.append("div").attr("class", "leg" + (isLast ? " last" : ""));
+      nd.append("div").attr("class", "node");
+      nd.append("div").attr("class", "st-jp").text(arr.n);
+      nd.append("div").attr("class", "st-ro").text(macron(arr.r).toUpperCase());
+      node = nd;
+    } else if (s.k === "xfer") {
+      const x = itin.append("div").attr("class", "xfer");
+      x.append("div").attr("class", "bar");
+      x.append("div").attr("class", "tx").text(`⇄ Transfer · ~${s.mins} min walk`);
+      if (s.opChange) x.append("div").attr("class", "warn")
+        .text(`Operator changes (${s.opChange.from} → ${s.opChange.to}) — exit the gates, tap your IC card again.`);
+      const prevName = node ? node.select(".st-jp").text() : null;
+      const nd = itin.append("div").attr("class", "leg");
+      if (s.jp !== prevName) {   // walked to a differently-named station
+        nd.append("div").attr("class", "node");
+        nd.append("div").attr("class", "st-jp").text(s.jp);
+        nd.append("div").attr("class", "st-ro").text(macron(s.ro).toUpperCase());
+      }
+      node = nd;
+    }
+  }
+}
+document.querySelector(".dmin").onclick = () => { P.set("rmin", "1"); renderDrawer(); };
+pill.onclick = () => { P.set("rmin", ""); renderDrawer(); };
+document.querySelector(".dclose").onclick = () => document.getElementById("clear").onclick();
+document.getElementById("alt-prev").onclick = () => setAlt(routes.indexOf(route) - 1);
+document.getElementById("alt-next").onclick = () => setAlt(routes.indexOf(route) + 1);
+window.addEventListener("keydown", e => {
+  if (routes.length < 2 || !drawer.classList.contains("open")) return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); setAlt(routes.indexOf(route) - 1); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); setAlt(routes.indexOf(route) + 1); }
+});
+
+/* ---------------- station signboard card ---------------- */
+const card = document.getElementById("card");
+let cardEntry = null;
+function showCard(g, px, py) {
+  const entry = searchIdx.find(e => e.groups.includes(g.g)) ||
+    { n: g.n, r: g.r, disp: macron(g.r), groups: [g.g], lines: g.lines };
+  cardEntry = entry;
+  card.querySelector(".jp").textContent = entry.n;
+  card.querySelector(".ro").textContent = entry.disp.toUpperCase() + " STATION";
+  card.querySelector(".cl").innerHTML = entry.lines.slice(0, 8).map(l =>
+    `<span><i style="background:${CAT_CSS[l.c]}"></i>${macron(l.lr)}</span>`).join("");
+  card.style.display = "block";
+  const w = 250, h = card.offsetHeight || 150;
+  card.style.left = Math.min(Math.max(8, px - w / 2), innerWidth - w - 8) + "px";
+  card.style.top = Math.min(Math.max(8, py - h - 18), innerHeight - h - 8) + "px";
+}
+function hideCard() { card.style.display = "none"; cardEntry = null; }
+document.getElementById("c-from").onclick = () => {
+  if (!cardEntry) return;
+  P.set("from", cardEntry.groups.join(",")); P.set("fromL", `${cardEntry.n} ${cardEntry.disp}`);
+  P.set("alt", "");
+  syncInputs(); hideCard(); maybeRoute();
+};
+document.getElementById("c-to").onclick = () => {
+  if (!cardEntry) return;
+  P.set("to", cardEntry.groups.join(",")); P.set("toL", `${cardEntry.n} ${cardEntry.disp}`);
+  P.set("alt", "");
+  syncInputs(); hideCard(); maybeRoute();
+};
+document.getElementById("c-reach").onclick = () => {
+  if (!cardEntry) return;
+  P.set("from", cardEntry.groups.join(",")); P.set("fromL", `${cardEntry.n} ${cardEntry.disp}`);
+  P.set("reach", "1"); syncInputs(); hideCard(); maybeRoute();
+};
+
+/* ---------------- layer chips ---------------- */
+const CHIP_DEFS = [
+  { i: 0, jp: "新幹線", en: "Shinkansen", css: CAT_CSS[0] },
+  { i: 1, jp: "JR線", en: "JR", css: CAT_CSS[1] },
+  { i: 2, jp: "地下鉄", en: "Metro", css: CAT_CSS[2] },
+  { i: 3, jp: "私鉄", en: "Private", css: CAT_CSS[3] },
+  { i: 4, jp: "路面·モノ", en: "Tram", css: CAT_CSS[4] },
+  { i: 5, jp: "駅", en: "Stations", css: "var(--ink)", round: true },
+  { i: 6, jp: "地名", en: "Localities", css: "var(--loc)", round: true },
+];
+function renderChips() {
+  const on = layerState();
+  const sel = d3.select("#chips").selectAll(".chip").data(CHIP_DEFS, d => d.i);
+  const enter = sel.enter().append("div").attr("class", "chip");
+  enter.append("i");
+  enter.append("span").attr("class", "en");
+  enter.append("span").attr("class", "jp");
+  const all = enter.merge(sel);
+  all.classed("off", d => !on[d.i]);
+  all.select("i").attr("class", d => d.round ? "round" : "").style("background", d => d.css);
+  all.select(".en").text(d => d.en);
+  all.select(".jp").text(d => d.jp);
+  all.on("click", (ev, d) => { const st = layerState(); st[d.i] = !st[d.i]; setLayerState(st); });
+}
+
+/* ---------------- reach legend ---------------- */
+function renderReachLegend() {
+  const el = document.getElementById("reachleg");
+  if (!iso) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  document.getElementById("rl-t").textContent =
+    ("TRAVEL TIME FROM " + (isoOrigin || "").split(" ").slice(1).join(" ")).toUpperCase() + " — ESTIMATED";
+  const svg = d3.select("#rl-svg");
+  svg.selectAll("*").remove();
+  const grad = svg.append("defs").append("linearGradient").attr("id", "rg");
+  const interp = d3.interpolateRgbBasis(["#0072bc","#00875a","#d99a15","#d7263d","#6e1423"]);
+  for (let i = 0; i <= 10; i++)
+    grad.append("stop").attr("offset", (i * 10) + "%").attr("stop-color", interp(i / 10));
+  svg.append("rect").attr("x", 0).attr("y", 2).attr("width", 240).attr("height", 8).attr("rx", 4)
+    .attr("fill", "url(#rg)");
+  const sc = d3.scaleLinear().domain([0, 300]).range([4, 228]);
+  const ax = svg.append("g").attr("transform", "translate(0,12)")
+    .call(d3.axisBottom(sc).tickValues([0, 60, 120, 180, 240, 300])
+      .tickFormat(v => v === 0 ? "0" : v === 300 ? "5h+" : (v / 60) + "h").tickSize(3));
+  ax.selectAll("text").attr("font-size", 8.5).attr("fill", "#6a7280");
+  ax.selectAll("line,path").attr("stroke", "#c9c4b8");
+}
+
+/* ---------------- param wiring ---------------- */
+let lastLyr = null;
+P.onChange(() => {
+  const lyr = P.get("lyr") || "1111110";
+  if (lyr !== lastLyr) { lastLyr = lyr; renderChips(); updateLayers(); }
+});
+function restoreFromParams() {
+  lastLyr = P.get("lyr") || "1111110";
+  syncInputs();
+  renderChips();
+  maybeRoute();
+}
+window.addEventListener("keydown", e => { if (e.key === "Escape") { hideCard(); resultsEl.style("display", "none"); } });
+
+renderChips();
+await loadAll();
+tickPulse();
+})().catch(err => {
+  console.error("boot failed:", err);
+  document.getElementById("veil-t").textContent = `Could not load — ${err.message}`;
+  const btn = document.getElementById("veil-retry");
+  btn.style.display = "block";
+  btn.onclick = () => location.reload();
+});
+</script>
+</body>
+</html>

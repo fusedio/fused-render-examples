@@ -71,7 +71,7 @@ VISUAL_WAIT = {"default": 12, "map": 22}
 MAP_PROJECTS = {
     "zonal_stats_hex", "forest_carbon_monitor", "disaster_response_dashboard",
     "store_site_selection", "overture_census_isochrone", "locker_network_simulator",
-    "cog_range_viewer",
+    "cog_range_viewer", "japan_transit",
 }
 ERROR_MARKERS = ["Traceback (most recent call", "is not defined", "SyntaxError",
                  "ModuleNotFoundError", "does not define a callable 'main'"]

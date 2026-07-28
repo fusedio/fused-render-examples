@@ -1,0 +1,141 @@
+{
+  "last_node_id": 4,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        60,
+        140
+      ],
+      "size": [
+        250,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        "sample_people.jpg"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "ObjectDetectionYOLO",
+      "pos": [
+        400,
+        140
+      ],
+      "size": [
+        260,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        0.35
+      ]
+    },
+    {
+      "id": 3,
+      "type": "PreviewImage",
+      "pos": [
+        740,
+        140
+      ],
+      "size": [
+        240,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 2
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "Note",
+      "pos": [
+        400,
+        420
+      ],
+      "size": [
+        300,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "widgets_values": [
+        "Object detection with YOLOv10-nano \u2014 fully local, no API key,\n~11MB ONNX auto-downloaded on first run, runs in under a second\non CPU. Detects the 80 COCO classes. The node's second output\n(a STRING) carries the raw detections as JSON \u2014 wire it into a\nPrimitiveString-compatible node or a TextOverlay to chain it."
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "fused_view": {
+      "x": 80,
+      "y": 80,
+      "s": 0.75
+    }
+  },
+  "version": 0.4
+}

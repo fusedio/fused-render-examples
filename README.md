@@ -56,6 +56,7 @@ own machine, no setup. Start with either, then browse below.
 | [disaster_response_dashboard](geospatial/disaster_response_dashboard/) | Imagery + storm track + buildings fused for a disaster event ([live](https://open.fused.io/xaufw6k4flimptuftjjqiqav54)) |
 | [gers_pixel_ref](geospatial/gers_pixel_ref/) | eopix: "a URL for building pixels" — mint/resolve GERS-anchored byte-range references ([live](https://open.fused.io/kmubo2djxutwzc3tuyf3kfvs2y)) |
 | [flightdeck](geospatial/flightdeck/) | Live flight-ops suite: lookup, radar, sky, airports, hazards — seven interlinked real-time views ([live](https://unstable.open.fused.io/wihwz3nnlet3avpsr3qa22ywrm?flight=AAL292)) |
+| [japan_transit](geospatial/japan_transit/) | National rail map + Dijkstra station-to-station routing for Japan, on GPU-ready columnar binaries |
 
 ## Local tools
 
@@ -67,6 +68,7 @@ Fused Render pointed at your **own machine** instead of the cloud.
 | [pytop](local-tools/pytop/) | A live `top`-style system + process monitor |
 | [disk_usage](local-tools/disk_usage/) | Treemap disk-space explorer and cleaner |
 | [notion_db](local-tools/notion_db/) | Notion-style task tracker on a local Parquet lake |
+| [comfy](local-tools/comfy/) | A ComfyUI-style node editor with a local image-processing engine |
 
 ---
 
