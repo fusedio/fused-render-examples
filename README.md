@@ -57,6 +57,7 @@ own machine, no setup. Start with either, then browse below.
 | [gers_pixel_ref](geospatial/gers_pixel_ref/) | eopix: "a URL for building pixels" — mint/resolve GERS-anchored byte-range references ([live](https://open.fused.io/kmubo2djxutwzc3tuyf3kfvs2y)) |
 | [flightdeck](geospatial/flightdeck/) | Live flight-ops suite: lookup, radar, sky, airports, hazards — seven interlinked real-time views ([live](https://unstable.open.fused.io/wihwz3nnlet3avpsr3qa22ywrm?flight=AAL292)) |
 | [japan_transit](geospatial/japan_transit/) | National rail map + Dijkstra station-to-station routing for Japan, on GPU-ready columnar binaries |
+| [temperature_explorer](geospatial/temperature_explorer/) | Historical daily temperature for any point on Earth, from a free REST API or a cloud-native Zarr store |
 
 ## Local tools
 
