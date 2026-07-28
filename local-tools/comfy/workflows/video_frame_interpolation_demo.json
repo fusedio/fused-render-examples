@@ -1,0 +1,189 @@
+{
+  "last_node_id": 5,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadVideo",
+      "pos": [
+        60,
+        140
+      ],
+      "size": [
+        260,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        "sample_walking.mp4"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "VideoTrim",
+      "pos": [
+        400,
+        140
+      ],
+      "size": [
+        260,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        0,
+        2.5,
+        384
+      ]
+    },
+    {
+      "id": 3,
+      "type": "VideoInterpolateRIFE",
+      "pos": [
+        740,
+        140
+      ],
+      "size": [
+        280,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            3
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        2,
+        2.5,
+        384
+      ]
+    },
+    {
+      "id": 4,
+      "type": "PreviewVideo",
+      "pos": [
+        1100,
+        140
+      ],
+      "size": [
+        300,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 3
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "Note",
+      "pos": [
+        60,
+        420
+      ],
+      "size": [
+        300,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "widgets_values": [
+        "Frame interpolation with RIFE \u2014 fully local, no API key.\nVideoTrim keeps the first 2.5s and caps width at 384px so the\nwhole pipeline runs in a few seconds on CPU. RIFE (~20MB ONNX,\nauto-downloaded once) doubles the frame rate for smooth slow-mo\nor up-conversion. Try multiplier=4 or drop in your own clip via\nLoadVideo (files must live in comfy/input/ or output/)."
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "VIDEO"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "VIDEO"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "VIDEO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "fused_view": {
+      "x": 80,
+      "y": 80,
+      "s": 0.75
+    }
+  },
+  "version": 0.4
+}

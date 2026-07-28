@@ -1,0 +1,243 @@
+{
+ "last_node_id": 6,
+ "last_link_id": 5,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "LoadImage",
+   "pos": [
+    -255,
+    172
+   ],
+   "size": [
+    250,
+    0
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "properties": {},
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      2,
+      4
+     ],
+     "slot_index": 0
+    }
+   ],
+   "widgets_values": [
+    "photo1.jpg"
+   ]
+  },
+  {
+   "id": 2,
+   "type": "BackgroundRemoval",
+   "pos": [
+    75,
+    397
+   ],
+   "size": [
+    260,
+    0
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "properties": {},
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 4
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MASK",
+     "type": "MASK",
+     "links": [
+      3
+     ],
+     "slot_index": 0
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "type": "GradientImage",
+   "pos": [
+    60,
+    620
+   ],
+   "size": [
+    240,
+    0
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "properties": {},
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      1
+     ],
+     "slot_index": 0
+    }
+   ],
+   "widgets_values": [
+    1280,
+    720,
+    45,
+    "#1a2b6d",
+    "#e66465"
+   ]
+  },
+  {
+   "id": 4,
+   "type": "ImageComposite",
+   "pos": [
+    440,
+    300
+   ],
+   "size": [
+    240,
+    0
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "properties": {},
+   "inputs": [
+    {
+     "name": "destination",
+     "type": "IMAGE",
+     "link": 1
+    },
+    {
+     "name": "source",
+     "type": "IMAGE",
+     "link": 2
+    },
+    {
+     "name": "mask",
+     "type": "MASK",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      5
+     ],
+     "slot_index": 0
+    }
+   ],
+   "widgets_values": [
+    0,
+    0
+   ]
+  },
+  {
+   "id": 5,
+   "type": "PreviewImage",
+   "pos": [
+    760,
+    300
+   ],
+   "size": [
+    248,
+    0
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "properties": {},
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 5
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "type": "Note",
+   "pos": [
+    440,
+    560
+   ],
+   "size": [
+    300,
+    0
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "properties": {},
+   "widgets_values": [
+    "Background removal with U2Net-p — fully local, no API key,\n~4.5MB ONNX auto-downloaded on first run. Outputs a soft MASK\n(not a cutout image) so it composes with the existing\nImageComposite / MaskToImage nodes — here it drops the subject\nonto a fresh GradientImage background. Swap GradientImage for\nany other IMAGE node, or feed the mask into Threshold-style logic."
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   3,
+   0,
+   4,
+   0,
+   "IMAGE"
+  ],
+  [
+   2,
+   1,
+   0,
+   4,
+   1,
+   "IMAGE"
+  ],
+  [
+   3,
+   2,
+   0,
+   4,
+   2,
+   "MASK"
+  ],
+  [
+   4,
+   1,
+   0,
+   2,
+   0,
+   "IMAGE"
+  ],
+  [
+   5,
+   4,
+   0,
+   5,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {
+  "fused_view": {
+   "x": 354.14841135781376,
+   "y": -54.38375802024501,
+   "s": 0.6818181818181823
+  }
+ },
+ "version": 0.4
+}
