@@ -529,20 +529,28 @@ def _serve():
         return {k: v for k, v in m.items() if k != "password"}
 
     # ---- live connections ----
-    conns = {}            # id -> {"client", "jump", "sftp", "home", "key_used", "lock"}
+    conns = {}            # id -> {"client", "jumps", "sftp", "home", "key_used", "lock"}
     conns_lock = threading.Lock()
     dials = {}            # id -> Lock serialising the dial for that one machine
+
+    def close_jumps(jumps):
+        """Hang up a jump chain, innermost hop first — the outer session carries
+        the inner one, so closing it the other way round pulls the floor out."""
+        for j in reversed(jumps):
+            try:
+                j.close()
+            except Exception:
+                pass
 
     def drop_conn(mid):
         with conns_lock:
             c = conns.pop(mid, None)
         if c:
-            for key in ("client", "jump"):
-                try:
-                    if c.get(key):
-                        c[key].close()
-                except Exception:
-                    pass
+            try:
+                c["client"].close()
+            except Exception:
+                pass
+            close_jumps(c["jumps"])
 
     def live_conn(mid):
         """The connection for `mid` if its transport is up, else None.
@@ -589,7 +597,14 @@ def _serve():
 
     def open_client(m, depth=0):
         """Connect to one machine, hopping through its ProxyJump if it has one.
-        Returns (client, jump_client_or_None, key_that_worked).
+        Returns (client, jump_clients, key_that_worked).
+
+        `jump_clients` is every hop dialled for this connection, ordered outward
+        from here, so the last one is nearest the target. The whole chain comes
+        back rather than just the last hop: for "a,b" the session to b rides
+        inside the session to a, and handing back only b leaves nobody holding a
+        — disconnecting cannot hang it up, so every connect strands one more live
+        session on the bastion.
 
         A known_hosts guess has no recorded identity, so its keys are offered one
         at a time — slower, but then we know which one to save."""
@@ -600,15 +615,17 @@ def _serve():
         keys = keys_of(m)
         pw = m.get("password") or None
         attempts = [None] + [[k] for k in keys] if m.get("guessed") else [keys or None]
-        jump, err = None, None
+        jumps, err = [], None
         for keyfile in attempts:
             sock = None
             if m.get("proxy_jump"):
                 if depth >= 3:
                     raise Http(400, "ProxyJump chain is too long")
-                if jump is None:
-                    jump = open_client(jump_machine(m["proxy_jump"]), depth + 1)[0]
-                sock = jump.get_transport().open_channel(
+                if not jumps:
+                    hop, earlier, _ = open_client(jump_machine(m["proxy_jump"]),
+                                                  depth + 1)
+                    jumps = earlier + [hop]
+                sock = jumps[-1].get_transport().open_channel(
                     "direct-tcpip", (m["host"], port), ("127.0.0.1", 0))
             client = paramiko.SSHClient()
             client.load_system_host_keys()
@@ -623,13 +640,11 @@ def _serve():
                 client.close()
                 continue
             except Exception:
-                if jump:
-                    jump.close()
+                close_jumps(jumps)
                 raise
             client.get_transport().set_keepalive(20)
-            return client, jump, (keyfile[0] if keyfile else "")
-        if jump:
-            jump.close()
+            return client, jumps, (keyfile[0] if keyfile else "")
+        close_jumps(jumps)
         raise err
 
     def dial_lock(mid):
@@ -655,13 +670,13 @@ def _serve():
                 return c
             m = get_machine(mid)
             drop_conn(mid)
-            client, jump, key_used = open_client(m)
+            client, jumps, key_used = open_client(m)
             try:
                 sftp = client.open_sftp()
                 home = sftp.normalize(".")
             except Exception:
                 sftp, home = None, "/"   # git-only hosts authenticate but refuse SFTP
-            c = {"client": client, "jump": jump, "sftp": sftp, "home": home,
+            c = {"client": client, "jumps": jumps, "sftp": sftp, "home": home,
                  "key_used": key_used, "username": m["username"], "lock": threading.Lock(),
                  "tsftp": None, "tlock": threading.Lock(), "gnu_find": None}
             with conns_lock:
