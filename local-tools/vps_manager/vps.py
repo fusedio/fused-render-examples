@@ -1183,46 +1183,52 @@ def _serve():
                 f"-iname {shlex.quote('*' + q + '*')}")
         cap = f"2>/dev/null | head -n {int(limit)}"
         found = []            # (path, is_dir, is_link, size, mtime)
-        if gnu_find(c):
-            # %y is the entry itself, %Y what it resolves to (L/N/? if broken)
-            out = sh_soft(c, f"find {walk} -printf '%y\\t%Y\\t%s\\t%T@\\t%p\\n' {cap}")
-            for line in out.splitlines():
-                parts = line.split("\t", 4)
-                if len(parts) != 5:
-                    continue
-                typ, target, size, mtime, p = parts
-                found.append((p, target == "d", typ == "l",
-                              int(size) if size.isdigit() else None,
-                              int(float(mtime)) if mtime else None))
-        else:
-            # A directories-only pass over the SAME tree, capped the same way,
-            # sounds equivalent to filtering the full listing — it isn't. -L
-            # makes it follow a matching symlink-to-a-directory and walk
-            # everything inside, which the non-L full listing never descends
-            # into; that can push a real directory past ITS OWN head -n limit
-            # while the full listing (shorter, since it didn't recurse there)
-            # still shows that directory within the visible results — filed as
-            # a file, because it never made it into `dirs`.
-            #
-            # Testing exactly the paths already matched can't have this
-            # problem: nothing is re-walked, so there's no second cap to
-            # disagree with the first.
-            matches = sh_soft(c, f"find {walk} -print {cap}").splitlines()
-            if matches:
-                paths = " ".join(shlex.quote(p) for p in matches)
-                dirs = set(sh_soft(c, f"find -L {paths} -maxdepth 0 -type d "
-                                      f"-print 2>/dev/null").splitlines())
+        with Busy():        # a walk over a big enough tree is a long_ops case too
+            if gnu_find(c):
+                # %y is the entry itself, %Y what it resolves to (L/N/? if broken)
+                out = sh_soft(c, f"find {walk} -printf '%y\\t%Y\\t%s\\t%T@\\t%p\\n' {cap}")
+                for line in out.splitlines():
+                    parts = line.split("\t", 4)
+                    if len(parts) != 5:
+                        continue
+                    typ, target, size, mtime, p = parts
+                    found.append((p, target == "d", typ == "l",
+                                  int(size) if size.isdigit() else None,
+                                  int(float(mtime)) if mtime else None))
             else:
-                dirs = set()
-            # size/mtime are None, not 0 — 0 would read as "confirmed empty" and
-            # the page uses that to skip asking before downloading a huge file
-            # for preview. None means "not measured", which is the truth here.
-            found = [(p, p in dirs, False, None, None) for p in matches]
+                # A directories-only pass over the SAME tree, capped the same way,
+                # sounds equivalent to filtering the full listing — it isn't. -L
+                # makes it follow a matching symlink-to-a-directory and walk
+                # everything inside, which the non-L full listing never descends
+                # into; that can push a real directory past ITS OWN head -n limit
+                # while the full listing (shorter, since it didn't recurse there)
+                # still shows that directory within the visible results — filed as
+                # a file, because it never made it into `dirs`.
+                #
+                # Testing exactly the paths already matched can't have this
+                # problem: nothing is re-walked, so there's no second cap to
+                # disagree with the first.
+                matches = sh_soft(c, f"find {walk} -print {cap}").splitlines()
+                if matches:
+                    paths = " ".join(shlex.quote(p) for p in matches)
+                    dirs = set(sh_soft(c, f"find -L {paths} -maxdepth 0 -type d "
+                                          f"-print 2>/dev/null").splitlines())
+                else:
+                    dirs = set()
+                # size/mtime are None, not 0 — 0 would read as "confirmed empty" and
+                # the page uses that to skip asking before downloading a huge file
+                # for preview. None means "not measured", which is the truth here.
+                found = [(p, p in dirs, False, None, None) for p in matches]
+        # truncated has to be judged on the RAW hit count, before the search
+        # root itself is filtered out below — if the root happens to match the
+        # query and the pipeline was already at the cap, dropping that one
+        # entry would make a truncated result look complete.
+        was_capped = len(found) >= limit
         entries = [{"name": posixpath.basename(p), "path": p, "is_dir": is_dir,
                     "is_link": is_link, "size": size, "mtime": mtime}
                    for p, is_dir, is_link, size, mtime in found if p != path]
         entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
-        return {"entries": entries, "truncated": len(entries) >= limit}
+        return {"entries": entries, "truncated": was_capped}
 
     def do_mkdir(mid, path):
         c = get_conn(mid)
