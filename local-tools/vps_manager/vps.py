@@ -608,6 +608,29 @@ def _serve():
                 continue      # passphrase-protected, or a format paramiko can't read
         return out
 
+    def saved_hop(alias, host, port, user):
+        """A hand-added machine standing in for a hop, by the name the ProxyJump
+        used or by the endpoint it resolves to.
+
+        The config is only half of what we know. A bastion added by hand keeps its
+        password and its key in machines.json, and ssh's own resolution has never
+        heard of that file — so a hop that connects perfectly well from the
+        sidebar would be dialled here with no credentials at all. Matching the
+        name too covers a bastion that exists ONLY as a hand-added machine, where
+        the alias resolves to nothing and its host is not a real hostname.
+
+        `user` is the account the ProxyJump asked for, if it named one. A saved
+        machine for a different account is not this hop: its password belongs to
+        somebody else, and offering it would be worse than having none."""
+        mine = [m for m in load_machines() if not user or m["username"] == user]
+        for m in mine:                        # the name is the plainer signal
+            if m["name"] == alias:
+                return m
+        for m in mine:
+            if m["host"].lower() == host.lower() and int(m.get("port") or 22) == port:
+                return m
+        return None
+
     def jump_machine(spec):
         """Resolve a ProxyJump value into the machine to dial for it.
 
@@ -623,14 +646,27 @@ def _serve():
             raise Http(400, "empty ProxyJump")
         earlier, last = hops[:-1], hops[-1]
         user, _, hostport = last.rpartition("@")
-        host, port = _jump_host_port(hostport)
-        h = cfg.lookup(host)
-        return {"name": last, "host": h.get("hostname") or host,
-                "port": int(port or h.get("port") or 22),
-                "username": user or h.get("user") or getpass.getuser(),
-                "key_paths": [os.path.expanduser(k) for k in h.get("identityfile") or []],
-                "proxy_jump": ",".join(earlier) or h.get("proxyjump") or "",
-                "proxy_command": h.get("proxycommand") or ""}
+        alias, port = _jump_host_port(hostport)
+        h = cfg.lookup(alias)
+        hop = {"name": last, "host": h.get("hostname") or alias,
+               "port": int(port or h.get("port") or 22),
+               "username": user or h.get("user") or getpass.getuser(),
+               "key_paths": [os.path.expanduser(k) for k in h.get("identityfile") or []],
+               "proxy_jump": ",".join(earlier) or h.get("proxyjump") or "",
+               "proxy_command": h.get("proxycommand") or ""}
+        saved = saved_hop(alias, hop["host"], hop["port"], user)
+        if saved:
+            # Someone added this box by hand because the config alone didn't get
+            # in, so its credentials win — the same way a hand-added machine
+            # supersedes the alias it shares an endpoint with.
+            hop["host"], hop["port"] = saved["host"], int(saved.get("port") or 22)
+            hop["username"] = saved["username"]
+            hop["password"] = saved.get("password") or ""
+            hop["key_paths"] = ([os.path.expanduser(saved["key_path"])]
+                                if saved.get("key_path") else hop["key_paths"])
+            hop["proxy_jump"] = ",".join(earlier) or saved.get("proxy_jump") or ""
+            hop["proxy_command"] = ""
+        return hop
 
     def open_client(m, depth=0):
         """Connect to one machine, hopping through its ProxyJump if it has one.
