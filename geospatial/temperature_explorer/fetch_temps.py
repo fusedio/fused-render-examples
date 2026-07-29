@@ -68,9 +68,10 @@ def main(lat, lon, source="open_meteo", start_year=1990, end_year=None):
 # --------------------------------------------------------------------------- #
 def _from_open_meteo(lat, lon, start_year, end_year):
     end = min(dt.date(end_year, 12, 31), dt.date.today() - dt.timedelta(days=6))
+    start = min(dt.date(start_year, 1, 1), end)
     params = {
         "latitude": lat, "longitude": lon,
-        "start_date": f"{start_year}-01-01", "end_date": end.isoformat(),
+        "start_date": start.isoformat(), "end_date": end.isoformat(),
         "daily": DAILY_VARS, "timezone": "auto",
     }
     url = "https://archive-api.open-meteo.com/v1/archive?" + urllib.parse.urlencode(params)

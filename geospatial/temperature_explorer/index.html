@@ -797,9 +797,11 @@
     if (!shut) draw();
   });
   document.getElementById("wideBtn").addEventListener("click", () => {
+    const wasShut = dock.classList.contains("shut");
     dock.classList.remove("shut");
     dock.classList.toggle("wide");
     document.getElementById("wideBtn").title = dock.classList.contains("wide") ? "Shrink the panel" : "Expand the panel";
+    if (wasShut) { setRunState(); draw(); }
   });
 
   // ---- fetch ----------------------------------------------------------------
@@ -1118,7 +1120,11 @@
     rect.on("mousedown", (ev) => {
       if (ev.button !== 0) return;
       ev.preventDefault();
-      const px0 = d3.pointer(ev, svg.node())[0];
+      // preventDefault() above cancels the browser's default "focus nearest
+      // focusable ancestor" behavior, so the keyboard day/year stepper below
+      // would never get focus after a plot click — focus it explicitly.
+      svg.node().closest(".plot")?.focus();
+      const [px0, py0] = d3.pointer(ev, svg.node());
       let px1 = px0;
       const move = (e) => {
         px1 = Math.max(m.l, Math.min(m.l + iw, d3.pointer(e, svg.node())[0]));
@@ -1133,7 +1139,7 @@
           const now = Date.now();
           if (now - lastClickAt < 320) { lastClickAt = 0; resetZoom(); return; }
           lastClickAt = now;
-          onClick(x.invert(px0 - m.l));
+          onClick(x.invert(px0 - m.l), py0);
           return;
         }
         let a = x.invert(Math.min(px0, px1) - m.l), b = x.invert(Math.max(px0, px1) - m.l);
@@ -1236,28 +1242,26 @@
     // the same rows, but read as a magnitude instead of a colour
     drawSpark(g, iw + 44, ih, rh, yr);
 
-    const hit = attachDragZoom(svg, x, m, iw, ih, (dv) => {
-      state.focusDoy = Math.max(1, Math.min(366, Math.round(dv))); draw(); updateTiles();
+    const rowAt = (py) => {
+      const rows = state.years.slice().reverse();
+      const idx = Math.floor((py - m.t) / (ih / rows.length));
+      return rows[Math.max(0, Math.min(rows.length - 1, idx))];
+    };
+    const hit = attachDragZoom(svg, x, m, iw, ih, (dv, py) => {
+      state.focusDoy = Math.max(1, Math.min(366, Math.round(dv)));
+      if (py != null) state.focusYear = rowAt(py);
+      draw(); updateTiles();
     }, false);
     hit.on("mousemove", (ev) => {
       const [px, py] = d3.pointer(ev, svg.node());
       const d = Math.max(lo, Math.min(hi, Math.floor(x.invert(px - m.l))));
-      const rows = state.years.slice().reverse();
-      const idx = Math.floor((py - m.t) / (ih / rows.length));
-      const y = rows[Math.max(0, Math.min(rows.length - 1, idx))];
+      const y = rowAt(py);
       state.hover = { doy: d, year: y };
       const i = d - 1, me = seriesOf(y, "tmean")[i], base = baseSeries()[i];
       showTip(host, m.l + x(d) + cw / 2, m.t + yr(y),
         `<b>${signed(me != null && base != null ? me - base : null)}</b> vs normal<div class="sub">${doyLabel(d)}, ${y} · ${fmt(me)} (normal ${fmt(base)})</div>`);
       drawInspector();
-    }).on("mouseleave", () => { state.hover = null; hideTip(host); drawInspector(); })
-      .on("click", (ev) => {
-        const [, py] = d3.pointer(ev, svg.node());
-        const rows = state.years.slice().reverse();
-        const idx = Math.floor((py - m.t) / (ih / rows.length));
-        state.focusYear = rows[Math.max(0, Math.min(rows.length - 1, idx))];
-        updateTiles();
-      });
+    }).on("mouseleave", () => { state.hover = null; hideTip(host); drawInspector(); });
   }
 
   function drawSpark(g, x0, ih, rh, yr) {
