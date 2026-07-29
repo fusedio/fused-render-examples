@@ -302,6 +302,17 @@
     position: absolute; inset: 0; display: grid; place-items: center; padding: 0 3rem;
     color: var(--muted); font-size: 13px; text-align: center; line-height: 1.6;
   }
+  /* errors don't blanket the chart: they dock as a card at the top of the
+     plot, leaving whatever series is already drawn readable underneath */
+  .plot .notice {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    max-width: min(92%, 560px); z-index: 5;
+    background: var(--glass-solid); backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--hairline); border-left: 3px solid var(--warm);
+    border-radius: 10px; box-shadow: var(--glass-shadow);
+    padding: 9px 13px; font-size: 12px; line-height: 1.55; color: var(--ink-2);
+  }
+  .plot .notice b { color: var(--ink); font-weight: 500; }
   .rail {
     flex: 0 0 150px; border-left: 1px solid var(--hairline); padding: 10px 12px 12px;
     display: flex; flex-direction: column; overflow: hidden;
@@ -834,7 +845,12 @@
         res = await fused.runPython("./fetch_temps.py", req);
       }
       ingest(res);
-      state.ready = true;
+      // the user may have moved the point / years / source while a long Zarr
+      // warm-up polled; the series is still worth showing, but "ready" (and the
+      // button's checkmark) must reflect the CURRENT controls, not the snapshot
+      // this fetch was started from — otherwise markDirty's work is overwritten
+      state.ready = req.lat === state.lat && req.lon === state.lon &&
+        req.source === state.source && req.start_year === state.y0 && req.end_year === state.y1;
       if (pendingUrl) { applyUrlAfterIngest(pendingUrl); pendingUrl = null; }
       hideEmpty();
       // a run the user asked for opens the panel; the one on first load does not,
@@ -842,17 +858,26 @@
       if (userInitiated) dock.classList.remove("shut");
       draw(); updateTiles();
     } catch (e) {
-      showEmpty("Fetch failed: " + (e.message || e));
+      hideEmpty();
+      showError(e.message || String(e));
     } finally {
       runBusy = false; setRunState();
     }
   }
   function showEmpty(text) {
+    hideError();
     let el = document.getElementById("emptyMsg");
     if (!el) { el = document.createElement("div"); el.id = "emptyMsg"; el.className = "empty"; document.getElementById("plot").appendChild(el); }
     el.textContent = text; el.style.display = "grid";
   }
   function hideEmpty() { const el = document.getElementById("emptyMsg"); if (el) el.style.display = "none"; }
+  function showError(text) {
+    let el = document.getElementById("errNote");
+    if (!el) { el = document.createElement("div"); el.id = "errNote"; el.className = "notice"; document.getElementById("plot").appendChild(el); }
+    el.innerHTML = "<b>Fetch failed.</b> "; el.appendChild(document.createTextNode(text));
+    el.style.display = "block";
+  }
+  function hideError() { const el = document.getElementById("errNote"); if (el) el.style.display = "none"; }
 
   // ---- ingest: per-year arrays, baseline, envelope, locked domains ----------
   function ingest(raw) {
@@ -1272,7 +1297,10 @@
       return rows[Math.max(0, Math.min(rows.length - 1, idx))];
     };
     const hit = attachDragZoom(svg, x, m, iw, ih, (dv, py) => {
-      state.focusDoy = Math.max(1, Math.min(366, Math.round(dv)));
+      // floor, not round: the matrix x scale is half-open ([lo, hi+1], each
+      // cell spans [d, d+1)), so rounding would pin the NEXT day when the
+      // click lands on the right half of a cell. Same math as hover below.
+      state.focusDoy = Math.max(lo, Math.min(hi, Math.floor(dv)));
       if (py != null) state.focusYear = rowAt(py);
       draw(); updateTiles();
     }, false);
