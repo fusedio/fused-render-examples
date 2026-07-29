@@ -885,57 +885,63 @@ def _serve():
             t = c["tsftp"] = open_sftp_channel(c)
         return t
 
-    def sh(c, cmd):
+    def _drain_both(out, err):
+        """Read stdout and stderr at the same time (see sh()'s docstring for
+        why one-after-the-other deadlocks), and hand back whichever of the two
+        actually raised instead of leaving a bare KeyError for the caller to
+        puzzle over — the paramiko `timeout` is a per-read idle timeout, not a
+        ceiling on the command's total runtime, so a long but perfectly healthy
+        command with a quiet stretch longer than that timeout raises here too,
+        not just a truly dead connection."""
+        got, errs = {}, {}
+
+        def drain(f, key):
+            try:
+                got[key] = f.read()
+            except Exception as e:
+                errs[key] = e
+
+        readers = [threading.Thread(target=drain, args=(out, "out"), daemon=True),
+                  threading.Thread(target=drain, args=(err, "err"), daemon=True)]
+        for t in readers:
+            t.start()
+        for t in readers:
+            t.join()
+        if errs:
+            e = next(iter(errs.values()))
+            raise Http(504, f"lost contact with the remote command: {e}")
+        return got["out"], got["err"]
+
+    def sh(c, cmd, timeout=60):
         """This used to wait on recv_exit_status() before reading anything —
         fine for a quiet command, but paramiko's own docs warn that order hangs
         forever once the remote fills the channel window (2 MB by default) and
         blocks on writing more. `rm -rf` printing one "Permission denied" per
         file is exactly that command.
 
-        Reading stdout before stderr doesn't fix it: both share ONE window (a
-        stderr-only flood still blocks stdout's read(), waiting for bytes that
-        are never coming), so this needs the two streams drained AT THE SAME
-        TIME — whichever the remote fills, someone is already there to credit
-        the window back — not one after the other."""
-        _, out, err = c["client"].exec_command(cmd, timeout=60)
-        got = {}
-
-        def drain(f, key):
-            got[key] = f.read()
-
-        readers = [threading.Thread(target=drain, args=(out, "out"), daemon=True),
-                  threading.Thread(target=drain, args=(err, "err"), daemon=True)]
-        for t in readers:
-            t.start()
-        for t in readers:
-            t.join()
+        `timeout` is per read, not a ceiling on the command — pass None for
+        one that's allowed to run long (paired with Busy() at the call site,
+        since idle shutdown can't tell a slow command from an idle daemon
+        either)."""
+        _, out, err = c["client"].exec_command(cmd, timeout=timeout)
+        out_b, err_b = _drain_both(out, err)
         rc = out.channel.recv_exit_status()
-        data = got["out"].decode("utf-8", "replace")
-        msg = got["err"].decode("utf-8", "replace").strip()
+        data = out_b.decode("utf-8", "replace")
+        msg = err_b.decode("utf-8", "replace").strip()
         if rc != 0:
             raise Http(400, msg or f"command failed (exit {rc})")
         return data
 
-    def sh_soft(c, cmd):
+    def sh_soft(c, cmd, timeout=60):
         """Never reading stderr at all is the same latent hang as sh() had — it
         just needs the remote to write enough of it, which a well-behaved host
         won't, but this runs on first contact with whatever was typed into the
         Add Machine form. Draining both concurrently costs nothing when there's
         nothing to drain."""
-        _, out, err = c["client"].exec_command(cmd, timeout=60)
-        got = {}
-
-        def drain(f, key):
-            got[key] = f.read()
-
-        readers = [threading.Thread(target=drain, args=(out, "out"), daemon=True),
-                  threading.Thread(target=drain, args=(err, "err"), daemon=True)]
-        for t in readers:
-            t.start()
-        for t in readers:
-            t.join()
+        _, out, err = c["client"].exec_command(cmd, timeout=timeout)
+        out_b, _ = _drain_both(out, err)
         out.channel.recv_exit_status()
-        return got["out"].decode("utf-8", "replace")
+        return out_b.decode("utf-8", "replace")
 
     def sh_rc(c, cmd):
         """Just the exit status — for asking a remote what its tools can do."""
@@ -1186,7 +1192,8 @@ def _serve():
         with Busy():        # a walk over a big enough tree is a long_ops case too
             if gnu_find(c):
                 # %y is the entry itself, %Y what it resolves to (L/N/? if broken)
-                out = sh_soft(c, f"find {walk} -printf '%y\\t%Y\\t%s\\t%T@\\t%p\\n' {cap}")
+                out = sh_soft(c, f"find {walk} -printf '%y\\t%Y\\t%s\\t%T@\\t%p\\n' {cap}",
+                              timeout=None)
                 for line in out.splitlines():
                     parts = line.split("\t", 4)
                     if len(parts) != 5:
@@ -1208,11 +1215,11 @@ def _serve():
                 # Testing exactly the paths already matched can't have this
                 # problem: nothing is re-walked, so there's no second cap to
                 # disagree with the first.
-                matches = sh_soft(c, f"find {walk} -print {cap}").splitlines()
+                matches = sh_soft(c, f"find {walk} -print {cap}", timeout=None).splitlines()
                 if matches:
                     paths = " ".join(shlex.quote(p) for p in matches)
                     dirs = set(sh_soft(c, f"find -L {paths} -maxdepth 0 -type d "
-                                          f"-print 2>/dev/null").splitlines())
+                                          f"-print 2>/dev/null", timeout=None).splitlines())
                 else:
                     dirs = set()
                 # size/mtime are None, not 0 — 0 would read as "confirmed empty" and
@@ -1246,13 +1253,13 @@ def _serve():
             # SFTP's rename can't do), so this falls back to a shell mv that can
             # run long enough to hit the same idle window as rm -rf/cp -a below
             with Busy():
-                sh(c, f"mv -- {shlex.quote(src)} {shlex.quote(dst)}")
+                sh(c, f"mv -- {shlex.quote(src)} {shlex.quote(dst)}", timeout=None)
         return {"ok": True}
 
     def do_copy(mid, src, dst):
         c = get_conn(mid)
         with Busy():
-            sh(c, f"cp -a -- {shlex.quote(src)} {shlex.quote(dst)}")
+            sh(c, f"cp -a -- {shlex.quote(src)} {shlex.quote(dst)}", timeout=None)
         return {"ok": True}
 
     def do_delete(mid, path):
@@ -1264,7 +1271,7 @@ def _serve():
             raise Http(400, "refusing to delete /")
         c = get_conn(mid)
         with Busy():
-            sh(c, f"rm -rf -- {shlex.quote(path)}")
+            sh(c, f"rm -rf -- {shlex.quote(path)}", timeout=None)
         return {"ok": True}
 
     def do_localize(mid, path):
