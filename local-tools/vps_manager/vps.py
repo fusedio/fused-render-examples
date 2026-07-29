@@ -409,6 +409,19 @@ def _ws_read(rfile):
             return first, data
 
 
+def _safe_name(s):
+    """`s` reduced to one path component this machine will actually accept.
+
+    Used for the preview cache, whose path is built from a machine id and a
+    remote filename — neither of which is safe as-is. Windows rejects a colon
+    outright, so every `cfg:host` and `kh:host:port` id failed there; and
+    os.path.join reads a backslash as a separator, so a remote file named
+    `..\\..\\x` would land outside the cache. Unicode and spaces are kept."""
+    s = posixpath.basename(s.replace("\\", "/"))
+    s = "".join("_" if (ch in '<>:"|?*' or ord(ch) < 32) else ch for ch in s)
+    return s if s.strip(". ") else "file"
+
+
 # ================================================================ daemon
 def _serve():
     import getpass
@@ -418,7 +431,7 @@ def _serve():
     import stat as statmod
     import uuid
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from urllib.parse import parse_qs, urlparse
+    from urllib.parse import parse_qs, quote, urlparse
 
     import paramiko
 
@@ -926,9 +939,11 @@ def _serve():
             st = tsftp(c).stat(path)
         size = st.st_size or 0
         mtime = int(st.st_mtime or 0)
-        base = posixpath.basename(path) or "file"
+        # the sha1 pins which remote file this is, so the id and name in the path
+        # only have to be legible — and legal (see _safe_name)
+        base = _safe_name(posixpath.basename(path) or "file")
         key = hashlib.sha1(f"{mid}:{path}:{mtime}:{size}".encode()).hexdigest()[:12]
-        dest_dir = os.path.join(PREVIEW_DIR, mid, key)
+        dest_dir = os.path.join(PREVIEW_DIR, _safe_name(mid), key)
         dest = os.path.join(dest_dir, base)
         if not (os.path.isfile(dest) and os.path.getsize(dest) == size):
             os.makedirs(dest_dir, exist_ok=True)
@@ -1045,6 +1060,19 @@ def _serve():
     # ---- http ----
     def one(q, key, default=""):
         return q.get(key, [default])[0]
+
+    def content_disposition(name):
+        """RFC 6266 attachment header for a remote filename.
+
+        http.server encodes header values as latin-1, so a name with any
+        character outside it raised there and killed the response before a byte
+        of the file was sent — and a name is free to contain a quote or a CRLF,
+        which went straight into the header. The plain filename is the ASCII
+        fallback; filename* carries the real one."""
+        ascii_name = "".join(ch for ch in name
+                             if ch.isascii() and ch.isprintable() and ch not in '"\\')
+        return (f'attachment; filename="{ascii_name or "download"}"; '
+                f"filename*=UTF-8''{quote(name, safe='')}")
 
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"      # keep-alive: no TCP setup per listing
@@ -1201,11 +1229,11 @@ def _serve():
                 except Exception as e:
                     self._send(500, {"detail": str(e) or type(e).__name__})
                     return
-                name = posixpath.basename(path)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header("Content-Length", str(size))
-                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                self.send_header("Content-Disposition",
+                                 content_disposition(posixpath.basename(path)))
                 self._cors()
                 self.end_headers()
                 try:
