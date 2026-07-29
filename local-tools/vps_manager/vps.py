@@ -449,7 +449,7 @@ def _serve():
     import stat as statmod
     import uuid
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from urllib.parse import parse_qs, quote, urlparse
+    from urllib.parse import parse_qs, quote, unquote, urlparse
 
     import paramiko
 
@@ -1209,7 +1209,10 @@ def _serve():
                 return
             parts = [p for p in u.path.split("/") if p]
             if parts[:1] == ["machines"] and len(parts) == 3:
-                mid, verb = parts[1], parts[2]
+                # urlparse doesn't decode, and the page percent-encodes the id
+                # into the path — so "cfg:host" arrives as "cfg%3Ahost" and every
+                # cfg_alias() check would reject it
+                mid, verb = unquote(parts[1]), parts[2]
                 if verb == "update":
                     self._dispatch(lambda: do_update(mid, self._body()))
                 elif verb == "remove":

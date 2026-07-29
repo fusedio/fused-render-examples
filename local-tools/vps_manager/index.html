@@ -711,12 +711,15 @@ async function selectMachine(id) {
     markMachine(id, "down", { error: e.message });
     showSearch(false);
     showPane(null);
-    document.getElementById("placeholder").classList.remove("hidden");
-    document.getElementById("placeholder").innerHTML =
+    ph.classList.remove("hidden");
+    ph.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>' +
       '<div class="big">' + esc(m.name || m.host) + ' is not available right now</div>' +
       '<div style="max-width:420px">' + esc(e.message) + '</div>' +
-      '<button class="btn primary" onclick="selectMachine(\'' + id + '\')">Retry</button>';
+      '<button class="btn primary" data-retry>Retry</button>';
+    // a listener closing over the id, not an onclick built out of it: an alias is
+    // free to contain a quote, and this page holds the daemon token
+    ph.querySelector("[data-retry]").onclick = () => selectMachine(id);
     refreshMachines();
   }
 }
