@@ -77,6 +77,20 @@ PREVIEW_DIR = os.path.expanduser("~/.cache/fused-render-vps-stdlib-v1/preview")
 HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.path.abspath(sys.path[0])
 MACHINES = os.path.join(HERE, "machines.json")
 
+
+def _lock_down(path, is_dir=False):
+    """Best-effort on POSIX: keep this owner-only. The default umask (022)
+    would otherwise leave machines.json (plaintext passwords) and daemon.json
+    (the bearer token that authorizes every route) world-readable, and the
+    daemon listens on 127.0.0.1 — reachable by every local account, not just
+    this one. A no-op on Windows: NTFS already scopes the user profile."""
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o700 if is_dir else 0o600)
+        except OSError:
+            pass
+
+
 # OpenSSH keeps per-user files in ~/.ssh on macOS, Linux and Windows alike
 # (expanduser falls back to %USERPROFILE% there). Only the system-wide directory
 # moves: /etc/ssh on unix, %ProgramData%/ssh for Windows' OpenSSH port.
@@ -351,6 +365,7 @@ def main(action: str = "ensure"):
         pass
 
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    _lock_down(os.path.dirname(STATE), is_dir=True)
     log = os.path.join(os.path.dirname(STATE), "daemon.log")
     # DETACHED_PROCESS and CREATE_NO_WINDOW are conflicting console flags — the
     # proven templates (docs, latex, usd) detach with the process-group pair only,
@@ -458,6 +473,11 @@ def _serve():
     TOKEN = secrets.token_urlsafe(32)
     last_hit = [time.time()]
     open_terms = [0]
+    # += / -= on a shared int is a read-modify-write, and two terminals can
+    # close on different threads at the same instant — without a lock that
+    # can lose a decrement and leave this stuck above 0, which means idle
+    # shutdown (below) never fires again for the life of the daemon.
+    open_terms_lock = threading.Lock()
 
     # ---- machine registry ----
     reg_lock = threading.Lock()
@@ -479,6 +499,7 @@ def _serve():
         tmp = MACHINES + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(reg, f, indent=2)
+        _lock_down(tmp)      # before the rename — machines.json holds plaintext passwords
         os.replace(tmp, MACHINES)
 
     def save_machines(machines):
@@ -533,6 +554,15 @@ def _serve():
     conns = {}            # id -> {"client", "jumps", "sftp", "home", "key_used", "lock"}
     conns_lock = threading.Lock()
     dials = {}            # id -> Lock serialising the dial for that one machine
+    generations = {}      # id -> int, bumped whenever its host/credentials change
+
+    def bump_gen(mid):
+        """A dial already in flight for `mid` is dialling a definition that no
+        longer exists — get_conn() checks this against the value it started
+        with and throws its result away rather than registering a connection
+        to the wrong box under the right name."""
+        with conns_lock:
+            generations[mid] = generations.get(mid, 0) + 1
 
     def close_jumps(jumps):
         """Hang up a jump chain, innermost hop first — the outer session carries
@@ -726,6 +756,15 @@ def _serve():
                     err = e
                     client.close()
                     continue
+                except BaseException:
+                    # A refusal isn't the only way this fails after the socket is
+                    # up — a bad banner, a protocol error, the handshake dropped
+                    # mid-way — and every one of those leaves a half-open
+                    # Transport and its background thread that only client.close()
+                    # reaps. This one never made it into `conns`, so drop_conn()
+                    # never gets a chance either.
+                    client.close()
+                    raise
                 client.get_transport().set_keepalive(20)
                 return client, jumps, path
             raise err
@@ -737,7 +776,11 @@ def _serve():
         with conns_lock:
             lk = dials.get(mid)
             if lk is None:
-                lk = dials[mid] = threading.Lock()
+                # RLock, not Lock: get_conn() re-enters itself, still holding this,
+                # when a dial it just finished turns out to be stale (the
+                # generation check below) — a plain Lock would deadlock a thread
+                # against itself on that retry.
+                lk = dials[mid] = threading.RLock()
             return lk
 
     def get_conn(mid):
@@ -754,6 +797,14 @@ def _serve():
             c = live_conn(mid)         # another thread dialled while we waited
             if c:
                 return c
+            # A dial takes seconds; an edit or a remove can land in that window
+            # (dial_lock only keeps two DIALS for this id from overlapping, it
+            # doesn't stop do_update/do_remove writing machines.json mid-dial).
+            # Snapshotting the generation here and checking it after connecting
+            # is what stops that connection from being registered under a name
+            # whose host or password has since changed — or that no longer
+            # exists at all.
+            gen = generations.get(mid, 0)
             m = get_machine(mid)
             drop_conn(mid)
             client, jumps, key_used = open_client(m)
@@ -766,7 +817,12 @@ def _serve():
                  "key_used": key_used, "username": m["username"], "lock": threading.Lock(),
                  "tsftp": None, "tlock": threading.Lock(), "gnu_find": None}
             with conns_lock:
-                conns[mid] = c
+                stale = generations.get(mid, 0) != gen
+                if not stale:
+                    conns[mid] = c
+            if stale:
+                close_conn(c)
+                return get_conn(mid)   # dial again against whatever is current now
             return c
 
     def require_sftp(c):
@@ -810,18 +866,56 @@ def _serve():
         return t
 
     def sh(c, cmd):
+        """This used to wait on recv_exit_status() before reading anything —
+        fine for a quiet command, but paramiko's own docs warn that order hangs
+        forever once the remote fills the channel window (2 MB by default) and
+        blocks on writing more. `rm -rf` printing one "Permission denied" per
+        file is exactly that command.
+
+        Reading stdout before stderr doesn't fix it: both share ONE window (a
+        stderr-only flood still blocks stdout's read(), waiting for bytes that
+        are never coming), so this needs the two streams drained AT THE SAME
+        TIME — whichever the remote fills, someone is already there to credit
+        the window back — not one after the other."""
         _, out, err = c["client"].exec_command(cmd, timeout=60)
+        got = {}
+
+        def drain(f, key):
+            got[key] = f.read()
+
+        readers = [threading.Thread(target=drain, args=(out, "out"), daemon=True),
+                  threading.Thread(target=drain, args=(err, "err"), daemon=True)]
+        for t in readers:
+            t.start()
+        for t in readers:
+            t.join()
         rc = out.channel.recv_exit_status()
+        data = got["out"].decode("utf-8", "replace")
+        msg = got["err"].decode("utf-8", "replace").strip()
         if rc != 0:
-            msg = err.read().decode("utf-8", "replace").strip()
             raise Http(400, msg or f"command failed (exit {rc})")
-        return out.read().decode("utf-8", "replace")
+        return data
 
     def sh_soft(c, cmd):
-        _, out, _ = c["client"].exec_command(cmd, timeout=60)
-        data = out.read().decode("utf-8", "replace")
+        """Never reading stderr at all is the same latent hang as sh() had — it
+        just needs the remote to write enough of it, which a well-behaved host
+        won't, but this runs on first contact with whatever was typed into the
+        Add Machine form. Draining both concurrently costs nothing when there's
+        nothing to drain."""
+        _, out, err = c["client"].exec_command(cmd, timeout=60)
+        got = {}
+
+        def drain(f, key):
+            got[key] = f.read()
+
+        readers = [threading.Thread(target=drain, args=(out, "out"), daemon=True),
+                  threading.Thread(target=drain, args=(err, "err"), daemon=True)]
+        for t in readers:
+            t.start()
+        for t in readers:
+            t.join()
         out.channel.recv_exit_status()
-        return data
+        return got["out"].decode("utf-8", "replace")
 
     def sh_rc(c, cmd):
         """Just the exit status — for asking a remote what its tools can do."""
@@ -902,12 +996,14 @@ def _serve():
                     if body.get("password"):
                         m["password"] = body["password"]
                     save_machines(ms)
+                    bump_gen(mid)
                     drop_conn(mid)
                     return {"machine": public(m)}
         raise Http(404, f"unknown machine {mid}")
 
     def do_remove(mid):
         reject_derived(mid, "remove")
+        bump_gen(mid)
         drop_conn(mid)
         with reg_lock:
             save_machines([m for m in load_machines() if m["id"] != mid])
@@ -937,7 +1033,12 @@ def _serve():
         except Http:
             raise
         except Exception as e:
-            drop_conn(mid)
+            # get_conn() failing here never registered anything for mid — it
+            # drops whatever was there itself before it dials. Doing it again
+            # is not just redundant: this dial's own lock is already released,
+            # so another thread's dial for the same id can have succeeded and
+            # registered a live connection in the time it takes us to get here,
+            # and an unpinned drop_conn would tear that one down instead.
             raise Http(400, str(e) or type(e).__name__)
         return {"ok": True, "home": c["home"], "sftp": c["sftp"] is not None}
 
@@ -949,7 +1050,9 @@ def _serve():
         except Http as e:
             return {"ok": False, "error": e.detail}
         except Exception as e:
-            drop_conn(mid)
+            # see do_connect: get_conn() already cleans up after its own
+            # failure, so a second, unpinned drop_conn here would risk closing
+            # a connection a concurrent dial for this id just registered
             return {"ok": False, "error": str(e) or type(e).__name__}
         ms = int((time.time() - t0) * 1000)
         detail, shell = "", False
@@ -1069,13 +1172,16 @@ def _serve():
                     continue
                 typ, target, size, mtime, p = parts
                 found.append((p, target == "d", typ == "l",
-                              int(size) if size.isdigit() else 0,
-                              int(float(mtime)) if mtime else 0))
+                              int(size) if size.isdigit() else None,
+                              int(float(mtime)) if mtime else None))
         else:
             # -L on the type pass only, so a link to a folder counts as one while
             # the enumeration itself still lists the links rather than their targets
             dirs = set(sh_soft(c, f"find -L {walk} -type d -print {cap}").splitlines())
-            found = [(p, p in dirs, False, 0, 0)
+            # size/mtime are None, not 0 — 0 would read as "confirmed empty" and
+            # the page uses that to skip asking before downloading a huge file
+            # for preview. None means "not measured", which is the truth here.
+            found = [(p, p in dirs, False, None, None)
                      for p in sh_soft(c, f"find {walk} -print {cap}").splitlines()]
         entries = [{"name": posixpath.basename(p), "path": p, "is_dir": is_dir,
                     "is_link": is_link, "size": size, "mtime": mtime}
@@ -1126,7 +1232,11 @@ def _serve():
             os.makedirs(dest_dir, exist_ok=True)
             with c["tlock"]:
                 f = tsftp(c).open(path, "rb")
-                f.prefetch()
+                try:
+                    f.prefetch()
+                except BaseException:
+                    f.close()   # open() succeeded; nothing else closes this handle
+                    raise
                 with f, open(dest, "wb") as out:
                     while True:
                         chunk = f.read(256 * 1024)
@@ -1135,11 +1245,14 @@ def _serve():
                         out.write(chunk)
         return {"local_path": dest.replace("\\", "/"), "name": base, "size": size}
 
-    def do_upload(mid, directory, name, stream, length):
+    def do_upload(mid, directory, name, limited, length):
+        """`limited` is already a _Limited over the request body — do_POST keeps
+        its own reference to it, so it can drain whatever this doesn't read if
+        we raise before reaching the end of the upload."""
         c = get_conn(mid)
         dst = posixpath.join(directory, os.path.basename(name or "upload"))
         with c["tlock"]:
-            tsftp(c).putfo(_Limited(stream, length), dst, file_size=length)
+            tsftp(c).putfo(limited, dst, file_size=length)
         return {"ok": True, "path": dst}
 
     # ---- terminal ----
@@ -1179,7 +1292,8 @@ def _serve():
                 pass
             return
         handler.connection.settimeout(None)      # a terminal may idle indefinitely
-        open_terms[0] += 1
+        with open_terms_lock:
+            open_terms[0] += 1
         last_hit[0] = time.time()
         alive = [True]
 
@@ -1232,7 +1346,8 @@ def _serve():
             pass
         finally:
             alive[0] = False
-            open_terms[0] -= 1
+            with open_terms_lock:
+                open_terms[0] -= 1
             try:
                 chan.close()
             except Exception:
@@ -1347,8 +1462,18 @@ def _serve():
                 return
             if u.path == "/upload":
                 n = int(self.headers.get("Content-Length") or 0)
-                self._dispatch(lambda: do_upload(one(q, "id"), one(q, "dir"),
-                                                 one(q, "name"), self.rfile, n))
+                limited = _Limited(self.rfile, n)
+                try:
+                    self._dispatch(lambda: do_upload(one(q, "id"), one(q, "dir"),
+                                                     one(q, "name"), limited, n))
+                finally:
+                    # do_upload can fail before reading the whole body — a bad
+                    # machine id, a full disk, the SFTP channel dropping mid
+                    # upload. What's left of this request is still sitting on a
+                    # keep-alive socket in front of the next one; left there, it
+                    # gets parsed as the start of that next request.
+                    while limited.left > 0 and limited.read(65536):
+                        pass
                 return
             parts = [p for p in u.path.split("/") if p]
             if parts[:1] == ["machines"] and len(parts) == 3:
@@ -1402,15 +1527,20 @@ def _serve():
             # AND the streaming, never just the open. Listings are unaffected:
             # they run on the other channel, under c["lock"].
             with c["tlock"]:
+                f = None
                 try:
                     t = tsftp(c)
                     size = t.stat(path).st_size or 0
                     f = t.open(path, "rb")
                     f.prefetch()
                 except Http as e:
+                    if f:
+                        f.close()   # open() made it through; only prefetch() failed
                     self._send(e.code, {"detail": e.detail})
                     return
                 except Exception as e:
+                    if f:
+                        f.close()
                     self._send(500, {"detail": str(e) or type(e).__name__})
                     return
                 self.send_response(200)
@@ -1434,9 +1564,11 @@ def _serve():
     srv.daemon_threads = True
     port = srv.server_address[1]
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    _lock_down(os.path.dirname(STATE), is_dir=True)
     with open(STATE, "w", encoding="utf-8") as f:
         json.dump({"port": port, "token": TOKEN, "version": VERSION,
                    "pid": os.getpid()}, f)
+    _lock_down(STATE)
 
     def idle_watch():
         while True:

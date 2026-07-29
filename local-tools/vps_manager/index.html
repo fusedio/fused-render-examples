@@ -1019,8 +1019,14 @@ function selectRow(full) {
 let previewLocal = null;       // cached local path of the previewed file
 async function previewFile(full, name, size) {
   if (full === previewPath && previewLocal) return;   // already showing
-  if (size > PREVIEW_MAX &&
-      !confirm(name + " is " + fmtSize(size) + ". Download it for preview?")) return;
+  // A search hit on a host without GNU find carries no size at all (see
+  // do_search) — null, not 0, precisely so it isn't mistaken for "confirmed
+  // small enough." Unknown is treated the same as too big: ask first, rather
+  // than silently streaming whatever it turns out to be into the cache.
+  const known = size !== null && size !== undefined;
+  if ((!known || size > PREVIEW_MAX) &&
+      !confirm(name + (known ? " is " + fmtSize(size) : "'s size isn't known") +
+              ". Download it for preview?")) return;
   previewPath = full;
   previewLocal = null;
   selectRow(full);
