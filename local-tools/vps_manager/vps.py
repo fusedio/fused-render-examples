@@ -60,7 +60,7 @@ no requests and no open terminals. The state file embeds a hash of this module,
 so editing it respawns a fresh daemon on the next ensure().
 """
 # /// script
-# dependencies = ["paramiko>=3"]
+# dependencies = ["paramiko>=3.2"]
 # ///
 import glob
 import hashlib

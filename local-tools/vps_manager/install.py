@@ -16,13 +16,20 @@ import sys
 
 def main():
     try:
-        import paramiko  # noqa: F401
-        print(f"paramiko already installed for {sys.executable}")
-        return
+        import paramiko
+        have = tuple(int(n) for n in paramiko.__version__.split(".")[:2]
+                     if n.isdigit())
+        if have >= (3, 2):
+            print(f"paramiko {paramiko.__version__} already installed "
+                  f"for {sys.executable}")
+            return
+        print(f"paramiko {paramiko.__version__} is too old — "
+              f"PKey.from_path() arrived in 3.2")
     except ImportError:
         pass
     print(f"installing paramiko into {sys.executable} …")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "paramiko>=3"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-U",
+                           "paramiko>=3.2"])
     print("done — open index.html in fused-render")
 
 
