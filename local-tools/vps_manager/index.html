@@ -460,7 +460,9 @@ function renderMachines() {
   if (sshConfig.error)
     box.insertAdjacentHTML("beforeend", '<div class="side-note">Could not read ' +
       esc(sshConfig.path || "~/.ssh/config") + ': ' + esc(sshConfig.error) + '</div>');
-  if (!machines.length && !hiddenMachines.length) {
+  // known_hosts counts too: a machine list built only from hosts you logged into
+  // once is a normal state, and bailing here would hide every one of them
+  if (!machines.length && !hiddenMachines.length && !knownHosts.length) {
     box.insertAdjacentHTML("beforeend", '<div class="side-empty">No hosts in your ' +
       '<code>~/.ssh/config</code>. Add one there, or click <b>+</b> to add it here.</div>');
     return;
@@ -795,8 +797,12 @@ async function prefetchDir(path) {
   prefetching.delete(key);
 }
 function join(dir, name) { return dir.replace(/\/$/, "") + "/" + name; }
+// The folder an entry actually lives in. A search hit sits under a subdirectory,
+// so file operations anchor here and not on the folder being browsed — otherwise
+// renaming one would move it up into the search root.
+function dirOf(p) { return p.replace(/\/[^/]*$/, "") || "/"; }
 function relDir(p) {
-  const dir = p.replace(/\/[^/]*$/, "") || "/";
+  const dir = dirOf(p);
   const base = (cwd || "").replace(/\/$/, "");
   if (dir === base) return "";
   if (base && dir.startsWith(base + "/")) return dir.slice(base.length + 1) + "/";
@@ -916,16 +922,17 @@ function fileRow(e) {
 }
 async function renameEntry(full, name) {
   const nn = prompt("Rename to:", name); if (!nn || nn === name) return;
-  await fileOp("/rename?id=" + current + "&src=" + encodeURIComponent(full) + "&dst=" + encodeURIComponent(join(cwd, nn)), "Renamed");
+  await fileOp("/rename?id=" + current + "&src=" + encodeURIComponent(full) +
+               "&dst=" + encodeURIComponent(join(dirOf(full), nn)), "Renamed");
 }
 async function moveEntry(full, name) {
-  const dst = prompt("Move to (absolute path or new name):", join(cwd, name)); if (!dst) return;
-  const target = dst.startsWith("/") ? dst : join(cwd, dst);
+  const dst = prompt("Move to (absolute path or new name):", full); if (!dst) return;
+  const target = dst.startsWith("/") ? dst : join(dirOf(full), dst);
   await fileOp("/rename?id=" + current + "&src=" + encodeURIComponent(full) + "&dst=" + encodeURIComponent(target), "Moved");
 }
 async function copyEntry(full, name) {
-  const dst = prompt("Copy to (absolute path or new name):", join(cwd, "copy-of-" + name)); if (!dst) return;
-  const target = dst.startsWith("/") ? dst : join(cwd, dst);
+  const dst = prompt("Copy to (absolute path or new name):", join(dirOf(full), "copy-of-" + name)); if (!dst) return;
+  const target = dst.startsWith("/") ? dst : join(dirOf(full), dst);
   await fileOp("/copy?id=" + current + "&src=" + encodeURIComponent(full) + "&dst=" + encodeURIComponent(target), "Copied");
 }
 async function deleteEntry(full, name, isDir) {
