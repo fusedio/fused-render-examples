@@ -507,12 +507,20 @@ def _serve():
                 except Exception:
                     pass
 
-    def is_connected(mid):
+    def live_conn(mid):
+        """The connection for `mid` if its transport is up, else None.
+
+        One dict lookup, so a drop_conn() in another thread — an edit, a remove,
+        a hide — can't land between a liveness check and the fetch and turn an
+        in-flight request into a KeyError."""
         c = conns.get(mid)
         if not c:
-            return False
+            return None
         t = c["client"].get_transport()
-        return bool(t and t.is_active())
+        return c if (t and t.is_active()) else None
+
+    def is_connected(mid):
+        return live_conn(mid) is not None
 
     def keys_of(m):
         paths = m.get("key_paths") or ([m["key_path"]] if m.get("key_path") else [])
@@ -588,11 +596,13 @@ def _serve():
         and /connect for the one you clicked at the same time, and without this
         both would open their own SSH session, the second overwriting — and so
         leaking — the first."""
-        if is_connected(mid):
-            return conns[mid]
+        c = live_conn(mid)
+        if c:
+            return c
         with dial_lock(mid):
-            if is_connected(mid):      # another thread dialled while we waited
-                return conns[mid]
+            c = live_conn(mid)         # another thread dialled while we waited
+            if c:
+                return c
             m = get_machine(mid)
             drop_conn(mid)
             client, jump, key_used = open_client(m)
@@ -608,19 +618,44 @@ def _serve():
                 conns[mid] = c
             return c
 
-    def sftp_of(c):
+    def require_sftp(c):
+        """Whether the host does SFTP at all is settled once, when we connect."""
         if c["sftp"] is None:
             raise Http(400, "this host allows SSH but not SFTP, so there are "
                             "no files to browse — try the terminal")
+
+    def open_sftp_channel(c):
+        """A fresh SFTP channel on this connection.
+
+        The connection can be torn down under a request that is already running
+        — the machine gets hidden, edited, disconnected — and paramiko reports
+        that as an AttributeError on a None transport, so check first and say
+        what actually happened."""
+        t = c["client"].get_transport()
+        if not (t and t.is_active()):
+            raise Http(400, "the connection to this machine dropped — reconnect and retry")
+        return c["client"].open_sftp()
+
+    def sftp_of(c):
+        """The connection's SFTP channel, reopened if it has dropped. Call under
+        c["lock"].
+
+        An SFTP channel can die on its own while the SSH transport stays up, and
+        a live transport is all get_conn() looks at — so a dropped channel used
+        to leave the file browser failing for good, until the daemon restarted
+        or the machine entry was touched."""
+        require_sftp(c)
+        if c["sftp"].sock.closed:
+            c["sftp"] = open_sftp_channel(c)
         return c["sftp"]
 
     def tsftp(c):
         """A second SFTP channel for bulk transfers, so streaming a big download or
         upload never blocks directory listings on c["lock"]. Call under c["tlock"]."""
-        sftp_of(c)
+        require_sftp(c)
         t = c.get("tsftp")
         if t is None or t.sock.closed:
-            t = c["tsftp"] = c["client"].open_sftp()
+            t = c["tsftp"] = open_sftp_channel(c)
         return t
 
     def sh(c, cmd):
@@ -1144,32 +1179,44 @@ def _serve():
         def _download(self, mid, path):
             try:
                 c = get_conn(mid)
-                with c["tlock"]:
-                    size = tsftp(c).stat(path).st_size or 0
-                    f = tsftp(c).open(path, "rb")
-                    f.prefetch()
             except Http as e:
                 self._send(e.code, {"detail": e.detail})
                 return
             except Exception as e:
                 self._send(500, {"detail": str(e) or type(e).__name__})
                 return
-            name = posixpath.basename(path)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(size))
-            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
-            self._cors()
-            self.end_headers()
-            try:
-                with c["tlock"], f:
-                    while True:
-                        chunk = f.read(256 * 1024)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-            except (BrokenPipeError, ConnectionResetError):
-                self.close_connection = True
+            # One SFTP channel can't carry two transfers, and prefetch() keeps
+            # reading ahead on it in the background — so tlock covers the open
+            # AND the streaming, never just the open. Listings are unaffected:
+            # they run on the other channel, under c["lock"].
+            with c["tlock"]:
+                try:
+                    t = tsftp(c)
+                    size = t.stat(path).st_size or 0
+                    f = t.open(path, "rb")
+                    f.prefetch()
+                except Http as e:
+                    self._send(e.code, {"detail": e.detail})
+                    return
+                except Exception as e:
+                    self._send(500, {"detail": str(e) or type(e).__name__})
+                    return
+                name = posixpath.basename(path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                self._cors()
+                self.end_headers()
+                try:
+                    with f:
+                        while True:
+                            chunk = f.read(256 * 1024)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True
 
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
     srv.daemon_threads = True
