@@ -357,6 +357,7 @@
 <script>
 const PY = "./vps.py";
 let BASE = null;           // daemon base url, e.g. http://127.0.0.1:PORT
+let TOK = "";              // per-daemon token; loopback + open CORS is not a boundary
 let machines = [];
 let hiddenMachines = [];   // ssh-config hosts the user hid
 let knownHosts = [];       // hosts only ~/.ssh/known_hosts remembers
@@ -386,8 +387,11 @@ function toast(msg, isErr) {
   clearTimeout(toastT);
   toastT = setTimeout(() => t.className = "", 2600);
 }
+function url(path) {
+  return BASE + path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(TOK);
+}
 async function api(path, opts) {
-  const res = await fetch(BASE + path, opts);
+  const res = await fetch(url(path), opts);
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
@@ -415,6 +419,7 @@ async function boot() {
     const r = await fused.runPython(PY, { action: "ensure" });
     if (r.error) throw new Error(r.error);
     BASE = "http://127.0.0.1:" + r.port;
+    TOK = r.token || "";
     setStatus("ok", "ready");
     await refreshMachines();
     await loadKnown();
@@ -928,7 +933,7 @@ async function fileOp(path, okMsg) {
 }
 async function downloadFile(full, name) {
   try {
-    const res = await fetch(BASE + "/download?id=" + current + "&path=" + encodeURIComponent(full));
+    const res = await fetch(url("/download?id=" + current + "&path=" + encodeURIComponent(full)));
     if (!res.ok) throw new Error(await res.text());
     const blob = await res.blob();
     const a = document.createElement("a");
@@ -945,10 +950,12 @@ document.getElementById("mkdirBtn").onclick = async () => {
 document.getElementById("uploadBtn").onclick = () => document.getElementById("fileInput").click();
 document.getElementById("fileInput").onchange = async ev => {
   const f = ev.target.files[0]; ev.target.value = ""; if (!f) return;
-  const fd = new FormData(); fd.append("file", f);
   setStatus("busy", "uploading…");
   try {
-    await api("/upload?id=" + current + "&dir=" + encodeURIComponent(cwd), { method: "POST", body: fd });
+    // raw body rather than multipart — nothing here parses multipart, and the
+    // daemon streams the request straight into SFTP
+    await api("/upload?id=" + current + "&dir=" + encodeURIComponent(cwd) +
+              "&name=" + encodeURIComponent(f.name), { method: "POST", body: f });
     toast("Uploaded " + f.name); loadDir(cwd, false, true);
   } catch (e) { toast("Upload failed: " + e.message, true); }
   setStatus("ok", "ready");
@@ -1036,8 +1043,8 @@ function connectTerm() {
   term.reset();
   termedId = current;
   document.getElementById("termStatus").textContent = "connecting…";
-  const url = BASE.replace("http", "ws") + "/term?id=" + current + "&cols=" + term.cols + "&rows=" + term.rows;
-  ws = new WebSocket(url);
+  ws = new WebSocket(url("/term?id=" + current + "&cols=" + term.cols +
+                         "&rows=" + term.rows).replace("http", "ws"));
   ws.onopen = () => { document.getElementById("termStatus").textContent = "connected"; fitTerm(); };
   ws.onmessage = e => term.write(e.data);
   ws.onclose = () => { document.getElementById("termStatus").textContent = "disconnected"; };

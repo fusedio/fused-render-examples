@@ -1,17 +1,24 @@
-# /// script
-# dependencies = ["paramiko>=3", "fastapi", "uvicorn"]
-# ///
-"""SSH connection daemon for the VPS Manager example.
+"""SSH connection daemon for the VPS Manager — stdlib only, no FastAPI, no uvicorn.
+
+Same application as examples/vps_manager (same UI, same endpoint contract); the
+only difference is underneath. This backend is the stdlib daemon pattern the rest
+of the repo already uses (db_console, the geotiff/map/netcdf tile servers):
+ThreadingHTTPServer plus a hand-rolled RFC 6455 WebSocket for the terminal, with
+paramiko as the single third-party import. Kept as its own folder so the two can
+be timed against each other — importing fastapi+uvicorn costs ~3.0s on a cold
+daemon start, the stdlib equivalent ~0.55s.
 
 Each fused-render runPython call is a fresh subprocess, so SSH sessions can't
-live there. This module is both:
+live there and a resident daemon is unavoidable: a cold connect measures ~8.5s
+(interpreter + paramiko import + SSH handshake) against ~0.9s on a warm one.
+This module is therefore both:
 
   1. a runPython entrypoint `main(action="ensure")` — starts (or reuses) a
-     long-lived localhost daemon and returns its port; and
+     long-lived localhost daemon and returns its port and token; and
   2. the daemon (run as `python vps.py --serve`) — holds live paramiko
      connections per machine and serves HTTP + a terminal WebSocket.
 
-Endpoints (CORS *):
+Endpoints (CORS *; every route but /ping requires `?t=<token>`):
   GET  /ping                       -> {"ok", "version"}
   GET  /quit
   GET  /machines                   -> {"machines": [{id, name, host, port,
@@ -24,21 +31,20 @@ Endpoints (CORS *):
   POST /machines/{id}/hide         -> {"ok"}   (ssh-config hosts only)
   POST /machines/{id}/unhide       -> {"ok"}
   GET  /known?limit=               -> {hosts: [machine], total, hashed, path}
-  POST /connect?id=                -> {"ok", "home"}  (400 with reason if not)
+  POST /connect?id=                -> {"ok", "home", "sftp"}  (400 with reason)
   POST /probe?id=                  -> {"ok", "ms", "shell", "sftp", "detail"}
   POST /reach?id=                  -> {"ok", "ms", "banner"}  (TCP only, no login)
   POST /disconnect?id=             -> {"ok"}
-  GET  /ls?id=&path=               -> {path, parent, entries: [{name, is_dir,
-                                       is_link, size, mtime}]}
-  GET  /search?id=&path=&q=        -> {entries: [{name, path, is_dir, size,
-                                       mtime}], truncated}  (recursive find)
+  GET  /ls?id=&path=               -> {path, parent, home, entries: [{name,
+                                       is_dir, is_link, size, mtime}]}
+  GET  /search?id=&path=&q=        -> {entries: [...], truncated}
   POST /mkdir?id=&path=            -> {"ok"}
   POST /rename?id=&src=&dst=       -> {"ok"}   (also move)
   POST /copy?id=&src=&dst=         -> {"ok"}
   POST /delete?id=&path=           -> {"ok"}
   GET  /download?id=&path=         -> file bytes
   GET  /localize?id=&path=         -> {local_path, name, size}  (cache for preview)
-  POST /upload?id=&dir=            -> multipart file -> {"ok"}
+  POST /upload?id=&dir=&name=      -> raw request body is the file -> {"ok"}
   WS   /term?id=&cols=&rows=       -> in: {"data"} | {"resize": [c, r]},
                                        out: raw shell output text
 
@@ -49,9 +55,12 @@ file (passwords included — prefer key_path). A hand-added machine on the same
 user@host:port as a config alias supersedes it. /known adds the hosts that only
 ~/.ssh/known_hosts remembers (ids `kh:<host>:<port>`, username guessed) so a box
 rented for an afternoon can be picked up again. Idle shutdown after 30 min with
-no requests and no open terminals. The state file embeds this module's mtime, so
-editing it respawns a fresh daemon on the next ensure().
+no requests and no open terminals. The state file embeds a hash of this module,
+so editing it respawns a fresh daemon on the next ensure().
 """
+# /// script
+# dependencies = ["paramiko>=3"]
+# ///
 import glob
 import hashlib
 import json
@@ -61,15 +70,15 @@ import sys
 import threading
 import time
 
-STATE = os.path.expanduser("~/.cache/fused-render-vps-v1/daemon.json")
-PREVIEW_DIR = os.path.expanduser("~/.cache/fused-render-vps-v1/preview")
+IDLE_EXIT_S = 30 * 60
+STATE = os.path.expanduser("~/.cache/fused-render-vps-stdlib-v1/daemon.json")
+PREVIEW_DIR = os.path.expanduser("~/.cache/fused-render-vps-stdlib-v1/preview")
 HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.path.abspath(sys.path[0])
 MACHINES = os.path.join(HERE, "machines.json")
-IDLE_EXIT_S = 30 * 60
 
 # OpenSSH keeps per-user files in ~/.ssh on macOS, Linux and Windows alike
 # (expanduser falls back to %USERPROFILE% there). Only the system-wide directory
-# moves: /etc/ssh on unix, %ProgramData%\ssh for Windows' OpenSSH port.
+# moves: /etc/ssh on unix, %ProgramData%/ssh for Windows' OpenSSH port.
 SSH_DIR = os.path.join(os.path.expanduser("~"), ".ssh")
 SSH_CONFIG = os.path.join(SSH_DIR, "config")
 KNOWN_HOSTS = os.path.join(SSH_DIR, "known_hosts")
@@ -79,21 +88,32 @@ SYSTEM_CONFIG = os.path.join(SYSTEM_SSH_DIR, "ssh_config")
 SYSTEM_KNOWN_HOSTS = os.path.join(SYSTEM_SSH_DIR, "ssh_known_hosts")
 
 
+class Http(Exception):
+    """Mirrors FastAPI's HTTPException shape so the page's error handling is
+    unchanged: the body is {"detail": ...} at the given status."""
+
+    def __init__(self, code, detail):
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
 def _me():
     return os.path.join(HERE, "vps.py")
 
 
 def _version():
+    """Hash the code, not its mtime plus the interpreter path — a version that
+    moves with either churns the daemon on every checkout or interpreter switch."""
     try:
-        return str(os.path.getmtime(_me())) + "|" + os.path.dirname(sys.executable)
+        with open(_me(), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:12]
     except OSError:
         return "0"
 
 
 def _daemon_executable():
-    """Prefer the windowless pythonw.exe for the daemon so no console ever flashes
-    (Windows Terminal is the default console host on Win11 and CREATE_NO_WINDOW
-    doesn't reliably suppress it for a console-subsystem python.exe)."""
+    """Prefer the windowless pythonw.exe so no console can flash on Windows."""
     if os.name == "nt":
         pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
         if os.path.exists(pyw):
@@ -275,34 +295,37 @@ def known_hosts_machines(limit=25, taken=()):
 
 
 # ================================================================ ensure()
-def _alive(port, version):
+def _alive(port, token, version):
     import urllib.request
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=2) as r:
             d = json.load(r)
-        return d.get("ok") and d.get("version") == version
+        return d.get("ok") and d.get("version") == version and token
     except Exception:
         return False
 
 
 def main(action: str = "ensure"):
-    """runPython entrypoint: make sure the daemon is running, return {port}."""
+    """runPython entrypoint: make sure the daemon is running, return {port, token}."""
+    import importlib.util
     import subprocess
-    try:
-        import paramiko  # noqa: F401
-    except ImportError:
+    # find_spec, not `import paramiko` — this runs on every page load, and actually
+    # importing it costs ~1.5s for a check the daemon's own log would report anyway.
+    if importlib.util.find_spec("paramiko") is None:
         return {"error": "paramiko is not installed — run: uv pip install paramiko "
                          f"--python {sys.executable}"}
     version = _version()
     try:
         with open(STATE) as f:
             st = json.load(f)
-        if _alive(st.get("port"), version):
-            return {"port": st["port"], "reused": True, "version": version}
+        if _alive(st.get("port"), st.get("token"), version):
+            return {"port": st["port"], "token": st["token"], "reused": True,
+                    "version": version}
         try:
             import urllib.request
             urllib.request.urlopen(
-                f"http://127.0.0.1:{st.get('port')}/quit", timeout=1).read()
+                f"http://127.0.0.1:{st.get('port')}/quit?t={st.get('token', '')}",
+                timeout=1).read()
         except Exception:
             pass
     except (OSError, ValueError):
@@ -310,52 +333,99 @@ def main(action: str = "ensure"):
 
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     log = os.path.join(os.path.dirname(STATE), "daemon.log")
-    kwargs = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | NEW_PROCESS_GROUP | CREATE_NO_WINDOW
-    else:
-        kwargs["start_new_session"] = True
+    # DETACHED_PROCESS and CREATE_NO_WINDOW are conflicting console flags — the
+    # proven templates (docs, latex, usd) detach with the process-group pair only,
+    # and CREATE_NO_WINDOW belongs on blocking console children instead.
+    detach = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+              if os.name == "nt" else {"start_new_session": True})
     with open(log, "ab") as lf:
         subprocess.Popen([_daemon_executable(), _me(), "--serve"],
-                         stdout=lf, stderr=lf, cwd=HERE, **kwargs)
+                         stdout=lf, stderr=lf, stdin=subprocess.DEVNULL,
+                         cwd=HERE, close_fds=True, **detach)
     for _ in range(200):
         time.sleep(0.05)
         try:
             with open(STATE) as f:
                 st = json.load(f)
-            if st.get("version") == version and _alive(st.get("port"), version):
-                return {"port": st["port"], "reused": False, "version": version}
+            if st.get("version") == version and _alive(st.get("port"), st.get("token"), version):
+                return {"port": st["port"], "token": st["token"], "reused": False,
+                        "version": version}
         except (OSError, ValueError):
             continue
     return {"error": f"daemon did not start — see {log}"}
 
 
+# ================================================================ websocket
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"      # RFC 6455 §1.3
+
+
+def _ws_accept(key):
+    return __import__("base64").b64encode(
+        hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+
+
+def _ws_frame(payload, opcode=0x1):
+    """Server->client frame: never masked, FIN always set (we don't fragment)."""
+    import struct
+    n = len(payload)
+    if n < 126:
+        head = struct.pack("!BB", 0x80 | opcode, n)
+    elif n < 65536:
+        head = struct.pack("!BBH", 0x80 | opcode, 126, n)
+    else:
+        head = struct.pack("!BBQ", 0x80 | opcode, 127, n)
+    return head + payload
+
+
+def _ws_read(rfile):
+    """Read one client frame -> (opcode, payload); (None, b"") at EOF.
+
+    Continuation frames are reassembled, because a browser is free to fragment
+    even the small JSON messages the terminal sends."""
+    import struct
+    data, first = b"", None
+    while True:
+        head = rfile.read(2)
+        if len(head) < 2:
+            return None, b""
+        b0, b1 = head[0], head[1]
+        fin, opcode, masked, n = b0 & 0x80, b0 & 0x0F, b1 & 0x80, b1 & 0x7F
+        if n == 126:
+            n = struct.unpack("!H", rfile.read(2))[0]
+        elif n == 127:
+            n = struct.unpack("!Q", rfile.read(8))[0]
+        mask = rfile.read(4) if masked else b""
+        chunk = rfile.read(n) if n else b""
+        if len(chunk) < n:
+            return None, b""
+        if masked:
+            chunk = bytes(c ^ mask[i % 4] for i, c in enumerate(chunk))
+        if first is None:
+            first = opcode
+        if opcode in (0x8, 0x9, 0xA):      # control frames are never fragmented
+            return opcode, chunk
+        data += chunk
+        if fin:
+            return first, data
+
+
 # ================================================================ daemon
 def _serve():
     import getpass
+    import secrets
     import shlex
     import socket
     import stat as statmod
     import uuid
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs, urlparse
 
     import paramiko
-    import uvicorn
-    from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket
-    from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import StreamingResponse
 
     VERSION = _version()
+    TOKEN = secrets.token_urlsafe(32)
     last_hit = [time.time()]
     open_terms = [0]
-
-    app = FastAPI()
-    app.add_middleware(CORSMiddleware, allow_origins=["*"],
-                       allow_methods=["*"], allow_headers=["*"])
-
-    @app.middleware("http")
-    async def touch(request: Request, call_next):
-        last_hit[0] = time.time()
-        return await call_next(request)
 
     # ---- machine registry ----
     reg_lock = threading.Lock()
@@ -416,7 +486,7 @@ def _serve():
         for m in pool + hidden:
             if m["id"] == mid:
                 return m
-        raise HTTPException(404, f"unknown machine {mid}")
+        raise Http(404, f"unknown machine {mid}")
 
     def public(m):
         return {k: v for k, v in m.items() if k != "password"}
@@ -465,8 +535,8 @@ def _serve():
         A known_hosts guess has no recorded identity, so its keys are offered one
         at a time — slower, but then we know which one to save."""
         if m.get("proxy_command"):
-            raise HTTPException(400, "ProxyCommand hosts aren't supported — "
-                                     "add the machine by hand instead")
+            raise Http(400, "ProxyCommand hosts aren't supported — "
+                            "add the machine by hand instead")
         port = int(m.get("port") or 22)
         keys = keys_of(m)
         pw = m.get("password") or None
@@ -476,7 +546,7 @@ def _serve():
             sock = None
             if m.get("proxy_jump"):
                 if depth >= 3:
-                    raise HTTPException(400, "ProxyJump chain is too long")
+                    raise Http(400, "ProxyJump chain is too long")
                 if jump is None:
                     jump = open_client(jump_machine(m["proxy_jump"]), depth + 1)[0]
                 sock = jump.get_transport().open_channel(
@@ -523,8 +593,8 @@ def _serve():
 
     def sftp_of(c):
         if c["sftp"] is None:
-            raise HTTPException(400, "this host allows SSH but not SFTP, so there are "
-                                     "no files to browse — try the terminal")
+            raise Http(400, "this host allows SSH but not SFTP, so there are "
+                            "no files to browse — try the terminal")
         return c["sftp"]
 
     def tsftp(c):
@@ -536,32 +606,22 @@ def _serve():
             t = c["tsftp"] = c["client"].open_sftp()
         return t
 
-    def sh(conn, cmd):
-        _, out, err = conn["client"].exec_command(cmd, timeout=60)
+    def sh(c, cmd):
+        _, out, err = c["client"].exec_command(cmd, timeout=60)
         rc = out.channel.recv_exit_status()
         if rc != 0:
             msg = err.read().decode("utf-8", "replace").strip()
-            raise HTTPException(400, msg or f"command failed (exit {rc})")
+            raise Http(400, msg or f"command failed (exit {rc})")
         return out.read().decode("utf-8", "replace")
 
-    def sh_soft(conn, cmd):
-        _, out, _ = conn["client"].exec_command(cmd, timeout=60)
+    def sh_soft(c, cmd):
+        _, out, _ = c["client"].exec_command(cmd, timeout=60)
         data = out.read().decode("utf-8", "replace")
         out.channel.recv_exit_status()
         return data
 
     # ---- endpoints ----
-    @app.get("/ping")
-    def ping():
-        return {"ok": True, "version": VERSION}
-
-    @app.get("/quit")
-    def quit_():
-        threading.Timer(0.2, os._exit, (0,)).start()
-        return {"ok": True}
-
-    @app.get("/machines")
-    def machines():
+    def do_machines():
         pool, hidden, err = all_machines()
         return {"machines": [dict(public(m), connected=is_connected(m["id"]))
                              for m in pool],
@@ -569,25 +629,7 @@ def _serve():
                 "config_path": SSH_CONFIG if os.path.isfile(SSH_CONFIG) else "",
                 "config_error": err}
 
-    @app.post("/machines/add")
-    def machines_add(body: dict):
-        m = {"id": uuid.uuid4().hex[:8],
-             "name": (body.get("name") or body.get("host") or "").strip(),
-             "host": (body.get("host") or "").strip(),
-             "port": int(body.get("port") or 22),
-             "username": (body.get("username") or "").strip(),
-             "key_path": (body.get("key_path") or "").strip(),
-             "password": body.get("password") or ""}
-        if not m["host"] or not m["username"]:
-            raise HTTPException(400, "host and username are required")
-        with reg_lock:
-            ms = load_machines()
-            ms.append(m)
-            save_machines(ms)
-        return {"machine": public(m)}
-
-    @app.get("/known")
-    def known(limit: int = 25):
+    def do_known(limit):
         pool, hidden, _ = all_machines()
         taken = set()
         for m in pool + hidden:      # known_hosts keys entries by alias or hostname
@@ -598,60 +640,36 @@ def _serve():
         return {"hosts": hosts, "total": total, "hashed": hashed,
                 "path": "\n".join(paths)}
 
-    @app.post("/reach")
-    def reach(id: str):
-        """Is anything listening? TCP connect and read the SSH banner, no login."""
-        m = get_machine(id)
-        t0 = time.time()
-        try:
-            s = socket.create_connection((m["host"], int(m.get("port") or 22)), timeout=4)
-        except OSError as e:
-            return {"ok": False, "error": e.strerror or str(e)}
-        try:
-            s.settimeout(4)
-            banner = s.recv(255).decode("utf-8", "replace").strip().splitlines()
-        except OSError:
-            banner = []
-        finally:
-            s.close()
-        version = banner[0].replace("SSH-2.0-", "").split()[0] if banner else ""
-        return {"ok": True, "ms": int((time.time() - t0) * 1000), "banner": version}
+    def do_add(body):
+        m = {"id": uuid.uuid4().hex[:8],
+             "name": (body.get("name") or body.get("host") or "").strip(),
+             "host": (body.get("host") or "").strip(),
+             "port": int(body.get("port") or 22),
+             "username": (body.get("username") or "").strip(),
+             "key_path": (body.get("key_path") or "").strip(),
+             "password": body.get("password") or ""}
+        if not m["host"] or not m["username"]:
+            raise Http(400, "host and username are required")
+        with reg_lock:
+            ms = load_machines()
+            ms.append(m)
+            save_machines(ms)
+        return {"machine": public(m)}
 
     def cfg_alias(mid):
         if not mid.startswith("cfg:"):
-            raise HTTPException(400, "not an ssh-config host")
+            raise Http(400, "not an ssh-config host")
         return mid[4:]
 
     def reject_derived(mid, verb):
         if mid.startswith("cfg:"):
-            raise HTTPException(400, f"{mid[4:]} comes from {SSH_CONFIG} — edit that "
-                                     f"file to {verb} it, or hide it from this list")
+            raise Http(400, f"{mid[4:]} comes from {SSH_CONFIG} — edit that "
+                            f"file to {verb} it, or hide it from this list")
         if mid.startswith("kh:"):
-            raise HTTPException(400, "this host is only remembered in known_hosts — "
-                                     "save it here first")
+            raise Http(400, "this host is only remembered in known_hosts — "
+                            "save it here first")
 
-    @app.post("/machines/{mid}/hide")
-    def machines_hide(mid: str):
-        alias = cfg_alias(mid)
-        drop_conn(mid)
-        with reg_lock:
-            reg = load_registry()
-            if alias not in reg["hidden"]:
-                reg["hidden"].append(alias)
-                save_registry(reg)
-        return {"ok": True}
-
-    @app.post("/machines/{mid}/unhide")
-    def machines_unhide(mid: str):
-        alias = cfg_alias(mid)
-        with reg_lock:
-            reg = load_registry()
-            reg["hidden"] = [a for a in reg["hidden"] if a != alias]
-            save_registry(reg)
-        return {"ok": True}
-
-    @app.post("/machines/{mid}/update")
-    def machines_update(mid: str, body: dict):
+    def do_update(mid, body):
         reject_derived(mid, "change")
         with reg_lock:
             ms = load_machines()
@@ -667,37 +685,52 @@ def _serve():
                     save_machines(ms)
                     drop_conn(mid)
                     return {"machine": public(m)}
-        raise HTTPException(404, f"unknown machine {mid}")
+        raise Http(404, f"unknown machine {mid}")
 
-    @app.post("/machines/{mid}/remove")
-    def machines_remove(mid: str):
+    def do_remove(mid):
         reject_derived(mid, "remove")
         drop_conn(mid)
         with reg_lock:
             save_machines([m for m in load_machines() if m["id"] != mid])
         return {"ok": True}
 
-    @app.post("/connect")
-    def connect(id: str):
+    def do_hide(mid):
+        alias = cfg_alias(mid)
+        drop_conn(mid)
+        with reg_lock:
+            reg = load_registry()
+            if alias not in reg["hidden"]:
+                reg["hidden"].append(alias)
+                save_registry(reg)
+        return {"ok": True}
+
+    def do_unhide(mid):
+        alias = cfg_alias(mid)
+        with reg_lock:
+            reg = load_registry()
+            reg["hidden"] = [a for a in reg["hidden"] if a != alias]
+            save_registry(reg)
+        return {"ok": True}
+
+    def do_connect(mid):
         try:
-            c = get_conn(id)
-        except HTTPException:
+            c = get_conn(mid)
+        except Http:
             raise
         except Exception as e:
-            drop_conn(id)
-            raise HTTPException(400, str(e) or type(e).__name__)
+            drop_conn(mid)
+            raise Http(400, str(e) or type(e).__name__)
         return {"ok": True, "home": c["home"], "sftp": c["sftp"] is not None}
 
-    @app.post("/probe")
-    def probe(id: str):
+    def do_probe(mid):
         """Actually log in and report what answered — never raises for a dead host."""
         t0 = time.time()
         try:
-            c = get_conn(id)
-        except HTTPException as e:
+            c = get_conn(mid)
+        except Http as e:
             return {"ok": False, "error": e.detail}
         except Exception as e:
-            drop_conn(id)
+            drop_conn(mid)
             return {"ok": False, "error": str(e) or type(e).__name__}
         ms = int((time.time() - t0) * 1000)
         detail, shell = "", False
@@ -716,14 +749,26 @@ def _serve():
                 "sftp": c["sftp"] is not None,
                 "username": c["username"], "key_path": c["key_used"]}
 
-    @app.post("/disconnect")
-    def disconnect(id: str):
-        drop_conn(id)
-        return {"ok": True}
+    def do_reach(mid):
+        """Is anything listening? TCP connect and read the SSH banner, no login."""
+        m = get_machine(mid)
+        t0 = time.time()
+        try:
+            s = socket.create_connection((m["host"], int(m.get("port") or 22)), timeout=4)
+        except OSError as e:
+            return {"ok": False, "error": e.strerror or str(e)}
+        try:
+            s.settimeout(4)
+            banner = s.recv(255).decode("utf-8", "replace").strip().splitlines()
+        except OSError:
+            banner = []
+        finally:
+            s.close()
+        version = banner[0].replace("SSH-2.0-", "").split()[0] if banner else ""
+        return {"ok": True, "ms": int((time.time() - t0) * 1000), "banner": version}
 
-    @app.get("/ls")
-    def ls(id: str, path: str = ""):
-        c = get_conn(id)
+    def do_ls(mid, path):
+        c = get_conn(mid)
         path = path or c["home"]
         with c["lock"]:
             sftp = sftp_of(c)
@@ -746,12 +791,11 @@ def _serve():
         return {"path": path, "parent": parent if path != "/" else None,
                 "home": c["home"], "entries": entries}
 
-    @app.get("/search")
-    def search(id: str, path: str, q: str, limit: int = 400):
+    def do_search(mid, path, q, limit):
         q = q.strip()
         if not q:
             return {"entries": [], "truncated": False}
-        c = get_conn(id)
+        c = get_conn(mid)
         pat = "*" + q + "*"
         cmd = (f"find {shlex.quote(path)} -maxdepth 8 -iname {shlex.quote(pat)} "
                f"-printf '%y\\t%s\\t%T@\\t%p\\n' 2>/dev/null | head -n {int(limit)}")
@@ -771,16 +815,14 @@ def _serve():
         entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
         return {"entries": entries, "truncated": len(entries) >= limit}
 
-    @app.post("/mkdir")
-    def mkdir(id: str, path: str):
-        c = get_conn(id)
+    def do_mkdir(mid, path):
+        c = get_conn(mid)
         with c["lock"]:
             sftp_of(c).mkdir(path)
         return {"ok": True}
 
-    @app.post("/rename")
-    def rename(id: str, src: str, dst: str):
-        c = get_conn(id)
+    def do_rename(mid, src, dst):
+        c = get_conn(mid)
         try:
             with c["lock"]:
                 sftp_of(c).rename(src, dst)
@@ -788,48 +830,27 @@ def _serve():
             sh(c, f"mv -- {shlex.quote(src)} {shlex.quote(dst)}")
         return {"ok": True}
 
-    @app.post("/copy")
-    def copy(id: str, src: str, dst: str):
-        c = get_conn(id)
+    def do_copy(mid, src, dst):
+        c = get_conn(mid)
         sh(c, f"cp -a -- {shlex.quote(src)} {shlex.quote(dst)}")
         return {"ok": True}
 
-    @app.post("/delete")
-    def delete(id: str, path: str):
+    def do_delete(mid, path):
         if path.rstrip("/") in ("", "/"):
-            raise HTTPException(400, "refusing to delete /")
-        c = get_conn(id)
+            raise Http(400, "refusing to delete /")
+        c = get_conn(mid)
         sh(c, f"rm -rf -- {shlex.quote(path)}")
         return {"ok": True}
 
-    @app.get("/download")
-    def download(id: str, path: str):
-        c = get_conn(id)
-        with c["tlock"]:
-            f = tsftp(c).open(path, "rb")
-            f.prefetch()
-
-        def gen():
-            with c["tlock"], f:
-                while True:
-                    chunk = f.read(256 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-        name = posixpath.basename(path)
-        return StreamingResponse(gen(), media_type="application/octet-stream",
-                                 headers={"Content-Disposition": f'attachment; filename="{name}"'})
-
-    @app.get("/localize")
-    def localize(id: str, path: str):
-        c = get_conn(id)
+    def do_localize(mid, path):
+        c = get_conn(mid)
         with c["tlock"]:
             st = tsftp(c).stat(path)
         size = st.st_size or 0
         mtime = int(st.st_mtime or 0)
         base = posixpath.basename(path) or "file"
-        key = hashlib.sha1(f"{id}:{path}:{mtime}:{size}".encode()).hexdigest()[:12]
-        dest_dir = os.path.join(PREVIEW_DIR, id, key)
+        key = hashlib.sha1(f"{mid}:{path}:{mtime}:{size}".encode()).hexdigest()[:12]
+        dest_dir = os.path.join(PREVIEW_DIR, mid, key)
         dest = os.path.join(dest_dir, base)
         if not (os.path.isfile(dest) and os.path.getsize(dest) == size):
             os.makedirs(dest_dir, exist_ok=True)
@@ -844,29 +865,46 @@ def _serve():
                         out.write(chunk)
         return {"local_path": dest.replace("\\", "/"), "name": base, "size": size}
 
-    @app.post("/upload")
-    def upload(id: str, dir: str, file: UploadFile):
-        c = get_conn(id)
-        dst = posixpath.join(dir, os.path.basename(file.filename or "upload"))
+    def do_upload(mid, directory, name, stream, length):
+        c = get_conn(mid)
+        dst = posixpath.join(directory, os.path.basename(name or "upload"))
         with c["tlock"]:
-            tsftp(c).putfo(file.file, dst)
+            tsftp(c).putfo(_Limited(stream, length), dst, file_size=length)
         return {"ok": True, "path": dst}
 
-    @app.websocket("/term")
-    async def term(ws: WebSocket, id: str, cols: int = 120, rows: int = 32):
-        import asyncio
-        await ws.accept()
-        try:
-            c = await asyncio.to_thread(get_conn, id)
-            chan = c["client"].invoke_shell(term="xterm-256color",
-                                            width=cols, height=rows)
-        except Exception as e:
-            await ws.send_text(f"\r\n\x1b[31m{e}\x1b[0m\r\n")
-            await ws.close()
+    # ---- terminal ----
+    def run_term(handler, mid, cols, rows):
+        """Bridge an interactive shell to the browser over a hand-rolled WebSocket."""
+        key = handler.headers.get("Sec-WebSocket-Key")
+        if not key:
+            handler.send_error(400, "expected a websocket upgrade")
             return
+        handler.wfile.write(
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+            b"Connection: Upgrade\r\nSec-WebSocket-Accept: "
+            + _ws_accept(key).encode() + b"\r\n\r\n")
+        handler.wfile.flush()
+        handler.close_connection = True
+        wlock = threading.Lock()
+
+        def send(payload, opcode=0x1):
+            with wlock:
+                handler.wfile.write(_ws_frame(payload, opcode))
+                handler.wfile.flush()
+
+        try:
+            c = get_conn(mid)
+            chan = c["client"].invoke_shell(term="xterm-256color", width=cols, height=rows)
+        except Exception as e:
+            try:
+                send(f"\r\n\x1b[31m{e}\x1b[0m\r\n".encode())
+                send(b"", 0x8)
+            except OSError:
+                pass
+            return
+        handler.connection.settimeout(None)      # a terminal may idle indefinitely
         open_terms[0] += 1
         last_hit[0] = time.time()
-        loop = asyncio.get_running_loop()
         alive = [True]
 
         def pump():
@@ -878,27 +916,39 @@ def _serve():
                 if not data:
                     break
                 last_hit[0] = time.time()
-                fut = asyncio.run_coroutine_threadsafe(
-                    ws.send_text(data.decode("utf-8", "replace")), loop)
                 try:
-                    fut.result(timeout=10)
-                except Exception:
+                    send(data)
+                except OSError:
                     break
-            if alive[0]:
-                asyncio.run_coroutine_threadsafe(ws.close(), loop)
+            alive[0] = False
+            try:
+                send(b"", 0x8)
+            except OSError:
+                pass
+            try:
+                handler.connection.shutdown(socket.SHUT_RD)   # unblock the reader
+            except OSError:
+                pass
 
         reader = threading.Thread(target=pump, daemon=True)
         reader.start()
         try:
-            while True:
-                msg = json.loads(await ws.receive_text())
+            while alive[0]:
+                opcode, payload = _ws_read(handler.rfile)
+                if opcode is None or opcode == 0x8:
+                    break
                 last_hit[0] = time.time()
+                if opcode == 0x9:
+                    send(payload, 0xA)
+                    continue
+                if opcode not in (0x1, 0x2):
+                    continue
+                msg = json.loads(payload.decode("utf-8", "replace"))
                 if "data" in msg:
                     chan.send(msg["data"].encode("utf-8"))
                 elif "resize" in msg:
-                    chan.resize_pty(width=int(msg["resize"][0]),
-                                    height=int(msg["resize"][1]))
-        except Exception:
+                    chan.resize_pty(width=int(msg["resize"][0]), height=int(msg["resize"][1]))
+        except (OSError, ValueError):
             pass
         finally:
             alive[0] = False
@@ -908,24 +958,204 @@ def _serve():
             except Exception:
                 pass
 
-    # ---- boot ----
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
+    # ---- http ----
+    def one(q, key, default=""):
+        return q.get(key, [default])[0]
 
+    class H(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"      # keep-alive: no TCP setup per listing
+        timeout = 300
+
+        def log_message(self, *a):
+            pass
+
+        def _cors(self):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self._cors()
+            self.end_headers()
+
+        def _send(self, code, obj):
+            body = json.dumps(obj, default=str).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self._cors()
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def _guard(self, u, q):
+            if u.path == "/ping":
+                return True
+            if one(q, "t") != TOKEN:
+                self._send(403, {"detail": "forbidden"})
+                return False
+            return True
+
+        def _body(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            return json.loads(self.rfile.read(n) or b"{}") if n else {}
+
+        def _dispatch(self, fn):
+            try:
+                self._send(200, fn())
+            except Http as e:
+                self._send(e.code, {"detail": e.detail})
+            except Exception as e:
+                self._send(500, {"detail": str(e) or type(e).__name__})
+
+        def do_GET(self):
+            last_hit[0] = time.time()
+            u = urlparse(self.path)
+            q = parse_qs(u.query)
+            if not self._guard(u, q):
+                return
+            if u.path == "/term":
+                run_term(self, one(q, "id"), int(one(q, "cols", "120")),
+                         int(one(q, "rows", "32")))
+                return
+            if u.path == "/download":
+                self._download(one(q, "id"), one(q, "path"))
+                return
+            if u.path == "/ping":
+                self._send(200, {"ok": True, "version": VERSION})
+            elif u.path == "/quit":
+                self._send(200, {"ok": True})
+                threading.Thread(target=srv.shutdown, daemon=True).start()
+            elif u.path == "/machines":
+                self._dispatch(do_machines)
+            elif u.path == "/known":
+                self._dispatch(lambda: do_known(int(one(q, "limit", "25"))))
+            elif u.path == "/ls":
+                self._dispatch(lambda: do_ls(one(q, "id"), one(q, "path")))
+            elif u.path == "/search":
+                self._dispatch(lambda: do_search(one(q, "id"), one(q, "path"),
+                                                 one(q, "q"), int(one(q, "limit", "400"))))
+            elif u.path == "/localize":
+                self._dispatch(lambda: do_localize(one(q, "id"), one(q, "path")))
+            else:
+                self._send(404, {"detail": "not found"})
+
+        def do_POST(self):
+            last_hit[0] = time.time()
+            u = urlparse(self.path)
+            q = parse_qs(u.query)
+            if not self._guard(u, q):
+                return
+            if u.path == "/upload":
+                n = int(self.headers.get("Content-Length") or 0)
+                self._dispatch(lambda: do_upload(one(q, "id"), one(q, "dir"),
+                                                 one(q, "name"), self.rfile, n))
+                return
+            parts = [p for p in u.path.split("/") if p]
+            if parts[:1] == ["machines"] and len(parts) == 3:
+                mid, verb = parts[1], parts[2]
+                if verb == "update":
+                    self._dispatch(lambda: do_update(mid, self._body()))
+                elif verb == "remove":
+                    self._dispatch(lambda: do_remove(mid))
+                elif verb == "hide":
+                    self._dispatch(lambda: do_hide(mid))
+                elif verb == "unhide":
+                    self._dispatch(lambda: do_unhide(mid))
+                else:
+                    self._send(404, {"detail": "not found"})
+                return
+            if u.path == "/machines/add":
+                self._dispatch(lambda: do_add(self._body()))
+            elif u.path == "/connect":
+                self._dispatch(lambda: do_connect(one(q, "id")))
+            elif u.path == "/probe":
+                self._dispatch(lambda: do_probe(one(q, "id")))
+            elif u.path == "/reach":
+                self._dispatch(lambda: do_reach(one(q, "id")))
+            elif u.path == "/disconnect":
+                self._dispatch(lambda: (drop_conn(one(q, "id")), {"ok": True})[1])
+            elif u.path == "/mkdir":
+                self._dispatch(lambda: do_mkdir(one(q, "id"), one(q, "path")))
+            elif u.path == "/rename":
+                self._dispatch(lambda: do_rename(one(q, "id"), one(q, "src"), one(q, "dst")))
+            elif u.path == "/copy":
+                self._dispatch(lambda: do_copy(one(q, "id"), one(q, "src"), one(q, "dst")))
+            elif u.path == "/delete":
+                self._dispatch(lambda: do_delete(one(q, "id"), one(q, "path")))
+            else:
+                self._send(404, {"detail": "not found"})
+
+        def _download(self, mid, path):
+            try:
+                c = get_conn(mid)
+                with c["tlock"]:
+                    size = tsftp(c).stat(path).st_size or 0
+                    f = tsftp(c).open(path, "rb")
+                    f.prefetch()
+            except Http as e:
+                self._send(e.code, {"detail": e.detail})
+                return
+            except Exception as e:
+                self._send(500, {"detail": str(e) or type(e).__name__})
+                return
+            name = posixpath.basename(path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self._cors()
+            self.end_headers()
+            try:
+                with c["tlock"], f:
+                    while True:
+                        chunk = f.read(256 * 1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    srv.daemon_threads = True
+    port = srv.server_address[1]
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     with open(STATE, "w", encoding="utf-8") as f:
-        json.dump({"port": port, "version": VERSION, "pid": os.getpid()}, f)
+        json.dump({"port": port, "token": TOKEN, "version": VERSION,
+                   "pid": os.getpid()}, f)
 
     def idle_watch():
         while True:
             time.sleep(60)
             if open_terms[0] == 0 and time.time() - last_hit[0] > IDLE_EXIT_S:
-                os._exit(0)
-
+                srv.shutdown()
+                return
     threading.Thread(target=idle_watch, daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    print(f"vps stdlib daemon on 127.0.0.1:{port} (v{VERSION})", flush=True)
+    srv.serve_forever()
+
+
+class _Limited:
+    """Exactly `length` bytes off a socket stream — paramiko's putfo would otherwise
+    read past the request body into the next keep-alive request."""
+
+    def __init__(self, stream, length):
+        self.stream = stream
+        self.left = length
+
+    def read(self, n=-1):
+        if self.left <= 0:
+            return b""
+        want = self.left if n is None or n < 0 else min(n, self.left)
+        data = self.stream.read(want)
+        self.left -= len(data)
+        return data
 
 
 if __name__ == "__main__":

@@ -28,11 +28,17 @@ live paramiko connections, shuts down after 30 minutes idle, and works
 unchanged on Windows, Linux and macOS (same `~/.ssh` paths on all three; only
 the system-wide config directory differs).
 
+The daemon is standard-library only: `ThreadingHTTPServer` serves the REST
+routes and a hand-rolled RFC 6455 WebSocket carries the terminal, so
+[paramiko](https://www.paramiko.org/) is the only third-party import — no
+FastAPI, no uvicorn. Every route but `/ping` is guarded by a per-daemon token
+handed back from `ensure()`, since loopback plus open CORS is not an access
+boundary on its own.
+
 ## Setup
 
-The daemon uses [paramiko](https://www.paramiko.org/) + FastAPI + uvicorn. The
-built-in runPython executor doesn't auto-install dependencies, so install them
-once into the interpreter running fused-render:
+The built-in runPython executor doesn't auto-install dependencies, so install
+paramiko once into the interpreter running fused-render:
 
 ```
 python install.py
