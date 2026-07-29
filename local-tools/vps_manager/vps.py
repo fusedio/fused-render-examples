@@ -543,27 +543,46 @@ def _serve():
             except Exception:
                 pass
 
-    def drop_conn(mid):
+    def close_conn(c):
+        """Hang up a connection and everything it was reached through."""
+        try:
+            c["client"].close()
+        except Exception:
+            pass
+        close_jumps(c["jumps"])
+
+    def drop_conn(mid, only=None):
+        """Hang up `mid`'s connection, if it has one.
+
+        `only` pins it to one particular connection object: a caller that found a
+        dead session and wants it gone must not close the live one that another
+        thread dialled for the same machine in the meantime."""
         with conns_lock:
-            c = conns.pop(mid, None)
-        if c:
-            try:
-                c["client"].close()
-            except Exception:
-                pass
-            close_jumps(c["jumps"])
+            c = conns.get(mid)
+            if c is None or (only is not None and c is not only):
+                return
+            del conns[mid]
+        close_conn(c)
 
     def live_conn(mid):
         """The connection for `mid` if its transport is up, else None.
 
         One dict lookup, so a drop_conn() in another thread — an edit, a remove,
         a hide — can't land between a liveness check and the fetch and turn an
-        in-flight request into a KeyError."""
+        in-flight request into a KeyError.
+
+        A dead one is hung up here and now. Its own session is already gone, but
+        the hops it was reached through are still live sessions on the bastion,
+        and nothing else would notice them until this machine is dialled again or
+        the daemon idles out half an hour later."""
         c = conns.get(mid)
         if not c:
             return None
         t = c["client"].get_transport()
-        return c if (t and t.is_active()) else None
+        if t and t.is_active():
+            return c
+        drop_conn(mid, only=c)
+        return None
 
     def is_connected(mid):
         return live_conn(mid) is not None
@@ -642,37 +661,41 @@ def _serve():
         if not keys or m.get("guessed"):
             attempts.append(("", None, True))
         jumps, err = [], None
-        for path, pkey, agent in attempts:
-            sock = None
-            if m.get("proxy_jump"):
-                if depth >= 3:
-                    raise Http(400, "ProxyJump chain is too long")
-                if not jumps:
-                    hop, earlier, _ = open_client(jump_machine(m["proxy_jump"]),
-                                                  depth + 1)
-                    jumps = earlier + [hop]
-                sock = jumps[-1].get_transport().open_channel(
-                    "direct-tcpip", (m["host"], port), ("127.0.0.1", 0))
-            client = paramiko.SSHClient()
-            client.load_system_host_keys()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            try:
-                client.connect(m["host"], port=port, username=m["username"],
-                               pkey=pkey, password=pw, sock=sock,
-                               look_for_keys=not (pkey or pw),
-                               allow_agent=agent and not pw,
-                               timeout=8, auth_timeout=12, banner_timeout=12)
-            except paramiko.AuthenticationException as e:
-                err = e
-                client.close()
-                continue
-            except Exception:
-                close_jumps(jumps)
-                raise
-            client.get_transport().set_keepalive(20)
-            return client, jumps, path
-        close_jumps(jumps)
-        raise err
+        # One handler for the whole dial, because everything in here can fail
+        # after the hops are up — the channel to the target, a hop of the hop, the
+        # depth guard, the last attempt running out of keys. Closing the chain at
+        # each of those sites is how one of them ends up forgotten.
+        try:
+            for path, pkey, agent in attempts:
+                sock = None
+                if m.get("proxy_jump"):
+                    if depth >= 3:
+                        raise Http(400, "ProxyJump chain is too long")
+                    if not jumps:
+                        hop, earlier, _ = open_client(jump_machine(m["proxy_jump"]),
+                                                      depth + 1)
+                        jumps = earlier + [hop]
+                    sock = jumps[-1].get_transport().open_channel(
+                        "direct-tcpip", (m["host"], port), ("127.0.0.1", 0))
+                client = paramiko.SSHClient()
+                client.load_system_host_keys()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                try:
+                    client.connect(m["host"], port=port, username=m["username"],
+                                   pkey=pkey, password=pw, sock=sock,
+                                   look_for_keys=not (pkey or pw),
+                                   allow_agent=agent and not pw,
+                                   timeout=8, auth_timeout=12, banner_timeout=12)
+                except paramiko.AuthenticationException as e:
+                    err = e
+                    client.close()
+                    continue
+                client.get_transport().set_keepalive(20)
+                return client, jumps, path
+            raise err
+        except BaseException:
+            close_jumps(jumps)
+            raise
 
     def dial_lock(mid):
         with conns_lock:
