@@ -393,6 +393,11 @@ function toast(msg, isErr) {
 function url(path) {
   return BASE + path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(TOK);
 }
+// A machine id carries the ssh-config alias or the known_hosts host verbatim, so
+// it can hold anything those files allow. The daemon parses the query with
+// parse_qs, which reads a "+" as a space and an "&" as the next parameter, so ids
+// never go in raw.
+function idq(id) { return "id=" + encodeURIComponent(id); }
 async function api(path, opts) {
   const res = await fetch(url(path), opts);
   const text = await res.text();
@@ -569,7 +574,7 @@ async function rowAction(act, m) {
 // ---------- login check ----------
 async function probeOne(id) {
   try {
-    const r = await api("/probe?id=" + id, { method: "POST" });
+    const r = await api("/probe?" + idq(id), { method: "POST" });
     if (!r.ok) { markMachine(id, "down", { error: r.error }); return false; }
     markMachine(id, "up", { ms: r.ms, sftp: r.sftp,
       detail: r.detail || (r.shell ? "signed in" : "signed in · no shell") });
@@ -598,7 +603,7 @@ async function reachAll() {
     while (next < list.length) {
       const m = list[next++];
       try {
-        const r = await api("/reach?id=" + m.id, { method: "POST" });
+        const r = await api("/reach?" + idq(m.id), { method: "POST" });
         if (r.ok) markMachine(m.id, "live", { banner: r.banner, ms: r.ms });
         else markMachine(m.id, "down", { error: r.error });
       } catch (e) {
@@ -614,7 +619,7 @@ async function useKnown(m) {
   setStatus("busy", "trying " + m.username + "@" + m.host + "…");
   let r;
   try {
-    r = await api("/probe?id=" + m.id, { method: "POST" });
+    r = await api("/probe?" + idq(m.id), { method: "POST" });
   } catch (e) {
     r = { ok: false, error: e.message };
   }
@@ -631,6 +636,10 @@ async function useKnown(m) {
   const added = (await api("/machines/add", jsonBody({
     name: m.host, host: m.host, port: m.port,
     username: r.username, key_path: r.key_path }))).machine;
+  // the probe signed in under the throwaway kh: id, and the machine we just
+  // saved has a new one — so close that session before opening the real one,
+  // or the box holds two until the daemon idles out half an hour later
+  try { await api("/disconnect?" + idq(m.id), { method: "POST" }); } catch {}
   probes.delete(m.id);
   probes.set(added.id, { state: "up", detail: r.detail, ms: r.ms, sftp: r.sftp });
   setStatus("ok", "ready");
@@ -689,7 +698,7 @@ async function selectMachine(id) {
   setConnState("pending", "connecting…");
   markMachine(id, "pending");
   try {
-    const r = await api("/connect?id=" + id, { method: "POST" });
+    const r = await api("/connect?" + idq(id), { method: "POST" });
     if (current !== id) return;   // switched away while connecting
     cwd = warm ? remembered : r.home;
     setConnState("ok", "connected");
@@ -776,7 +785,7 @@ async function loadDir(path, keepSearch, fresh) {
   if (cached) renderDir(cached);
   else list.innerHTML = '<div class="files-empty">Loading…</div>';
   try {
-    const r = await api("/ls?id=" + id + "&path=" + encodeURIComponent(path || ""));
+    const r = await api("/ls?" + idq(id) + "&path=" + encodeURIComponent(path || ""));
     if (seq !== dirSeq || id !== current) return;   // superseded by a later click
     cacheDir(id, key, r);
     if (!cached || JSON.stringify(cached) !== JSON.stringify(r)) renderDir(r);
@@ -792,7 +801,7 @@ async function prefetchDir(path) {
   if (!id || dirCache.has(key) || prefetching.has(key)) return;
   prefetching.add(key);
   try {
-    cacheDir(id, key, await api("/ls?id=" + id + "&path=" + encodeURIComponent(path)));
+    cacheDir(id, key, await api("/ls?" + idq(id) + "&path=" + encodeURIComponent(path)));
   } catch {}
   prefetching.delete(key);
 }
@@ -835,7 +844,7 @@ async function runSearch(q) {
   const list = document.getElementById("filelist");
   list.innerHTML = '<div class="files-empty">Searching…</div>';
   try {
-    const r = await api("/search?id=" + current + "&path=" + encodeURIComponent(cwd) +
+    const r = await api("/search?" + idq(current) + "&path=" + encodeURIComponent(cwd) +
                         "&q=" + encodeURIComponent(q));
     if (seq !== searchSeq) return;   // a newer keystroke superseded this
     renderCrumbs(cwd);
@@ -922,22 +931,22 @@ function fileRow(e) {
 }
 async function renameEntry(full, name) {
   const nn = prompt("Rename to:", name); if (!nn || nn === name) return;
-  await fileOp("/rename?id=" + current + "&src=" + encodeURIComponent(full) +
+  await fileOp("/rename?" + idq(current) + "&src=" + encodeURIComponent(full) +
                "&dst=" + encodeURIComponent(join(dirOf(full), nn)), "Renamed");
 }
 async function moveEntry(full, name) {
   const dst = prompt("Move to (absolute path or new name):", full); if (!dst) return;
   const target = dst.startsWith("/") ? dst : join(dirOf(full), dst);
-  await fileOp("/rename?id=" + current + "&src=" + encodeURIComponent(full) + "&dst=" + encodeURIComponent(target), "Moved");
+  await fileOp("/rename?" + idq(current) + "&src=" + encodeURIComponent(full) + "&dst=" + encodeURIComponent(target), "Moved");
 }
 async function copyEntry(full, name) {
   const dst = prompt("Copy to (absolute path or new name):", join(dirOf(full), "copy-of-" + name)); if (!dst) return;
   const target = dst.startsWith("/") ? dst : join(dirOf(full), dst);
-  await fileOp("/copy?id=" + current + "&src=" + encodeURIComponent(full) + "&dst=" + encodeURIComponent(target), "Copied");
+  await fileOp("/copy?" + idq(current) + "&src=" + encodeURIComponent(full) + "&dst=" + encodeURIComponent(target), "Copied");
 }
 async function deleteEntry(full, name, isDir) {
   if (!confirm("Delete " + (isDir ? "folder" : "file") + " \"" + name + "\"?" + (isDir ? "\nThis removes everything inside it." : ""))) return;
-  await fileOp("/delete?id=" + current + "&path=" + encodeURIComponent(full), "Deleted");
+  await fileOp("/delete?" + idq(current) + "&path=" + encodeURIComponent(full), "Deleted");
 }
 async function fileOp(path, okMsg) {
   try { await api(path, { method: "POST" }); toast(okMsg); loadDir(cwd, false, true); }
@@ -945,7 +954,7 @@ async function fileOp(path, okMsg) {
 }
 async function downloadFile(full, name) {
   try {
-    const res = await fetch(url("/download?id=" + current + "&path=" + encodeURIComponent(full)));
+    const res = await fetch(url("/download?" + idq(current) + "&path=" + encodeURIComponent(full)));
     if (!res.ok) throw new Error(await res.text());
     const blob = await res.blob();
     const a = document.createElement("a");
@@ -957,7 +966,7 @@ document.getElementById("upBtn").onclick = () => { const p = cwd.replace(/\/[^/]
 document.getElementById("refreshBtn").onclick = () => loadDir(cwd, false, true);
 document.getElementById("mkdirBtn").onclick = async () => {
   const nn = prompt("New folder name:"); if (!nn) return;
-  await fileOp("/mkdir?id=" + current + "&path=" + encodeURIComponent(join(cwd, nn)), "Folder created");
+  await fileOp("/mkdir?" + idq(current) + "&path=" + encodeURIComponent(join(cwd, nn)), "Folder created");
 };
 document.getElementById("uploadBtn").onclick = () => document.getElementById("fileInput").click();
 document.getElementById("fileInput").onchange = async ev => {
@@ -966,7 +975,7 @@ document.getElementById("fileInput").onchange = async ev => {
   try {
     // raw body rather than multipart — nothing here parses multipart, and the
     // daemon streams the request straight into SFTP
-    await api("/upload?id=" + current + "&dir=" + encodeURIComponent(cwd) +
+    await api("/upload?" + idq(current) + "&dir=" + encodeURIComponent(cwd) +
               "&name=" + encodeURIComponent(f.name), { method: "POST", body: f });
     toast("Uploaded " + f.name); loadDir(cwd, false, true);
   } catch (e) { toast("Upload failed: " + e.message, true); }
@@ -1003,7 +1012,7 @@ async function previewFile(full, name, size) {
   frame.src = "about:blank";
   overlay('<div class="spin"></div><div>Loading ' + esc(name) + '…</div>');
   try {
-    const r = await api("/localize?id=" + current + "&path=" + encodeURIComponent(full));
+    const r = await api("/localize?" + idq(current) + "&path=" + encodeURIComponent(full));
     if (full !== previewPath) return;   // user clicked another file meanwhile
     previewLocal = r.local_path;
     frame.onload = () => { if (frame.src !== "about:blank") overlay(null); };
@@ -1055,7 +1064,7 @@ function connectTerm() {
   term.reset();
   termedId = current;
   document.getElementById("termStatus").textContent = "connecting…";
-  ws = new WebSocket(url("/term?id=" + current + "&cols=" + term.cols +
+  ws = new WebSocket(url("/term?" + idq(current) + "&cols=" + term.cols +
                          "&rows=" + term.rows).replace("http", "ws"));
   // shell output arrives as binary — a multibyte character can straddle two
   // frames, and xterm.js is the thing that decodes across that boundary

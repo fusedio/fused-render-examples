@@ -908,29 +908,36 @@ def _serve():
         GNU find reports type, size and mtime in the same pass via -printf. Where
         that isn't supported, a second -print pass marks the directories: paths
         and folder-ness are POSIX, size and mtime aren't, so those come back blank
-        rather than the whole search reporting nothing found."""
+        rather than the whole search reporting nothing found.
+
+        Either way a symlink is classified by what it points AT, because /ls
+        resolves link targets with stat() — otherwise a link to a folder would
+        open as a folder while browsing and as a file from search."""
         q = q.strip()
         if not q:
             return {"entries": [], "truncated": False}
         c = get_conn(mid)
-        find = (f"find {shlex.quote(path)} -maxdepth 8 "
+        walk = (f"{shlex.quote(path)} -maxdepth 8 "
                 f"-iname {shlex.quote('*' + q + '*')}")
         cap = f"2>/dev/null | head -n {int(limit)}"
         found = []            # (path, is_dir, is_link, size, mtime)
         if gnu_find(c):
-            out = sh_soft(c, f"{find} -printf '%y\\t%s\\t%T@\\t%p\\n' {cap}")
+            # %y is the entry itself, %Y what it resolves to (L/N/? if broken)
+            out = sh_soft(c, f"find {walk} -printf '%y\\t%Y\\t%s\\t%T@\\t%p\\n' {cap}")
             for line in out.splitlines():
-                parts = line.split("\t", 3)
-                if len(parts) != 4:
+                parts = line.split("\t", 4)
+                if len(parts) != 5:
                     continue
-                typ, size, mtime, p = parts
-                found.append((p, typ == "d", typ == "l",
+                typ, target, size, mtime, p = parts
+                found.append((p, target == "d", typ == "l",
                               int(size) if size.isdigit() else 0,
                               int(float(mtime)) if mtime else 0))
         else:
-            dirs = set(sh_soft(c, f"{find} -type d -print {cap}").splitlines())
+            # -L on the type pass only, so a link to a folder counts as one while
+            # the enumeration itself still lists the links rather than their targets
+            dirs = set(sh_soft(c, f"find -L {walk} -type d -print {cap}").splitlines())
             found = [(p, p in dirs, False, 0, 0)
-                     for p in sh_soft(c, f"{find} -print {cap}").splitlines()]
+                     for p in sh_soft(c, f"find {walk} -print {cap}").splitlines()]
         entries = [{"name": posixpath.basename(p), "path": p, "is_dir": is_dir,
                     "is_link": is_link, "size": size, "mtime": mtime}
                    for p, is_dir, is_link, size, mtime in found if p != path]
