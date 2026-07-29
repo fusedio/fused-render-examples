@@ -342,6 +342,12 @@
       <div class="hint">Path to a private key on this machine. Leave blank to use a password or the SSH agent.</div>
     </div>
     <div class="field">
+      <label>Jump host <span style="text-transform:none;color:var(--ink-3)">(optional)</span></label>
+      <input id="fJump" placeholder="bastion.example.com" autocomplete="off">
+      <div class="hint">Dial through this host first, like ssh's <code>ProxyJump</code>. Copied
+        from the config host when you make an editable copy; clear it to connect directly.</div>
+    </div>
+    <div class="field">
       <label>Password <span style="text-transform:none;color:var(--ink-3)">(optional)</span></label>
       <input id="fPass" type="password" placeholder="leave blank if using a key" autocomplete="new-password">
     </div>
@@ -634,8 +640,8 @@ async function useKnown(m) {
     return;
   }
   const added = (await api("/machines/add", jsonBody({
-    name: m.host, host: m.host, port: m.port,
-    username: r.username, key_path: r.key_path }))).machine;
+    name: m.host, host: m.host, port: m.port, username: r.username,
+    key_path: r.key_path, proxy_jump: m.proxy_jump || "" }))).machine;
   // the probe signed in under the throwaway kh: id, and the machine we just
   // saved has a new one — so close that session before opening the real one,
   // or the box holds two until the daemon idles out half an hour later
@@ -1094,6 +1100,7 @@ function openModal(m, asCopy) {
   document.getElementById("fPort").value = m ? m.port : "22";
   document.getElementById("fUser").value = m ? m.username : "";
   document.getElementById("fKey").value = m ? (m.key_path || "") : "";
+  document.getElementById("fJump").value = m ? (m.proxy_jump || "") : "";
   document.getElementById("fPass").value = "";
   document.getElementById("fPass").placeholder = editingId ? "unchanged" : "leave blank if using a key";
   document.getElementById("modalErr").className = "modal-err";
@@ -1111,6 +1118,7 @@ document.getElementById("modalSave").onclick = async () => {
     port: document.getElementById("fPort").value.trim() || "22",
     username: document.getElementById("fUser").value.trim(),
     key_path: document.getElementById("fKey").value.trim(),
+    proxy_jump: document.getElementById("fJump").value.trim(),
     password: document.getElementById("fPass").value,
   };
   if (!body.host || !body.username) {

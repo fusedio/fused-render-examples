@@ -504,6 +504,12 @@ def _serve():
             twin = by_endpoint.get(endpoint(m))
             if twin is not None:
                 twin["from_config"] = m["name"]
+                # This entry hides the alias, so it has to carry the alias's jump
+                # host or the box goes from reachable to unreachable. A missing key
+                # means it was saved before we stored one; an empty string means
+                # the user cleared it on purpose, and that is left alone.
+                if "proxy_jump" not in twin and m.get("proxy_jump"):
+                    twin["proxy_jump"] = m["proxy_jump"]
                 continue
             (hidden if m["name"] in reg["hidden"] else out).append(m)
         return out + added, hidden, err
@@ -758,6 +764,7 @@ def _serve():
              "port": int(body.get("port") or 22),
              "username": (body.get("username") or "").strip(),
              "key_path": (body.get("key_path") or "").strip(),
+             "proxy_jump": (body.get("proxy_jump") or "").strip(),
              "password": body.get("password") or ""}
         if not m["host"] or not m["username"]:
             raise Http(400, "host and username are required")
@@ -786,7 +793,7 @@ def _serve():
             ms = load_machines()
             for m in ms:
                 if m["id"] == mid:
-                    for k in ("name", "host", "username", "key_path"):
+                    for k in ("name", "host", "username", "key_path", "proxy_jump"):
                         if k in body:
                             m[k] = (body.get(k) or "").strip()
                     if "port" in body:
