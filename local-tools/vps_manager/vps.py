@@ -478,6 +478,26 @@ def _serve():
     # can lose a decrement and leave this stuck above 0, which means idle
     # shutdown (below) never fires again for the life of the daemon.
     open_terms_lock = threading.Lock()
+    # last_hit is stamped once, when a request STARTS — a download, upload, or
+    # localize that runs longer than the idle window looks identical to actual
+    # idleness to a check that only reads last_hit, so idle_watch (below) would
+    # shut the daemon down mid-transfer. This is the same "count what's still
+    # busy" fix as open_terms, for the transfers instead of the terminals.
+    long_ops = [0]
+    long_ops_lock = threading.Lock()
+
+    class Busy:
+        def __enter__(self):
+            with long_ops_lock:
+                long_ops[0] += 1
+
+        def __exit__(self, *exc):
+            with long_ops_lock:
+                long_ops[0] -= 1
+            # so the idle clock restarts from when the transfer actually ended,
+            # not from last_hit's stamp at its START — otherwise a transfer that
+            # ran most of the idle window could trip the very next check
+            last_hit[0] = time.time()
 
     # ---- machine registry ----
     reg_lock = threading.Lock()
@@ -1175,14 +1195,29 @@ def _serve():
                               int(size) if size.isdigit() else None,
                               int(float(mtime)) if mtime else None))
         else:
-            # -L on the type pass only, so a link to a folder counts as one while
-            # the enumeration itself still lists the links rather than their targets
-            dirs = set(sh_soft(c, f"find -L {walk} -type d -print {cap}").splitlines())
+            # A directories-only pass over the SAME tree, capped the same way,
+            # sounds equivalent to filtering the full listing — it isn't. -L
+            # makes it follow a matching symlink-to-a-directory and walk
+            # everything inside, which the non-L full listing never descends
+            # into; that can push a real directory past ITS OWN head -n limit
+            # while the full listing (shorter, since it didn't recurse there)
+            # still shows that directory within the visible results — filed as
+            # a file, because it never made it into `dirs`.
+            #
+            # Testing exactly the paths already matched can't have this
+            # problem: nothing is re-walked, so there's no second cap to
+            # disagree with the first.
+            matches = sh_soft(c, f"find {walk} -print {cap}").splitlines()
+            if matches:
+                paths = " ".join(shlex.quote(p) for p in matches)
+                dirs = set(sh_soft(c, f"find -L {paths} -maxdepth 0 -type d "
+                                      f"-print 2>/dev/null").splitlines())
+            else:
+                dirs = set()
             # size/mtime are None, not 0 — 0 would read as "confirmed empty" and
             # the page uses that to skip asking before downloading a huge file
             # for preview. None means "not measured", which is the truth here.
-            found = [(p, p in dirs, False, None, None)
-                     for p in sh_soft(c, f"find {walk} -print {cap}").splitlines()]
+            found = [(p, p in dirs, False, None, None) for p in matches]
         entries = [{"name": posixpath.basename(p), "path": p, "is_dir": is_dir,
                     "is_link": is_link, "size": size, "mtime": mtime}
                    for p, is_dir, is_link, size, mtime in found if p != path]
@@ -1210,7 +1245,11 @@ def _serve():
         return {"ok": True}
 
     def do_delete(mid, path):
-        if path.rstrip("/") in ("", "/"):
+        # normpath first: the raw string "/home/.." isn't "/", but it's where
+        # rm -rf would land — comparing the un-normalized path only catches
+        # someone who typed "/" itself, not ".." dressed up to reach the same
+        # place.
+        if not posixpath.normpath(path or "/").rstrip("/"):
             raise Http(400, "refusing to delete /")
         c = get_conn(mid)
         sh(c, f"rm -rf -- {shlex.quote(path)}")
@@ -1230,7 +1269,7 @@ def _serve():
         dest = os.path.join(dest_dir, base)
         if not (os.path.isfile(dest) and os.path.getsize(dest) == size):
             os.makedirs(dest_dir, exist_ok=True)
-            with c["tlock"]:
+            with Busy(), c["tlock"]:
                 f = tsftp(c).open(path, "rb")
                 try:
                     f.prefetch()
@@ -1251,7 +1290,7 @@ def _serve():
         we raise before reaching the end of the upload."""
         c = get_conn(mid)
         dst = posixpath.join(directory, os.path.basename(name or "upload"))
-        with c["tlock"]:
+        with Busy(), c["tlock"]:
             tsftp(c).putfo(limited, dst, file_size=length)
         return {"ok": True, "path": dst}
 
@@ -1526,7 +1565,7 @@ def _serve():
             # reading ahead on it in the background — so tlock covers the open
             # AND the streaming, never just the open. Listings are unaffected:
             # they run on the other channel, under c["lock"].
-            with c["tlock"]:
+            with Busy(), c["tlock"]:
                 f = None
                 try:
                     t = tsftp(c)
@@ -1573,7 +1612,8 @@ def _serve():
     def idle_watch():
         while True:
             time.sleep(60)
-            if open_terms[0] == 0 and time.time() - last_hit[0] > IDLE_EXIT_S:
+            if open_terms[0] == 0 and long_ops[0] == 0 and \
+                    time.time() - last_hit[0] > IDLE_EXIT_S:
                 srv.shutdown()
                 return
     threading.Thread(target=idle_watch, daemon=True).start()
