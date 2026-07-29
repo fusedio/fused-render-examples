@@ -214,11 +214,29 @@ def ssh_private_keys(limit=6):
 
 
 def _host_port(token):
-    """`host`, `[host]:port` -> (host, port)."""
+    """`host`, `[host]:port` -> (host, port). The known_hosts grammar, where a
+    port is always bracketed."""
     if token.startswith("["):
         host, _, port = token[1:].partition("]:")
         return host, int(port) if port.isdigit() else 22
     return token, 22
+
+
+def _jump_host_port(token):
+    """ssh's ProxyJump host form -> (host, port or None).
+
+    A different grammar from known_hosts above, so that one can't just be reused:
+    ProxyJump writes the port unbracketed as `host:port`, and needs the brackets
+    only to tell a port apart from the colons in an IPv6 literal. Hence the
+    colon count — `[v6]:port`, `host:port`, or a bare host, which covers both
+    `example.com` and an unbracketed `2001:db8::1`."""
+    if token.startswith("["):
+        host, _, port = token[1:].partition("]:")
+        return host.rstrip("]"), int(port) if port.isdigit() else None
+    if token.count(":") == 1:
+        host, _, port = token.partition(":")
+        return host, int(port) if port.isdigit() else None
+    return token, None
 
 
 def _known_machine(cfg, keys, host, port):
@@ -540,15 +558,28 @@ def _serve():
         return [p for p in (os.path.expanduser(k) for k in paths) if os.path.isfile(p)]
 
     def jump_machine(spec):
-        """Resolve a ProxyJump target ([user@]host[:port]) through ~/.ssh/config."""
+        """Resolve a ProxyJump value into the machine to dial for it.
+
+        `spec` is ssh's [user@]host[:port], or a comma-separated chain. In
+        "a,b" the target is reached through b and b through a, so the LAST hop
+        is the one nearest the target: that becomes this machine, and everything
+        before it becomes its own ProxyJump, which open_client() then resolves
+        the same way (bounded by its depth guard). A hop that is itself a config
+        alias with a ProxyJump of its own is followed too, as ssh would."""
         cfg, _ = _parse_config()
-        user, _, rest = spec.rpartition("@")
-        host, _, port = rest.partition(":")
+        hops = [s.strip() for s in spec.split(",") if s.strip()]
+        if not hops:
+            raise Http(400, "empty ProxyJump")
+        earlier, last = hops[:-1], hops[-1]
+        user, _, hostport = last.rpartition("@")
+        host, port = _jump_host_port(hostport)
         h = cfg.lookup(host)
-        return {"name": spec, "host": h.get("hostname") or host,
+        return {"name": last, "host": h.get("hostname") or host,
                 "port": int(port or h.get("port") or 22),
                 "username": user or h.get("user") or getpass.getuser(),
-                "key_paths": [os.path.expanduser(k) for k in h.get("identityfile") or []]}
+                "key_paths": [os.path.expanduser(k) for k in h.get("identityfile") or []],
+                "proxy_jump": ",".join(earlier) or h.get("proxyjump") or "",
+                "proxy_command": h.get("proxycommand") or ""}
 
     def open_client(m, depth=0):
         """Connect to one machine, hopping through its ProxyJump if it has one.
