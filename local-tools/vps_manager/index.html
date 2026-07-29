@@ -598,8 +598,9 @@ async function loadKnown() {
   renderMachines();
 }
 
-// TCP only — known_hosts doesn't say who to log in as, so signing in to every one
-// of them would be guesswork. The banner is enough to tell a live box from a dead one.
+// The banner only — known_hosts doesn't say who to log in as, so signing in to every
+// one of them would be guesswork, and the banner tells a live box from a dead one.
+// One behind a ProxyJump is read through its hop, since its address means nothing here.
 async function reachAll() {
   const list = knownHosts.slice();
   for (const m of list) probes.set(m.id, { state: "pending" });

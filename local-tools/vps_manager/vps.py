@@ -33,7 +33,8 @@ Endpoints (CORS *; every route but /ping requires `?t=<token>`):
   GET  /known?limit=               -> {hosts: [machine], total, hashed, path}
   POST /connect?id=                -> {"ok", "home", "sftp"}  (400 with reason)
   POST /probe?id=                  -> {"ok", "ms", "shell", "sftp", "detail"}
-  POST /reach?id=                  -> {"ok", "ms", "banner"}  (TCP only, no login)
+  POST /reach?id=                  -> {"ok", "ms", "banner"}  (banner only, no
+                                      login — except on a ProxyJump host's hop)
   POST /disconnect?id=             -> {"ok"}
   GET  /ls?id=&path=               -> {path, parent, home, entries: [{name,
                                        is_dir, is_link, size, mtime}]}
@@ -568,8 +569,25 @@ def _serve():
         return live_conn(mid) is not None
 
     def keys_of(m):
+        """The machine's key files, loaded, as (path, key) — unreadable ones dropped.
+
+        Loading them here rather than handing paramiko a key_filename is what
+        makes a refusal legible. Given a filename it guesses the type by trying
+        RSA, ECDSA and Ed25519 in turn and keeps only the LAST error, so a key
+        the server simply refused comes back as "encountered RSA key, expected
+        OPENSSH key" — an SSHException rather than an auth failure, which reads
+        as a broken connection and stops us trying the rest of the keys.
+        from_path() reads the type off the file instead."""
         paths = m.get("key_paths") or ([m["key_path"]] if m.get("key_path") else [])
-        return [p for p in (os.path.expanduser(k) for k in paths) if os.path.isfile(p)]
+        out = []
+        for path in (os.path.expanduser(k) for k in paths):
+            if not os.path.isfile(path):
+                continue
+            try:
+                out.append((path, paramiko.PKey.from_path(path)))
+            except Exception:
+                continue      # passphrase-protected, or a format paramiko can't read
+        return out
 
     def jump_machine(spec):
         """Resolve a ProxyJump value into the machine to dial for it.
@@ -614,9 +632,17 @@ def _serve():
         port = int(m.get("port") or 22)
         keys = keys_of(m)
         pw = m.get("password") or None
-        attempts = [None] + [[k] for k in keys] if m.get("guessed") else [keys or None]
+        # (path, key, may the agent answer instead). A guess has no recorded
+        # identity, so its keys go one per connection — with the agent held back,
+        # because an agent key answering for the key we offered would have us
+        # record a path that signed nothing in. The agent gets its turn last, and
+        # the empty path it reports honestly says "no key of yours worked, the
+        # agent did".
+        attempts = [(p, k, not m.get("guessed")) for p, k in keys]
+        if not keys or m.get("guessed"):
+            attempts.append(("", None, True))
         jumps, err = [], None
-        for keyfile in attempts:
+        for path, pkey, agent in attempts:
             sock = None
             if m.get("proxy_jump"):
                 if depth >= 3:
@@ -632,8 +658,9 @@ def _serve():
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             try:
                 client.connect(m["host"], port=port, username=m["username"],
-                               key_filename=keyfile, password=pw, sock=sock,
-                               look_for_keys=not (keyfile or pw), allow_agent=not pw,
+                               pkey=pkey, password=pw, sock=sock,
+                               look_for_keys=not (pkey or pw),
+                               allow_agent=agent and not pw,
                                timeout=8, auth_timeout=12, banner_timeout=12)
             except paramiko.AuthenticationException as e:
                 err = e
@@ -643,7 +670,7 @@ def _serve():
                 close_jumps(jumps)
                 raise
             client.get_transport().set_keepalive(20)
-            return client, jumps, (keyfile[0] if keyfile else "")
+            return client, jumps, path
         close_jumps(jumps)
         raise err
 
@@ -883,13 +910,31 @@ def _serve():
                 "username": c["username"], "key_path": c["key_used"]}
 
     def do_reach(mid):
-        """Is anything listening? TCP connect and read the SSH banner, no login."""
+        """Is anything listening? TCP connect and read the SSH banner, no login.
+
+        A machine behind a bastion has an address that means something there and
+        nothing here, so connecting straight to it would file a live box under
+        "not answering". Those are reached the way ssh reaches them, through the
+        hop — which does cost a login on the hop, but still none on the machine
+        being asked about, which is the whole point of this route."""
         m = get_machine(mid)
+        port = int(m.get("port") or 22)
         t0 = time.time()
+        jumps = []
         try:
-            s = socket.create_connection((m["host"], int(m.get("port") or 22)), timeout=4)
-        except OSError as e:
-            return {"ok": False, "error": e.strerror or str(e)}
+            if m.get("proxy_jump") and not m.get("proxy_command"):
+                hop, jumps, _ = open_client(jump_machine(m["proxy_jump"]))
+                jumps = jumps + [hop]
+                s = jumps[-1].get_transport().open_channel(
+                    "direct-tcpip", (m["host"], port), ("127.0.0.1", 0))
+            else:
+                s = socket.create_connection((m["host"], port), timeout=4)
+        except Exception as e:
+            close_jumps(jumps)
+            reason = getattr(e, "strerror", None) or str(e)
+            if m.get("proxy_jump"):
+                reason = f"via {m['proxy_jump']}: {reason}"   # which leg gave up
+            return {"ok": False, "error": reason}
         try:
             s.settimeout(4)
             banner = s.recv(255).decode("utf-8", "replace").strip().splitlines()
@@ -897,6 +942,7 @@ def _serve():
             banner = []
         finally:
             s.close()
+            close_jumps(jumps)
         version = banner[0].replace("SSH-2.0-", "").split()[0] if banner else ""
         return {"ok": True, "ms": int((time.time() - t0) * 1000), "banner": version}
 
