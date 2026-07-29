@@ -99,20 +99,22 @@ def _from_open_meteo(lat, lon, start_year, end_year):
 #  ERA5 Zarr on GCS — async: detached worker + on-disk cache + polling         #
 # --------------------------------------------------------------------------- #
 def _cap(start_year, end_year):
-    note = ""
-    if end_year - start_year + 1 > ZARR_MAX_YEARS:
-        start_year = end_year - ZARR_MAX_YEARS + 1
-        note = f"span capped to {ZARR_MAX_YEARS} yrs ({start_year}-{end_year}) for the cloud read"
     if end_year < ZARR_MIN_YEAR or start_year > ZARR_MAX_YEAR:
         raise RuntimeError(
             f"The ERA5 Zarr store only covers {ZARR_MIN_YEAR}-{ZARR_MAX_YEAR}; "
             f"{start_year}-{end_year} doesn't overlap it. Pick years in that range, "
             f"or use the Open-Meteo source (1940-present)."
         )
+    # clamp to the store's actual coverage FIRST, so the span cap below anchors
+    # on the store's real last year instead of a future end_year the store
+    # doesn't have (which would otherwise silently shrink the window)
     clamped_start, clamped_end = max(start_year, ZARR_MIN_YEAR), min(end_year, ZARR_MAX_YEAR)
-    if (clamped_start, clamped_end) != (start_year, end_year):
-        note = (note + "; " if note else "") + \
-            f"clamped to the store's {ZARR_MIN_YEAR}-{ZARR_MAX_YEAR} coverage"
+    note = f"clamped to the store's {ZARR_MIN_YEAR}-{ZARR_MAX_YEAR} coverage" \
+        if (clamped_start, clamped_end) != (start_year, end_year) else ""
+    if clamped_end - clamped_start + 1 > ZARR_MAX_YEARS:
+        clamped_start = clamped_end - ZARR_MAX_YEARS + 1
+        span_note = f"span capped to {ZARR_MAX_YEARS} yrs ({clamped_start}-{clamped_end}) for the cloud read"
+        note = f"{span_note}; {note}" if note else span_note
     return clamped_start, clamped_end, note
 
 

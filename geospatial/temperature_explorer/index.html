@@ -563,6 +563,7 @@
   const MONTH_LEN = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   const THIS_YEAR = new Date().getFullYear();
   const MIN_YEAR = 1940;
+  const ZARR_MIN_YEAR = 1959, ZARR_MAX_YEAR = 2023; // must match fetch_temps.py
 
   const state = {
     lat: 52.52, lon: 13.405, placeName: null, source: "open_meteo",
@@ -735,9 +736,12 @@
     if (document.activeElement !== y1in) y1in.value = state.y1;
     y0in.classList.remove("bad"); y1in.classList.remove("bad");
     yrCap.textContent = `${span} yr${span === 1 ? "" : "s"}`;
-    yrCap.title = state.source === "era5_zarr" && span > 5
-      ? `Zarr reads the last 5 years (${state.y1 - 4}–${state.y1})`
-      : `${state.y0}–${state.y1}`;
+    if (state.source === "era5_zarr" && span > 5) {
+      const cappedEnd = Math.min(state.y1, ZARR_MAX_YEAR);
+      yrCap.title = `Zarr reads the last 5 years of its coverage (${cappedEnd - 4}–${cappedEnd})`;
+    } else {
+      yrCap.title = `${state.y0}–${state.y1}`;
+    }
     markDirty();
     syncUrl();
   });
