@@ -1236,12 +1236,17 @@ def _serve():
             with c["lock"]:
                 sftp_of(c).rename(src, dst)
         except OSError:
-            sh(c, f"mv -- {shlex.quote(src)} {shlex.quote(dst)}")
+            # the SFTP rename failed (typically a cross-filesystem move, which
+            # SFTP's rename can't do), so this falls back to a shell mv that can
+            # run long enough to hit the same idle window as rm -rf/cp -a below
+            with Busy():
+                sh(c, f"mv -- {shlex.quote(src)} {shlex.quote(dst)}")
         return {"ok": True}
 
     def do_copy(mid, src, dst):
         c = get_conn(mid)
-        sh(c, f"cp -a -- {shlex.quote(src)} {shlex.quote(dst)}")
+        with Busy():
+            sh(c, f"cp -a -- {shlex.quote(src)} {shlex.quote(dst)}")
         return {"ok": True}
 
     def do_delete(mid, path):
@@ -1252,7 +1257,8 @@ def _serve():
         if not posixpath.normpath(path or "/").rstrip("/"):
             raise Http(400, "refusing to delete /")
         c = get_conn(mid)
-        sh(c, f"rm -rf -- {shlex.quote(path)}")
+        with Busy():
+            sh(c, f"rm -rf -- {shlex.quote(path)}")
         return {"ok": True}
 
     def do_localize(mid, path):
