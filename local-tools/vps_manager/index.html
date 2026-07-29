@@ -706,14 +706,21 @@ async function selectMachine(id) {
   markMachine(id, "pending");
   try {
     const r = await api("/connect?" + idq(id), { method: "POST" });
-    if (current !== id) return;   // switched away while connecting
+    if (current !== id) {
+      // switched away while connecting — the row for `id` was left showing
+      // "pending" when we set it above, and nothing else ever revisits it,
+      // so it has to be corrected here to what actually happened rather than
+      // sitting amber until some later full recheck
+      markMachine(id, "up", { sftp: r.sftp });
+      return;
+    }
     cwd = warm ? remembered : r.home;
     setConnState("ok", "connected");
     markMachine(id, "up", { sftp: r.sftp });
     if (!r.sftp) setView("terminal");
     if (view === "terminal") openTerminal(); else loadDir(cwd);
   } catch (e) {
-    if (current !== id) return;
+    if (current !== id) { markMachine(id, "down", { error: e.message }); return; }
     setConnState("err", "not available");
     markMachine(id, "down", { error: e.message });
     showSearch(false);

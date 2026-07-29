@@ -1245,15 +1245,46 @@ def _serve():
 
     def do_rename(mid, src, dst):
         c = get_conn(mid)
+        # SFTP rename refuses an existing destination outright (no overwrite,
+        # no move-into-directory) — that's the contract this is supposed to
+        # honor. But every OSError it can raise looks the same from here, and
+        # "cross-device link" (the case the shell fallback exists for) is not
+        # distinguishable from "destination exists" by errno alone across SFTP
+        # server implementations. Falling back to `mv` unconditionally would
+        # silently overwrite a file the caller never agreed to overwrite, or
+        # move src INSIDE an existing directory instead of failing — so this
+        # checks for that case up front, before deciding a plain OSError means
+        # "try the shell instead."
+        with c["lock"]:
+            sftp = sftp_of(c)
+            try:
+                sftp.stat(dst)
+                dst_exists = True
+            except OSError:
+                dst_exists = False
+        if dst_exists:
+            raise Http(409, f"{posixpath.basename(dst)} already exists")
         try:
             with c["lock"]:
-                sftp_of(c).rename(src, dst)
+                sftp.rename(src, dst)
         except OSError:
-            # the SFTP rename failed (typically a cross-filesystem move, which
-            # SFTP's rename can't do), so this falls back to a shell mv that can
-            # run long enough to hit the same idle window as rm -rf/cp -a below
+            # the SFTP rename failed for some other reason (typically a
+            # cross-filesystem move, which SFTP's rename can't do), so this
+            # falls back to a shell mv that can run long enough to hit the
+            # same idle window as rm -rf/cp -a below. -n keeps mv's own
+            # no-overwrite contract in case dst appeared in the gap between
+            # the check above and this running; the stat afterward is what
+            # catches that — mv -n exits 0 whether it moved anything or not.
             with Busy():
-                sh(c, f"mv -- {shlex.quote(src)} {shlex.quote(dst)}", timeout=None)
+                sh(c, f"mv -n -- {shlex.quote(src)} {shlex.quote(dst)}", timeout=None)
+            with c["lock"]:
+                try:
+                    sftp_of(c).stat(src)
+                    still_there = True
+                except OSError:
+                    still_there = False
+            if still_there:
+                raise Http(409, f"{posixpath.basename(dst)} already exists")
         return {"ok": True}
 
     def do_copy(mid, src, dst):
