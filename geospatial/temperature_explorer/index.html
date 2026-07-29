@@ -729,19 +729,28 @@
   const y0in = document.getElementById("y0in"), y1in = document.getElementById("y1in");
   for (const el of [y0in, y1in]) { el.min = MIN_YEAR; el.max = THIS_YEAR; el.step = 1; }
 
+  // mirrors fetch_temps.py's _cap(): clamp to the store's coverage FIRST,
+  // then apply the 5-year span cap on the clamped range -- so the preview
+  // text always matches what a Run will actually fetch
+  function updateYearCapLabel() {
+    const span = state.y1 - state.y0 + 1;
+    yrCap.textContent = `${span} yr${span === 1 ? "" : "s"}`;
+    if (state.source !== "era5_zarr") { yrCap.title = `${state.y0}–${state.y1}`; return; }
+    if (state.y1 < ZARR_MIN_YEAR || state.y0 > ZARR_MAX_YEAR) {
+      yrCap.title = `Outside the Zarr store's ${ZARR_MIN_YEAR}-${ZARR_MAX_YEAR} coverage — use Open-Meteo`;
+      return;
+    }
+    let cs = Math.max(state.y0, ZARR_MIN_YEAR), ce = Math.min(state.y1, ZARR_MAX_YEAR);
+    if (ce - cs + 1 > 5) cs = ce - 5 + 1;
+    yrCap.title = (cs === state.y0 && ce === state.y1) ? `${state.y0}–${state.y1}` : `Zarr reads ${cs}–${ce}`;
+  }
+
   yearSliderEl.noUiSlider.on("update", (values) => {
     state.y0 = Math.round(+values[0]); state.y1 = Math.round(+values[1]);
-    const span = state.y1 - state.y0 + 1;
     if (document.activeElement !== y0in) y0in.value = state.y0;
     if (document.activeElement !== y1in) y1in.value = state.y1;
     y0in.classList.remove("bad"); y1in.classList.remove("bad");
-    yrCap.textContent = `${span} yr${span === 1 ? "" : "s"}`;
-    if (state.source === "era5_zarr" && span > 5) {
-      const cappedEnd = Math.min(state.y1, ZARR_MAX_YEAR);
-      yrCap.title = `Zarr reads the last 5 years of its coverage (${cappedEnd - 4}–${cappedEnd})`;
-    } else {
-      yrCap.title = `${state.y0}–${state.y1}`;
-    }
+    updateYearCapLabel();
     markDirty();
     syncUrl();
   });
@@ -767,7 +776,7 @@
 
   document.querySelectorAll("#src button").forEach(b => b.addEventListener("click", () => {
     document.querySelectorAll("#src button").forEach(x => x.classList.toggle("on", x === b));
-    state.source = b.dataset.src; markDirty(); syncUrl();
+    state.source = b.dataset.src; updateYearCapLabel(); markDirty(); syncUrl();
   }));
   document.querySelectorAll("#views button").forEach(b => b.addEventListener("click", () => {
     document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x === b));
@@ -883,9 +892,20 @@
 
     const overall = d3.mean(baseline.filter(v => v != null));
     state.annual = ys.map(y => {
-      const vals = by[y].tmean.filter(v => v != null);
+      const vals = [], expectedVals = [];
+      for (let i = 0; i < 366; i++) {
+        const v = by[y].tmean[i];
+        if (v == null) continue;
+        vals.push(v);
+        if (baseline[i] != null) expectedVals.push(baseline[i]);
+      }
       const mean = vals.length ? d3.mean(vals) : null;
-      return { year: y, n: vals.length, mean, anom: mean == null ? null : mean - overall };
+      // compare against the baseline restricted to the SAME days this year has
+      // data for, not the full-year baseline -- otherwise an in-progress year
+      // (e.g. only Jan-Jul so far) gets compared to a full annual cycle and
+      // its anomaly is systematically biased toward whichever season is missing
+      const expected = expectedVals.length ? d3.mean(expectedVals) : null;
+      return { year: y, n: vals.length, mean, anom: (mean == null || expected == null) ? null : mean - expected };
     });
     state.overall = overall;
 
@@ -1576,6 +1596,7 @@
     if (st.src === "era5_zarr" || st.src === "open_meteo") {
       state.source = st.src;
       document.querySelectorAll("#src button").forEach(x => x.classList.toggle("on", x.dataset.src === st.src));
+      updateYearCapLabel();
     }
     if (VIEWS.includes(st.view)) {
       state.view = st.view;
