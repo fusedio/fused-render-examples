@@ -494,6 +494,7 @@ def _serve():
     # ---- live connections ----
     conns = {}            # id -> {"client", "jump", "sftp", "home", "key_used", "lock"}
     conns_lock = threading.Lock()
+    dials = {}            # id -> Lock serialising the dial for that one machine
 
     def drop_conn(mid):
         with conns_lock:
@@ -573,23 +574,39 @@ def _serve():
             jump.close()
         raise err
 
+    def dial_lock(mid):
+        with conns_lock:
+            lk = dials.get(mid)
+            if lk is None:
+                lk = dials[mid] = threading.Lock()
+            return lk
+
     def get_conn(mid):
-        m = get_machine(mid)
+        """The live connection for one machine, dialling it if there isn't one.
+
+        The dial is serialised per machine: the page fires /probe for every row
+        and /connect for the one you clicked at the same time, and without this
+        both would open their own SSH session, the second overwriting — and so
+        leaking — the first."""
         if is_connected(mid):
             return conns[mid]
-        drop_conn(mid)
-        client, jump, key_used = open_client(m)
-        try:
-            sftp = client.open_sftp()
-            home = sftp.normalize(".")
-        except Exception:
-            sftp, home = None, "/"     # git-only hosts authenticate but refuse SFTP
-        c = {"client": client, "jump": jump, "sftp": sftp, "home": home,
-             "key_used": key_used, "username": m["username"], "lock": threading.Lock(),
-             "tsftp": None, "tlock": threading.Lock()}
-        with conns_lock:
-            conns[mid] = c
-        return c
+        with dial_lock(mid):
+            if is_connected(mid):      # another thread dialled while we waited
+                return conns[mid]
+            m = get_machine(mid)
+            drop_conn(mid)
+            client, jump, key_used = open_client(m)
+            try:
+                sftp = client.open_sftp()
+                home = sftp.normalize(".")
+            except Exception:
+                sftp, home = None, "/"   # git-only hosts authenticate but refuse SFTP
+            c = {"client": client, "jump": jump, "sftp": sftp, "home": home,
+                 "key_used": key_used, "username": m["username"], "lock": threading.Lock(),
+                 "tsftp": None, "tlock": threading.Lock(), "gnu_find": None}
+            with conns_lock:
+                conns[mid] = c
+            return c
 
     def sftp_of(c):
         if c["sftp"] is None:
@@ -619,6 +636,21 @@ def _serve():
         data = out.read().decode("utf-8", "replace")
         out.channel.recv_exit_status()
         return data
+
+    def sh_rc(c, cmd):
+        """Just the exit status — for asking a remote what its tools can do."""
+        _, out, _ = c["client"].exec_command(cmd, timeout=60)
+        out.read()
+        return out.channel.recv_exit_status()
+
+    def gnu_find(c):
+        """Does this host's `find` support GNU -printf? BSD (macOS) and older
+        BusyBox (Alpine) don't, and would otherwise fail the whole search.
+        -maxdepth 0 walks nothing, so the probe is instant; cached per
+        connection."""
+        if c["gnu_find"] is None:
+            c["gnu_find"] = sh_rc(c, "find . -maxdepth 0 -printf '' 2>/dev/null") == 0
+        return c["gnu_find"]
 
     # ---- endpoints ----
     def do_machines():
@@ -792,26 +824,37 @@ def _serve():
                 "home": c["home"], "entries": entries}
 
     def do_search(mid, path, q, limit):
+        """Recursive name search under one folder, like the Ubuntu file manager.
+
+        GNU find reports type, size and mtime in the same pass via -printf. Where
+        that isn't supported, a second -print pass marks the directories: paths
+        and folder-ness are POSIX, size and mtime aren't, so those come back blank
+        rather than the whole search reporting nothing found."""
         q = q.strip()
         if not q:
             return {"entries": [], "truncated": False}
         c = get_conn(mid)
-        pat = "*" + q + "*"
-        cmd = (f"find {shlex.quote(path)} -maxdepth 8 -iname {shlex.quote(pat)} "
-               f"-printf '%y\\t%s\\t%T@\\t%p\\n' 2>/dev/null | head -n {int(limit)}")
-        out = sh_soft(c, cmd)
-        entries = []
-        for line in out.splitlines():
-            parts = line.split("\t", 3)
-            if len(parts) != 4:
-                continue
-            typ, size, mtime, p = parts
-            if p == path:
-                continue
-            entries.append({"name": posixpath.basename(p), "path": p,
-                            "is_dir": typ == "d", "is_link": typ == "l",
-                            "size": int(size) if size.isdigit() else 0,
-                            "mtime": int(float(mtime)) if mtime else 0})
+        find = (f"find {shlex.quote(path)} -maxdepth 8 "
+                f"-iname {shlex.quote('*' + q + '*')}")
+        cap = f"2>/dev/null | head -n {int(limit)}"
+        found = []            # (path, is_dir, is_link, size, mtime)
+        if gnu_find(c):
+            out = sh_soft(c, f"{find} -printf '%y\\t%s\\t%T@\\t%p\\n' {cap}")
+            for line in out.splitlines():
+                parts = line.split("\t", 3)
+                if len(parts) != 4:
+                    continue
+                typ, size, mtime, p = parts
+                found.append((p, typ == "d", typ == "l",
+                              int(size) if size.isdigit() else 0,
+                              int(float(mtime)) if mtime else 0))
+        else:
+            dirs = set(sh_soft(c, f"{find} -type d -print {cap}").splitlines())
+            found = [(p, p in dirs, False, 0, 0)
+                     for p in sh_soft(c, f"{find} -print {cap}").splitlines()]
+        entries = [{"name": posixpath.basename(p), "path": p, "is_dir": is_dir,
+                    "is_link": is_link, "size": size, "mtime": mtime}
+                   for p, is_dir, is_link, size, mtime in found if p != path]
         entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
         return {"entries": entries, "truncated": len(entries) >= limit}
 
@@ -887,7 +930,13 @@ def _serve():
         handler.close_connection = True
         wlock = threading.Lock()
 
-        def send(payload, opcode=0x1):
+        def send(payload, opcode=0x2):
+            """Shell output goes out as BINARY frames. A text frame has to be
+            valid UTF-8 on its own, but chan.recv() cuts at an arbitrary byte and
+            can split a multibyte character in half — the browser drops the whole
+            connection over that (1007 per the RFC; Chrome just aborts it), and
+            the terminal dies mid-session. xterm.js decodes a Uint8Array
+            incrementally, so it stitches those halves back together."""
             with wlock:
                 handler.wfile.write(_ws_frame(payload, opcode))
                 handler.wfile.flush()

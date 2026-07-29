@@ -373,6 +373,9 @@ let term = null, fit = null, ws = null, termedId = null;
 let previewPath = null;        // remote path currently shown in the preview pane
 let searchTimer = null, searchSeq = 0;  // debounce + stale-response guard for search
 const PREVIEW_MAX = 50 * 1024 * 1024;   // ask before downloading files larger than this
+// the "no machine selected" markup, kept because a failed connect overwrites the
+// placeholder with an error and a Retry bound to that machine
+const EMPTY_STATE = document.getElementById("placeholder").innerHTML;
 
 // ---------- infra ----------
 function setStatus(kind, text) {
@@ -661,6 +664,7 @@ async function selectMachine(id) {
   renderMachines();
   const bar = document.getElementById("contentbar");
   const ph = document.getElementById("placeholder");
+  ph.innerHTML = EMPTY_STATE;      // clear any previous failure's error + Retry
   if (!id) {
     bar.classList.add("hidden");
     showPane(null);
@@ -668,6 +672,7 @@ async function selectMachine(id) {
     return;
   }
   const m = machines.find(x => x.id === id);
+  if (!m) return selectMachine(null);   // hidden or removed since it was drawn
   bar.classList.remove("hidden");
   ph.classList.add("hidden");
   document.getElementById("mTitle").textContent = m.name || m.host;
@@ -1045,8 +1050,11 @@ function connectTerm() {
   document.getElementById("termStatus").textContent = "connecting…";
   ws = new WebSocket(url("/term?id=" + current + "&cols=" + term.cols +
                          "&rows=" + term.rows).replace("http", "ws"));
+  // shell output arrives as binary — a multibyte character can straddle two
+  // frames, and xterm.js is the thing that decodes across that boundary
+  ws.binaryType = "arraybuffer";
   ws.onopen = () => { document.getElementById("termStatus").textContent = "connected"; fitTerm(); };
-  ws.onmessage = e => term.write(e.data);
+  ws.onmessage = e => term.write(new Uint8Array(e.data));
   ws.onclose = () => { document.getElementById("termStatus").textContent = "disconnected"; };
   ws.onerror = () => { document.getElementById("termStatus").textContent = "connection error"; };
 }
