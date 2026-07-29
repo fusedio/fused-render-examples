@@ -70,6 +70,7 @@ Fused Render pointed at your **own machine** instead of the cloud.
 | [disk_usage](local-tools/disk_usage/) | Treemap disk-space explorer and cleaner |
 | [notion_db](local-tools/notion_db/) | Notion-style task tracker on a local Parquet lake |
 | [comfy](local-tools/comfy/) | A ComfyUI-style node editor with a local image-processing engine |
+| [vps_manager](local-tools/vps_manager/) | Manage remote SSH machines — auto-discovered from `~/.ssh/config` and `known_hosts` — with a file browser and terminal |
 
 ---
 
