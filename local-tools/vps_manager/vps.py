@@ -996,14 +996,26 @@ def _serve():
             return {"ok": False, "error": reason}
         try:
             s.settimeout(4)
-            banner = s.recv(255).decode("utf-8", "replace").strip().splitlines()
+            raw = s.recv(255).decode("utf-8", "replace")
         except OSError:
-            banner = []
+            raw = ""
         finally:
             s.close()
             close_jumps(jumps)
-        version = banner[0].replace("SSH-2.0-", "").split()[0] if banner else ""
-        return {"ok": True, "ms": int((time.time() - t0) * 1000), "banner": version}
+        # RFC 4253: the server speaks first, and what it says begins with "SSH-".
+        # An open port that then says nothing, or says something else, is not a
+        # machine anyone can sign in to — calling that "answering" just sends
+        # someone to a box that will turn them away.
+        line = next((x for x in raw.splitlines() if x.strip()), "")
+        if not line.startswith("SSH-"):
+            return {"ok": False,
+                    "error": "the port is open, but nothing there speaks SSH"
+                    if line else "the port is open, but nothing answered"}
+        # SSH-protoversion-softwareversion SP comments; the software version is
+        # what people recognise, and it is allowed to be absent.
+        rest = line.split("-", 2)[2].split() if line.count("-") >= 2 else []
+        return {"ok": True, "ms": int((time.time() - t0) * 1000),
+                "banner": rest[0] if rest else ""}
 
     def do_ls(mid, path):
         c = get_conn(mid)
@@ -1209,7 +1221,11 @@ def _serve():
                     continue
                 msg = json.loads(payload.decode("utf-8", "replace"))
                 if "data" in msg:
-                    chan.send(msg["data"].encode("utf-8"))
+                    # sendall, not send: send() writes what fits the remote's
+                    # window and reports how much that was, so a paste larger
+                    # than the window would arrive at the shell with the tail
+                    # silently missing.
+                    chan.sendall(msg["data"].encode("utf-8"))
                 elif "resize" in msg:
                     chan.resize_pty(width=int(msg["resize"][0]), height=int(msg["resize"][1]))
         except (OSError, ValueError):
