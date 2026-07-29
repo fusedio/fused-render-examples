@@ -49,6 +49,7 @@ DAILY_VARS = "temperature_2m_max,temperature_2m_min,temperature_2m_mean"
 ERA5_ZARR = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-64x32_equiangular_conservative.zarr"
 ZARR_MAX_YEARS = 5
 ZARR_RES_DEG = 5.625
+ZARR_MIN_YEAR, ZARR_MAX_YEAR = 1959, 2023  # the store's actual coverage
 
 CACHE = Path(__file__).resolve().parent / "data" / "zarr_cache"
 LOCK_STALE_S = 180
@@ -98,10 +99,21 @@ def _from_open_meteo(lat, lon, start_year, end_year):
 #  ERA5 Zarr on GCS — async: detached worker + on-disk cache + polling         #
 # --------------------------------------------------------------------------- #
 def _cap(start_year, end_year):
+    note = ""
     if end_year - start_year + 1 > ZARR_MAX_YEARS:
         start_year = end_year - ZARR_MAX_YEARS + 1
-        return start_year, f"span capped to {ZARR_MAX_YEARS} yrs ({start_year}-{end_year}) for the cloud read"
-    return start_year, ""
+        note = f"span capped to {ZARR_MAX_YEARS} yrs ({start_year}-{end_year}) for the cloud read"
+    if end_year < ZARR_MIN_YEAR or start_year > ZARR_MAX_YEAR:
+        raise RuntimeError(
+            f"The ERA5 Zarr store only covers {ZARR_MIN_YEAR}-{ZARR_MAX_YEAR}; "
+            f"{start_year}-{end_year} doesn't overlap it. Pick years in that range, "
+            f"or use the Open-Meteo source (1940-present)."
+        )
+    clamped_start, clamped_end = max(start_year, ZARR_MIN_YEAR), min(end_year, ZARR_MAX_YEAR)
+    if (clamped_start, clamped_end) != (start_year, end_year):
+        note = (note + "; " if note else "") + \
+            f"clamped to the store's {ZARR_MIN_YEAR}-{ZARR_MAX_YEAR} coverage"
+    return clamped_start, clamped_end, note
 
 
 def _key(lat, lon, y0, y1):
@@ -110,7 +122,7 @@ def _key(lat, lon, y0, y1):
 
 def _zarr_async(lat, lon, start_year, end_year):
     _require_zarr_deps()
-    start_year, note = _cap(start_year, end_year)
+    start_year, end_year, note = _cap(start_year, end_year)
     CACHE.mkdir(parents=True, exist_ok=True)
     key = _key(lat, lon, start_year, end_year)
     res, err, lock = CACHE / f"{key}.json", CACHE / f"{key}.error", CACHE / f"{key}.lock"
@@ -129,11 +141,12 @@ def _zarr_async(lat, lon, start_year, end_year):
 
 
 def _require_zarr_deps():
-    """The Zarr source needs xarray + gcsfs in whatever Python runs runPython.
-    They're in the dev .venv, but the packaged desktop app's bundled Python may
-    not have them — surface that plainly instead of installing anything."""
+    """The Zarr source needs zarr + xarray + gcsfs in whatever Python runs
+    runPython. They're in the dev .venv, but the packaged desktop app's bundled
+    Python may not have them all — surface that plainly instead of installing
+    anything."""
     import importlib.util as u
-    missing = [m for m in ("xarray", "gcsfs") if u.find_spec(m) is None]
+    missing = [m for m in ("zarr", "xarray", "gcsfs") if u.find_spec(m) is None]
     if missing:
         raise RuntimeError(
             f"The ERA5 Zarr source needs these Python packages, which are missing "

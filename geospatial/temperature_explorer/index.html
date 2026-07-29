@@ -670,7 +670,7 @@
     const m = curResults[i]; if (!m) return;
     q.value = m.display_name.split(",")[0]; results.classList.add("hidden");
     setPoint(+m.lon, +m.lat, true, m.display_name.split(",").slice(0, 2).join(","));
-    run(true);
+    if (!runBusy) run(true);
   }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
   q.addEventListener("input", () => {
