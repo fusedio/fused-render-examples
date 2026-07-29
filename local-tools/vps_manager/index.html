@@ -993,8 +993,18 @@ document.getElementById("fileInput").onchange = async ev => {
 };
 
 // ---------- preview pane ----------
+// A /view/ or /embed/ url addresses a file by its path SEGMENTS: the leading
+// slash of a POSIX path is dropped here and put back when the shell decodes it,
+// so joining the path on whole would ask for "/embed//home/…". Encoding each
+// segment on its own is also what stops a "#" or a "?" in a filename from
+// cutting the url short. Same codec as the shell's own urlForFsPath.
+function fsUrl(prefix, localPath) {
+  return window.location.origin + prefix +
+    localPath.replace(/^\/+/, "").split("/").filter(s => s)
+             .map(encodeURIComponent).join("/");
+}
 function embedUrl(localPath) {
-  return window.location.origin + "/embed/" + encodeURI(localPath).replace(/#/g, "%23").replace(/\?/g, "%3F");
+  return fsUrl("/embed/", localPath);
 }
 function overlay(html) {
   const o = document.getElementById("previewOverlay");
@@ -1042,7 +1052,7 @@ function closePreview() {
 }
 document.getElementById("previewClose").onclick = closePreview;
 document.getElementById("previewOpen").onclick = () => {
-  if (previewLocal) window.open(window.location.origin + "/view/" + encodeURI(previewLocal), "_blank");
+  if (previewLocal) window.open(fsUrl("/view/", previewLocal), "_blank");
 };
 document.getElementById("previewDownload").onclick = () => {
   if (previewPath) downloadFile(previewPath, previewPath.split("/").pop());
