@@ -1019,7 +1019,15 @@ def _serve():
                             m[k] = (body.get(k) or "").strip()
                     if "port" in body:
                         m["port"] = int(body.get("port") or 22)
-                    if body.get("password"):
+                    # a blank password field means "leave it as-is" (so a save
+                    # that only touches the host doesn't accidentally drop it),
+                    # which left no way to actually CLEAR a saved password
+                    # short of deleting and recreating the machine — an
+                    # explicit flag is what a blank field can't distinguish
+                    # from "unchanged".
+                    if body.get("clear_password"):
+                        m["password"] = ""
+                    elif body.get("password"):
                         m["password"] = body["password"]
                     save_machines(ms)
                     bump_gen(mid)
@@ -1037,6 +1045,13 @@ def _serve():
 
     def do_hide(mid):
         alias = cfg_alias(mid)
+        # same reasoning as do_update/do_remove: a dial for this id that was
+        # already in flight when the hide landed can still finish and
+        # register afterward, and without bumping the generation it looks
+        # exactly like any other live connection — held open for a machine
+        # the user just asked to stop seeing, until idle shutdown eventually
+        # notices nobody's touched it.
+        bump_gen(mid)
         drop_conn(mid)
         with reg_lock:
             reg = load_registry()

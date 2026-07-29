@@ -350,6 +350,9 @@
     <div class="field">
       <label>Password <span style="text-transform:none;color:var(--ink-3)">(optional)</span></label>
       <input id="fPass" type="password" placeholder="leave blank if using a key" autocomplete="new-password">
+      <label id="fPassClearRow" style="display:none;text-transform:none;font-weight:normal;color:var(--ink-3);margin-top:6px">
+        <input type="checkbox" id="fPassClear"> Clear the saved password (switch to a key or the SSH agent)
+      </label>
     </div>
     <div class="modal-actions">
       <button class="btn ghost" id="modalCancel">Cancel</button>
@@ -1126,12 +1129,22 @@ function openModal(m, asCopy) {
   document.getElementById("fKey").value = m ? (m.key_path || "") : "";
   document.getElementById("fJump").value = m ? (m.proxy_jump || "") : "";
   document.getElementById("fPass").value = "";
+  document.getElementById("fPass").disabled = false;
   document.getElementById("fPass").placeholder = editingId ? "unchanged" : "leave blank if using a key";
+  // clearing only makes sense against a machine that might already have a
+  // saved password — a blank field on a brand-new one already means "none"
+  document.getElementById("fPassClearRow").style.display = editingId ? "" : "none";
+  document.getElementById("fPassClear").checked = false;
   document.getElementById("modalErr").className = "modal-err";
   document.getElementById("overlay").classList.add("on");
   document.getElementById("fName").focus();
 }
 function closeModal() { document.getElementById("overlay").classList.remove("on"); }
+document.getElementById("fPassClear").onchange = e => {
+  const pass = document.getElementById("fPass");
+  pass.disabled = e.target.checked;
+  if (e.target.checked) pass.value = "";
+};
 document.getElementById("addBtn").onclick = () => openModal(null);
 document.getElementById("modalCancel").onclick = closeModal;
 document.getElementById("overlay").onclick = e => { if (e.target.id === "overlay") closeModal(); };
@@ -1144,6 +1157,7 @@ document.getElementById("modalSave").onclick = async () => {
     key_path: document.getElementById("fKey").value.trim(),
     proxy_jump: document.getElementById("fJump").value.trim(),
     password: document.getElementById("fPass").value,
+    clear_password: document.getElementById("fPassClear").checked,
   };
   if (!body.host || !body.username) {
     const er = document.getElementById("modalErr");
