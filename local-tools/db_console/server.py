@@ -197,10 +197,14 @@ def _load_dbconn(path, readonly=True):
     file_path = None
     if file_backed:
         import urllib.parse
+        import urllib.request
         rest = url.split(":///", 1)[1].split("?", 1)[0]
         if rest.startswith("file:"):
             rest = rest[5:]
-        file_path = os.path.abspath(urllib.parse.unquote(rest))
+        rest = urllib.request.url2pathname(urllib.parse.unquote(rest))
+        if os.name == "nt" and rest.startswith("/") and len(rest) > 2 and rest[2] == ":":
+            rest = rest[1:]
+        file_path = os.path.abspath(rest)
         if url.lower().startswith("sqlite://"):
             url = _sqlite_url(file_path, readonly=readonly)
         else:
@@ -419,6 +423,15 @@ def _table_page_sql(backend, relation, where, order):
         # sort is honoured; the fallback supplies syntax when none is chosen.
         return f"{base}{order or ' ORDER BY (SELECT 0)'} OFFSET :_off ROWS FETCH NEXT :_lim ROWS ONLY"
     return f"{base}{order} LIMIT :_lim OFFSET :_off"
+
+
+def _query_is_write(sql):
+    """Return whether a query can mutate data and therefore needs commit."""
+    import re
+    first = (sql or "").lstrip().split(None, 1)[0].lower() if sql else ""
+    if first in {"insert", "update", "delete", "merge", "create", "alter", "drop", "truncate"}:
+        return True
+    return first == "with" and bool(re.search(r"\b(insert|update|delete|merge)\b", sql, re.I))
 
 
 # ================================================================ daemon
@@ -710,10 +723,11 @@ def _serve():
         page = cur.fetchmany(limit)
         more = len(page) == limit
         types = _infer_types(columns, page)
-        try:
-            raw.commit()
-        except Exception:
-            pass
+        if _query_is_write(sql):
+            try:
+                raw.commit()
+            except Exception:
+                pass
         _stash_cursor(conn_id, query_id, {"raw": raw, "cur": cur, "columns": columns,
                                           "lock": threading.Lock(),
                                           "last": time.time(), "rows": {

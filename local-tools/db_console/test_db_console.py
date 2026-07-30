@@ -93,6 +93,12 @@ def test_dbconn_sqlite_is_reopened_readonly(tmp_path):
     assert "mode=ro" in desc["url"]
 
 
+def test_query_write_detection_keeps_select_cursors_open():
+    assert server._query_is_write("SELECT * FROM artists") is False
+    assert server._query_is_write("INSERT INTO artists VALUES (1)") is True
+    assert server._query_is_write("WITH x AS (SELECT 1) DELETE FROM artists") is True
+
+
 def test_template_guards_stateful_ui_regressions():
     template = open(os.path.join(os.path.dirname(__file__), "template.html"), encoding="utf-8").read()
     assert "let sessionSql = null" in template
