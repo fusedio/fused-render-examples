@@ -843,7 +843,11 @@
     let recent = [];
     try { recent = JSON.parse(localStorage.getItem("dbconsole:recent") || "[]"); } catch (_) {}
     pickerRecent.innerHTML = recent.length
-      ? `<label>Recent</label>` + recent.map((r) => `<button type="button" data-recent="${escapeHtml(r.conn || r.display)}" title="${escapeHtml(r.display)}">${escapeHtml(r.display)}</button>`).join("")
+      ? `<label>Recent</label>` + recent.map((r) => {
+          const kind = r.kind || (r.conn ? "file" : "url");
+          const value = kind === "file" ? (r.conn || r.display) : r.display;
+          return `<button type="button" data-recent="${escapeHtml(value)}" data-recent-kind="${kind}" title="${escapeHtml(r.display)}">${escapeHtml(r.display)}</button>`;
+        }).join("")
       : "";
   }
   function rememberRecent(rec) {
@@ -879,7 +883,7 @@
     }
     if (result.error) { showPickerError(errorMessage(result)); return; }
     await refreshConns();
-    rememberRecent({ conn: body.file || "", display: result.display_url });
+    rememberRecent({ conn: body.file || "", kind: body.file ? "file" : "url", display: result.display_url });
     closePicker();
     setParams({ conn: body.file ? body.file : result.conn_id, schema: "", table: "", sql: "", page: "0", view: "results" });
   }
@@ -966,9 +970,10 @@
     const b = e.target.closest("[data-recent]");
     if (!b) return;
     const v = b.dataset.recent;
+    const kind = b.dataset.recentKind || (looksLikePath(v) ? "file" : "url");
     // a URL entry is the password-hidden display URL — prefill it for editing
     // instead of auto-connecting; only file/descriptor paths reconnect as-is.
-    if (!looksLikePath(v)) { pickerUrl.value = v; pickerUrl.focus(); return; }
+    if (kind !== "file") { pickerUrl.value = v; pickerUrl.focus(); return; }
     b.disabled = true;
     b.textContent = "Connecting…";
     try { await doConnect({ file: v }); }

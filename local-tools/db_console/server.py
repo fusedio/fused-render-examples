@@ -790,6 +790,7 @@ def _serve():
         page = [list(r) for r in rows]
         query_id = secrets.token_hex(8)
         _stash_cursor(conn_id, query_id, {"raw": None, "cur": None, "columns": cols,
+                                          "lock": threading.Lock(),
                                           "last": time.time(), "rows": {
                                               i: row for i, row in enumerate(page)}})
         return {"query_id": query_id, "columns": cols, "types": _infer_types(cols, page),
