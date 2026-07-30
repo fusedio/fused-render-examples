@@ -395,6 +395,7 @@
   let running = false;
   let queryId = null;
   let schemaPromise = null;
+  const editorTheme = new CM.Compartment();
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -471,17 +472,20 @@
   // ---------------- connection resolution ----------------
   async function resolveConnection(state) {
     if (!state.conn) { active = null; return; }
+    if (active && active.source === state.conn) return;
     if (HEX64.test(state.conn)) {
       const data = await apiGet("/conns");
       conns = data.conns || [];
       active = conns.find((c) => c.conn_id === state.conn) || null;
+      if (active) active.source = state.conn;
       return;
     }
     // conn is a file path (.dbconn / .sqlite / .duckdb) — reconnect silently.
     const result = await apiPost("/connect", { file: state.conn });
-    if (result.available === false || result.error) { active = { pending: result, path: state.conn }; return; }
+    if (result.available === false || result.error) { active = { pending: result, path: state.conn, source: state.conn }; return; }
     await refreshConns();
     active = conns.find((c) => c.conn_id === result.conn_id) || result;
+    active.source = state.conn;
     if (fused.params.get("conn") !== result.conn_id && HEX64.test(result.conn_id)) {
       // keep the opaque id in the URL, but preserve the original _file dispatch.
       if (!fused.params.get("_file")) setParams({ conn: result.conn_id });
@@ -694,7 +698,7 @@
   function buildEditor(initial) {
     editor = new CM.EditorView({
       doc: initial || "",
-      extensions: [CM.basicSetup, CM.oneDark, sqlMode(),
+      extensions: [CM.basicSetup, editorTheme.of(currentState().theme === "dark" ? CM.oneDark : []), sqlMode(),
         CM.EditorView.updateListener.of((u) => { if (u.docChanged) scheduleSqlSync(); })],
       parent: editorHost
     });
@@ -895,6 +899,7 @@
   // ---------------- main render ----------------
   function renderChrome(state) {
     document.documentElement.dataset.theme = state.theme;
+    if (editor) editor.dispatch({ effects: editorTheme.reconfigure(state.theme === "dark" ? CM.oneDark : []) });
     app.classList.toggle("rail-collapsed", !state.rail);
     app.classList.toggle("focus-mode", state.focus);
     railToggle.setAttribute("aria-pressed", String(!state.rail));
