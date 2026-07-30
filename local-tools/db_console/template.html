@@ -818,17 +818,21 @@
 
   async function fetchMore() {
     if (!lastResult || lastResult.browse || !lastResult.more || !active) return;
-    const data = await apiGet(`/fetch?c=${encodeURIComponent(active.conn_id)}&query_id=${encodeURIComponent(lastResult.query_id)}&n=${currentState().limit}`);
-    if (data.error) { setError(data); return; }
-    const start = lastResult.rows.length;
-    const body = (data.rows || []).map((row, i) => `<tr data-row="${start + i}">${row.map((v) => `<td>${renderCell(v)}</td>`).join("")}</tr>`).join("");
-    const tbody = gridScroll.querySelector("tbody");
-    if (tbody) tbody.insertAdjacentHTML("beforeend", body);
-    lastResult.rows = lastResult.rows.concat(data.rows || []);
-    lastResult.more = data.more;
-    nextPage.disabled = !data.more;
-    resultSummary.textContent = `${formatCount(lastResult.rows.length)} rows${data.more ? "+" : ""}`;
-    pagePosition.textContent = data.more ? "more rows available" : "end of result";
+    try {
+      const data = await apiGet(`/fetch?c=${encodeURIComponent(active.conn_id)}&query_id=${encodeURIComponent(lastResult.query_id)}&n=${currentState().limit}`);
+      if (data.error) { setError(data); return; }
+      const start = lastResult.rows.length;
+      const body = (data.rows || []).map((row, i) => `<tr data-row="${start + i}">${row.map((v) => `<td>${renderCell(v)}</td>`).join("")}</tr>`).join("");
+      const tbody = gridScroll.querySelector("tbody");
+      if (tbody) tbody.insertAdjacentHTML("beforeend", body);
+      lastResult.rows = lastResult.rows.concat(data.rows || []);
+      lastResult.more = data.more;
+      nextPage.disabled = !data.more;
+      resultSummary.textContent = `${formatCount(lastResult.rows.length)} rows${data.more ? "+" : ""}`;
+      pagePosition.textContent = data.more ? "more rows available" : "end of result";
+    } catch (err) {
+      setError(err);
+    }
   }
 
   function setError(error) {
