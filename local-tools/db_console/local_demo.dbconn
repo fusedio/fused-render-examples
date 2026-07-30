@@ -1,0 +1,4 @@
+{
+  "name": "Local demo (SQLite)",
+  "url": "sqlite:///file:./demo.sqlite?mode=ro&uri=true"
+}
