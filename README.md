@@ -32,8 +32,12 @@ own machine, no setup. Start with either, then browse below.
     <td width="50%"><a href="local-tools/visual_claude/"><img src="assets/visual_claude.png" alt="visual-claude"></a><br><b>visual-claude</b><br>A visual settings page for Claude Code, writing to <code>~/.claude</code>.</td>
   </tr>
   <tr>
+    <td><a href="geospatial/flood_risk_explorer/"><img src="assets/flood_risk_explorer.png" alt="Flood Risk Explorer"></a><br><b>Flood Risk Explorer</b><br>3D sea-level rise over six coastal cities — drag the slider, close Rotterdam's storm-surge gates.</td>
     <td><a href="geospatial/locker_network_simulator/"><img src="assets/locker_network_simulator.png" alt="Locker network simulator"></a><br><b>Parcel locker simulator</b><br>Live route re-optimization on real roads.</td>
+  </tr>
+  <tr>
     <td><a href="local-tools/disk_usage/"><img src="assets/disk_usage.png" alt="disk_usage"></a><br><b>disk_usage</b><br>Treemap disk-space explorer for your local filesystem.</td>
+    <td></td>
   </tr>
 </table>
 
@@ -43,6 +47,7 @@ own machine, no setup. Start with either, then browse below.
 
 | Example | What it does |
 |---|---|
+| [flood_risk_explorer](geospatial/flood_risk_explorer/) | 3D sea-level-rise explorer: real terrain + Overture buildings, water that floods only what it can reach, and Rotterdam's storm-surge gates |
 | [buildings_to_hexagons](geospatial/buildings_to_hexagons/) | Interactive explainer: every building on Earth as H3 hexes ([live](https://open.fused.io/lyxdustnqlwtzlwroowg7c6w3a)) |
 | [hexagon_lab](geospatial/hexagon_lab/) | Six-step H3 explainer: globe → neighbors → hierarchy → buildings → rasters → release diff ([live](https://open.fused.io/mx4yiqseryjfdzl6oc3mwlnx7e)) |
 | [cog_range_viewer](geospatial/cog_range_viewer/) | Stream a huge COG with HTTP range requests, no download ([live](https://open.fused.io/s2ndrn6shzzbawm36gkjhwqrhi)) |

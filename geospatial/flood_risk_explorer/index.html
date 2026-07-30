@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flood Risk in 3D</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
+<script src="https://unpkg.com/@loaders.gl/terrain@4.2.2/dist/dist.min.js"></script>
+<style>
+  :root {
+    --bg0: #0a0e14; --bg1: #10161f; --card: #121924; --line: #232e3d;
+    --txt: #e9eef4; --dim: #8b98a7; --blue: #4da3ff; --aqua: #46c8f5;
+    --red: #ff6257; --ok: #3ddc97;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { background: radial-gradient(1200px 700px at 35% 0%, #101a2b 0%, var(--bg0) 55%);
+         color: var(--txt); font: 13px/1.5 -apple-system, "Segoe UI", sans-serif;
+         overflow: hidden; }
+
+  #app { display: flex; flex-direction: column; height: 100%; padding: 14px 16px; gap: 12px; }
+
+  /* header */
+  #hdr { display: flex; align-items: center; gap: 16px; flex: none; }
+  #hdr h1 { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+  #hdr .sub { color: var(--dim); font-size: 12px; }
+  #tabs { margin-left: 22px; display: flex; border: 1px solid var(--line);
+          border-radius: 999px; overflow: hidden; }
+  #tabs button { padding: 6px 14px; font-size: 12px; background: none; border: none;
+                 color: var(--dim); cursor: pointer; }
+  #tabs button.on { background: #16283a; color: var(--aqua); }
+  body:not(.build) .v-build { display: none; }
+  body.build .v-explore { display: none; }
+  #presets { margin-left: auto; display: flex; gap: 6px; }
+  #presets button { padding: 6px 13px; font-size: 12.5px; cursor: pointer; color: var(--dim);
+                    background: var(--card); border: 1px solid var(--line); border-radius: 999px; }
+  #presets button.on { color: #fff; border-color: var(--blue); background: #16233a; }
+  #presets button:hover { color: var(--txt); }
+
+  #main { display: flex; gap: 12px; flex: 1; min-height: 0; }
+
+  /* scene */
+  #scenewrap { flex: 1.6; position: relative; border-radius: 14px; overflow: hidden;
+               border: 1px solid var(--line);
+               background: linear-gradient(180deg, #0c1524 0%, #0a0f18 100%); }
+  #scene { position: absolute; inset: 0; }
+  #exag { position: absolute; top: 12px; right: 12px; z-index: 3; display: flex;
+          border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+          background: #0f1620cc; backdrop-filter: blur(6px); }
+  #exag button { padding: 5px 10px; font-size: 11.5px; background: none; border: none;
+                 color: var(--dim); cursor: pointer; }
+  #exag button.on { color: var(--aqua); background: #16283a; }
+  #attrib { position: absolute; bottom: 8px; left: 12px; z-index: 3; font-size: 10px;
+            color: #ffffff66; pointer-events: none; }
+  #scrim { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center;
+           justify-content: center; background: #0a0f18cc; backdrop-filter: blur(3px);
+           flex-direction: column; gap: 12px; transition: opacity .3s; }
+  #scrim.hide { opacity: 0; pointer-events: none; }
+  .spin { width: 22px; height: 22px; border: 2px solid var(--line); border-top-color: var(--aqua);
+          border-radius: 50%; animation: rot .8s linear infinite; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  #scrimtxt { color: var(--dim); font-size: 12.5px; }
+
+  #tip { position: fixed; z-index: 50; pointer-events: none; display: none;
+         background: #0e1620f0; border: 1px solid var(--line); border-radius: 8px;
+         padding: 7px 10px; font-size: 12px; max-width: 240px; box-shadow: 0 6px 24px #0009; }
+  #tip b { color: var(--aqua); }
+
+  /* right column */
+  #col { width: 348px; flex: none; overflow-y: auto; display: flex; flex-direction: column;
+         gap: 10px; padding-right: 2px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 13px 14px; }
+  .card h3 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
+             color: var(--dim); margin-bottom: 10px; font-weight: 600; }
+
+  /* slider card */
+  #lvlrow { display: flex; align-items: center; gap: 12px; }
+  #lvl { font-size: 26px; font-weight: 750; color: var(--aqua); white-space: nowrap;
+         font-variant-numeric: tabular-nums; width: 118px; flex: none; }
+  #lvl small { font-size: 13px; font-weight: 500; color: var(--dim); }
+  #slider { flex: 1; accent-color: var(--aqua); height: 26px; }
+  #depthbar { height: 5px; border-radius: 3px; margin-top: 10px;
+              background: linear-gradient(90deg, #46c8f500, #46c8f5aa 30%, #0b5cadee); }
+  #depthlbl { display: flex; justify-content: space-between; color: var(--dim);
+              font-size: 10px; margin-top: 3px; }
+
+  /* pipeline card */
+  .step { display: flex; align-items: center; gap: 9px; padding: 5px 6px; border-radius: 7px;
+          cursor: default; }
+  .step:hover { background: #182231; }
+  .step .ic { width: 14px; height: 14px; flex: none; display: flex; align-items: center;
+              justify-content: center; }
+  .step .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+  .step .mini { width: 12px; height: 12px; border: 2px solid var(--line);
+                border-top-color: var(--aqua); border-radius: 50%;
+                animation: rot .8s linear infinite; }
+  .step .chk { color: var(--ok); font-size: 12px; font-weight: 700; }
+  .step .lbl { flex: 1; }
+  .step .lbl small { color: var(--dim); display: block; font-size: 10.5px; line-height: 1.3; }
+  .step .met { font: 10.5px var(--mono); color: var(--dim); text-align: right; }
+  .step.done .met { color: var(--txt); }
+
+  /* impact card */
+  .minispin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line);
+              border-top-color: var(--aqua); border-radius: 50%;
+              animation: rot .8s linear infinite; vertical-align: -1px; }
+  #impactbody { transition: opacity .45s ease; }
+  #impact.loading #impactbody { opacity: .35; }
+  #statload { display: none; align-items: center; gap: 8px; font-size: 11.5px;
+              color: var(--dim); margin-top: 8px; }
+  #impact.loading #statload { display: flex; animation: fadein .45s ease; }
+  #statload a { color: var(--aqua); cursor: pointer; text-decoration: none; }
+  #statload a:hover { text-decoration: underline; }
+  @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+  #scrimlink { color: var(--aqua); font-size: 11.5px; cursor: pointer; }
+  #scrimlink:hover { text-decoration: underline; }
+  .stat { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; }
+  .stat b { font-size: 16.5px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--dim); font-size: 12px; }
+  .stat b.hit { color: var(--red); }
+  #chart { width: 100%; height: 76px; cursor: crosshair; margin-top: 6px; }
+  #chart text { fill: var(--dim); font-size: 9px; }
+
+  /* toggle card */
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { flex: 1; padding: 7px 4px; font-size: 11.5px; background: none; border: none;
+                color: var(--dim); cursor: pointer; }
+  .seg button.on { background: #16283a; color: var(--aqua); }
+  #naivenote { font-size: 11.5px; color: var(--dim); margin-top: 9px; min-height: 28px; }
+  #naivenote b { color: var(--txt); }
+  .foot { font-size: 10.5px; color: var(--dim); margin-top: 7px; }
+
+  /* wire card */
+  .brow { margin-bottom: 8px; }
+  .brow .lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); }
+  .brow .lbl b { color: var(--txt); font-variant-numeric: tabular-nums; }
+  .brow .bar { height: 5px; background: #0b1119; border: 1px solid var(--line);
+               border-radius: 3px; margin-top: 3px; overflow: hidden; }
+  .brow .fill { height: 100%; background: var(--aqua); border-radius: 3px; }
+  .brow.big .fill { background: #c86bfa; }
+  .wnote { font-size: 11px; color: var(--dim); margin-top: 4px; }
+  .wnote b { color: var(--txt); }
+
+  .note { font-size: 12px; color: var(--dim); line-height: 1.55; }
+  .note b, .note .mono { color: var(--txt); }
+  .note .mono { font: 11px var(--mono); background: #0b1119; border: 1px solid var(--line);
+                border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+
+  #links { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; }
+  #links a { color: var(--blue); text-decoration: none; }
+  #links a:hover { text-decoration: underline; }
+
+  /* ---------- behind the scenes (full-page build tab) ---------- */
+  body.build #scenewrap, body.build #col { display: none; }
+  #bts { display: none; }
+  body.build #bts { display: block; flex: 1; min-height: 0; overflow-y: auto;
+                    border-radius: 14px; }
+  #bts-in { max-width: 1240px; margin: 0 auto; padding: 10px 18px 40px; }
+  #bts-lede h2 { font-size: 21px; letter-spacing: -.01em; margin-bottom: 6px; }
+  #bts-lede p { color: var(--dim); font-size: 13.5px; line-height: 1.6; max-width: 880px; }
+  #bts-lede p b { color: var(--txt); }
+  #bts .mono { font: 11px var(--mono); color: var(--txt); background: #0b1119;
+               border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
+               white-space: nowrap; }
+
+  /* zone chips — where each stage runs */
+  .zchip { display: inline-block; font: 600 9px var(--mono); letter-spacing: .09em;
+           text-transform: uppercase; border-radius: 5px; padding: 2px 7px; margin-bottom: 7px; }
+  .zchip.web { background: #2b230d; color: #e2c46a; }
+  .zchip.py  { background: #10281a; color: #7fd49a; }
+  .zchip.js  { background: #0c2733; color: var(--aqua); }
+
+  /* the visual chain = the live pipeline */
+  #chain { display: flex; gap: 10px; align-items: flex-start; justify-content: center;
+           margin: 24px 0 4px; }
+  .cz { flex: 1; max-width: 228px; min-width: 0; text-align: center; }
+  .cwrap { position: relative; }
+  .cz canvas, .czbox { display: block; width: 100%; border-radius: 11px;
+                       border: 2px solid var(--line); background: #0b1119; }
+  .cz canvas { image-rendering: auto; }
+  .czbox { text-align: left; padding: 10px 11px; box-sizing: border-box; }
+  .srcrow { padding: 7px 2px; border-bottom: 1px solid #1a2432; font-size: 11px;
+            color: var(--dim); line-height: 1.45; }
+  .srcrow:last-child { border-bottom: none; }
+  .srcrow b { display: block; color: var(--txt); font-size: 12px; }
+  .czcap { font-size: 13px; font-weight: 700; margin-top: 8px; }
+  .czsub { font-size: 10.5px; color: var(--dim); margin-top: 4px; line-height: 1.5; }
+  .czsub input[type=range] { width: 90%; accent-color: var(--aqua); margin-top: 2px; }
+  .czsub .sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px;
+               margin: 0 4px 0 2px; vertical-align: -1px; }
+  .czstat { font: 10.5px var(--mono); color: var(--dim); margin-top: 6px;
+            min-height: 15px; line-height: 1.5; }
+  .czstat.done { color: var(--txt); }
+  .czstat .ok { color: var(--ok); }
+  .czarr { color: var(--dim); font-size: 20px; margin-top: 84px; flex: none; }
+  .cz.web .czcap { color: #e2c46a; }
+  .cz.py  .czcap { color: #7fd49a; }
+  .cz.js  .czcap { color: var(--aqua); }
+  /* per-panel loading */
+  .cz.loading canvas { opacity: .18; }
+  .cz.loading .cwrap::after { content: ""; position: absolute; left: 50%; top: 50%;
+      width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--line);
+      border-top-color: var(--aqua); border-radius: 50%; animation: rot .8s linear infinite; }
+  /* mini connected/naive toggle on the threshold panel */
+  .miniseg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
+             overflow: hidden; margin-top: 6px; }
+  .miniseg button { font-size: 10px; padding: 3px 9px; background: none; border: none;
+                    color: var(--dim); cursor: pointer; }
+  .miniseg button.on { background: #16283a; color: var(--aqua); }
+  /* cross-hover focus */
+  #chain .cz, #anatcode .tk { transition: opacity .16s; }
+  #chain .cz canvas, #chain .czbox { transition: transform .16s, box-shadow .16s; }
+  #chain.focused .cz:not(.hl) { opacity: .22; }
+  #chain .cz.hl canvas, #chain .cz.hl .czbox { transform: scale(1.04);
+      box-shadow: 0 8px 26px #000a; }
+  #anat.focused .tk:not(.hl) { opacity: .3; }
+  #anatcode .tk.hl { box-shadow: 0 0 0 1.5px currentColor; }
+
+  /* the live-SQL drawer, opened from the buildings panel */
+  #sqlbtn { margin-top: 8px; font-size: 10.5px; padding: 4px 11px; border-radius: 999px;
+            border: 1px solid #7fd49a55; background: #10281a; color: #7fd49a; cursor: pointer; }
+  #sqlbtn:hover { border-color: #7fd49a; }
+  #sqldrawer { display: none; max-width: 860px; margin: 16px auto 0; }
+  #sqldrawer.open { display: block; }
+  #sqldrawer pre { font: 10.5px/1.6 var(--mono); color: #a8d1ff; background: #0b1119;
+                   border: 1px solid #7fd49a33; border-radius: 10px; padding: 11px 13px;
+                   white-space: pre-wrap; }
+  #sqldrawer .foot b { color: var(--txt); }
+
+  /* the call anatomy */
+  #anat { margin: 26px auto 0; max-width: 860px; }
+  .anath { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em;
+           color: var(--dim); font-weight: 600; margin-bottom: 8px; text-align: center; }
+  #anatcode { font: 12px/1.9 var(--mono); color: #cfd8e4; background: #0b1119;
+              border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px;
+              white-space: pre-wrap; }
+  #anatcode .c { color: #55647a; }
+  #anatcode .tk { border-radius: 5px; padding: 1px 6px; cursor: pointer; white-space: nowrap; }
+  .tk.t-py { background: #10281a; color: #7fd49a; }
+  .tk.t-js { background: #0c2733; color: var(--aqua); }
+  #wire { text-align: center; font-size: 11px; color: var(--dim); margin-top: 10px; }
+  #wire b { color: var(--txt); font-variant-numeric: tabular-nums; }
+
+  /* vs-artifact, tucked away at the bottom */
+  #vsart { max-width: 860px; margin: 26px auto 0; border: 1px solid var(--line);
+           border-radius: 12px; background: var(--card); padding: 0 16px; }
+  #vsart summary { cursor: pointer; padding: 12px 2px; font-size: 12.5px; color: var(--dim);
+                   user-select: none; list-style: none; }
+  #vsart summary::before { content: "▸ "; color: var(--aqua); }
+  #vsart[open] summary::before { content: "▾ "; }
+  #vsart summary:hover { color: var(--txt); }
+  #vsart[open] summary { border-bottom: 1px solid var(--line); }
+  #vsart .vsbody { padding: 10px 2px 14px; }
+  .vsrow { display: flex; gap: 8px; padding: 5px 0; font-size: 11.5px;
+           border-bottom: 1px solid #1a2432; align-items: baseline; }
+  .vsrow:last-of-type { border-bottom: none; }
+  .vsrow span { flex: 1; color: var(--dim); }
+  .vsrow .no  { flex: 1; color: #b3684f; }
+  .vsrow .yes { flex: 1; color: var(--ok); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hdr">
+    <div>
+      <h1>What floods when the water rises?</h1>
+      <div class="sub">real terrain &middot; real buildings &middot; drag the slider</div>
+    </div>
+    <div id="tabs">
+      <button id="tab-explore" class="on">explore</button>
+      <button id="tab-build">how it&rsquo;s built</button>
+    </div>
+    <div id="presets"></div>
+  </div>
+
+  <div id="main">
+    <div id="scenewrap">
+      <div id="scene"></div>
+      <div id="exag"></div>
+      <div id="attrib">terrain Mapzen/AWS &middot; imagery Esri &middot; buildings &amp; water Overture Maps</div>
+      <div id="scrim"><div class="spin"></div><div id="scrimtxt">building terrain&hellip;</div>
+        <div id="scrimlink">see what's happening &rarr;</div></div>
+    </div>
+
+    <div id="col">
+      <div class="card">
+        <div id="lvlrow">
+          <div id="lvl">+2.00<small> m</small></div>
+          <input id="slider" type="range" min="0" max="10" step="0.25" value="2">
+        </div>
+        <div id="depthbar"></div>
+        <div id="depthlbl"><span>sea level today</span><span>+10 m</span></div>
+        <div id="gatesrow" style="display:none;align-items:center;gap:9px;margin-top:12px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px">
+            <input id="gateschk" type="checkbox" style="accent-color:var(--aqua)">
+            close the storm-surge barriers
+          </label>
+          <span id="gatesms" style="font:10.5px var(--mono);color:var(--dim)"></span>
+        </div>
+      </div>
+
+      <div class="card v-explore" id="impact">
+        <h3>underwater right now</h3>
+        <div id="impactbody">
+          <div class="stat"><span>buildings</span><b class="hit" id="s-bld">&mdash;</b></div>
+          <div class="stat"><span>roads</span><b class="hit" id="s-rd">&mdash;</b></div>
+          <div class="stat"><span>hospitals / schools</span><b class="hit" id="s-poi">&mdash;</b></div>
+          <svg id="chart" viewBox="0 0 316 76" preserveAspectRatio="none"></svg>
+        </div>
+        <div id="statload"><span class="minispin"></span>
+          <span>counting what's underwater&hellip;
+            <a id="statload-link">watch it live &rarr;</a></span></div>
+      </div>
+
+      <div class="card v-explore">
+        <h3>data</h3>
+        <div id="links">
+          <a href="https://overturemaps.org/" target="_blank">Overture Maps</a>
+          <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank">Terrain tiles</a>
+          <a href="https://en.wikipedia.org/wiki/Sea_level_rise" target="_blank">Sea level rise</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="bts">
+      <div id="bts-in">
+        <div id="bts-lede">
+          <h2>Behind the scenes</h2>
+          <p>This whole app is <b>one HTML file with a Python kernel attached</b> &mdash;
+            Fused Render runs <span class="mono">flood_mask.py</span> and
+            <span class="mono">overture_stats.py</span> right next to the page. Ask Claude
+            for a standalone HTML flood map and you get a browser sandbox: no DuckDB, no
+            numpy, no S3. These are the <i>actual arrays</i> Python handed this page for
+            the city you have open:</p>
+        </div>
+
+        <div id="chain">
+          <div class="cz web" data-g="src">
+            <div class="zchip web">s3 &middot; open web</div>
+            <div class="czbox">
+              <div class="srcrow"><b>Overture Maps</b>buildings &middot; water &middot; places<br>GeoParquet on S3, ~400 GB</div>
+              <div class="srcrow"><b>Terrarium</b>elevation tiles &middot; AWS open data</div>
+              <div class="srcrow"><b>Esri</b>satellite imagery tiles</div>
+            </div>
+            <div class="czcap">public data, too big to fetch</div>
+            <div class="czsub">a browser can't scan a parquet lake &mdash; a query engine can</div>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz py" data-g="elev">
+            <div class="zchip py">python kernel</div>
+            <div class="cwrap"><canvas id="cv-elev"></canvas></div>
+            <div class="czcap">Python builds the terrain</div>
+            <div class="czsub">DEM tiles mosaicked &middot; Overture water clamps coastal noise &middot; dikes &amp; gates burned in (bright lines)</div>
+            <div class="czstat" id="st-terrain"></div>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz py" data-g="flood">
+            <div class="zchip py">python kernel</div>
+            <div class="cwrap"><canvas id="cv-flood"></canvas></div>
+            <div class="czcap">&hellip;then floods it once</div>
+            <div class="czsub">priority-flood from the sea: the minimum rise that <i>reaches</i> each cell (bright = floods early, dark = never)</div>
+            <div class="czstat" id="st-flood"></div>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz py" data-g="bld">
+            <div class="zchip py">python kernel &middot; duckdb</div>
+            <div class="cwrap"><canvas id="cv-bld"></canvas></div>
+            <div class="czcap">DuckDB fetches every building</div>
+            <div class="czsub">footprints + heights straight off S3, colored by the level that floods them</div>
+            <div class="czstat" id="st-bld"></div>
+            <button id="sqlbtn">&#9656; show the live query</button>
+          </div>
+          <div class="czarr">&rarr;</div>
+          <div class="cz js" data-g="thresh">
+            <div class="zchip js">your browser</div>
+            <div class="cwrap"><canvas id="cv-thresh"></canvas></div>
+            <div class="czcap">the browser just thresholds</div>
+            <div class="czsub"><input id="bts-lvl" type="range" min="0" max="10" step="0.25" value="2"><br>
+              <b id="bts-lvlv" style="color:var(--aqua)">+2.00 m</b> &mdash; drag me: zero Python calls<br>
+              <span class="miniseg"><button id="bm-conn" class="on">connected</button><button id="bm-naive">vs naive</button></span>
+              <span id="bts-fakeline" style="display:none"><br><span class="sw" style="background:#ff8a3d"></span><b
+                id="bts-fake">&mdash;</b> cells <span class="mono">elev &lt; level</span> would wrongly flood</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="sqldrawer">
+          <pre id="sqltxt">run a city first&hellip;</pre>
+          <div class="foot">This exact query runs <b>in the Python kernel next to this page</b>
+            &mdash; DuckDB reading Overture's GeoParquet on S3 directly, no download, no database
+            server. Only the row groups overlapping this AOI are touched, and the result is
+            cached to disk for the next visitor.</div>
+        </div>
+
+        <div id="anat">
+          <div class="anath">the whole integration &mdash; hover a piece</div>
+          <pre id="anatcode">const r = await fused.runPython(<span class="tk t-py" data-g="elev">"./flood_mask.py"</span>, { xmin, ymin, xmax, ymax, barriers });
+r.<span class="tk t-py" data-g="elev">elev_b64</span>     <span class="c">// int16 terrain grid &mdash; water-clamped, dikes burned in</span>
+r.<span class="tk t-py" data-g="flood">flood_b64</span>    <span class="c">// int16 "floods at" grid &mdash; one priority-flood, done once</span>
+r.terrain_png + r.texture_jpg    <span class="c">// 3D mesh + satellite skin, mosaicked in Python</span>
+
+const s = await fused.runPython(<span class="tk t-py" data-g="bld">"./overture_stats.py"</span>, { xmin, ymin, xmax, ymax });
+s.<span class="tk t-py" data-g="bld">buildings</span>    <span class="c">// every footprint + height + the level that floods it, via DuckDB</span>
+
+<span class="tk t-js" data-g="thresh">slider</span> &rarr; deck.gl re-thresholds the grids in memory &mdash; <b>0</b> Python calls per drag</pre>
+          <div id="wire">Python calls <b id="b-calls">0</b> &nbsp;&middot;&nbsp;
+            sent to this page <b id="b-recv">0 KB</b> &nbsp;&middot;&nbsp;
+            queried on S3 <b>hundreds of GB</b></div>
+        </div>
+
+        <details id="vsart">
+          <summary>why couldn't a Claude artifact do this?</summary>
+          <div class="vsbody">
+            <div class="vsrow"><span></span><span class="no">standalone HTML (browser sandbox)</span><span class="yes">this page (kernel attached)</span></div>
+            <div class="vsrow"><span>query 400 GB on S3</span><span class="no">no &mdash; a few MB of fetch()</span><span class="yes">DuckDB</span></div>
+            <div class="vsrow"><span>flood connectivity</span><span class="no">no</span><span class="yes">numpy + scipy</span></div>
+            <div class="vsrow"><span>terrain mosaicking</span><span class="no">no</span><span class="yes">PIL, server-side</span></div>
+            <div class="vsrow"><span>results persist</span><span class="no">re-fetch every visit</span><span class="yes">disk cache</span></div>
+            <div class="vsrow"><span>deploy</span><span class="no">&mdash;</span><span class="yes">none: edit the .py, reload</span></div>
+            <div class="foot" style="margin-top:9px">The backend is two ordinary Python files
+              with a <span class="mono">main()</span> &mdash; the page calls them, that's the
+              whole architecture.</div>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+/* ------------------------------------------------ config */
+const PRESETS = [
+  { id: "miami_beach", name: "Miami Beach", bbox: [-80.180, 25.750, -80.090, 25.830],
+    cam: { zoom: 12.55, pitch: 55, bearing: -35 } },
+  { id: "new_orleans", name: "New Orleans", bbox: [-90.107, 29.915, -90.013, 29.995],
+    cam: { zoom: 12.5, pitch: 53, bearing: -20 },
+    // the sea only gets in via the Mississippi (S/E edges) — City Park's
+    // lakes/bayous are pumped drainage, not flood seeds. Levees (~4.5 m
+    // hurricane protection) are thinner than a grid cell, so raise the
+    // riverbanks in the flood traversal; below +4 m the city stays dry.
+    seedSide: "se", bankMin: 4 },
+  { id: "san_francisco", name: "San Francisco", bbox: [-122.466, 37.730, -122.364, 37.810],
+    cam: { zoom: 12.5, pitch: 55, bearing: -30 } },
+  { id: "hong_kong", name: "Hong Kong", bbox: [114.116, 22.250, 114.204, 22.330],
+    cam: { zoom: 12.5, pitch: 55, bearing: -20 } },
+  { id: "venice", name: "Venice", bbox: [12.277, 45.395, 12.393, 45.475],
+    cam: { zoom: 12.55, pitch: 54, bearing: -25 } },
+  { id: "rotterdam_delta", name: "Rotterdam Delta", bbox: [4.09, 51.85, 4.55, 52.01],
+    cam: { zoom: 11.15, pitch: 50, bearing: 0 }, minArea: 250, seedSide: "w",
+    // river dikes are ~5 m NAP but thinner than a 66 m cell, so the banks
+    // read ~1.9 m and at +2 m the river overtopped everywhere at once.
+    // 2.5 m keeps +2 m dry while the +3 m gates scenario keeps its contrast.
+    bankMin: 2.5,
+    // permanent defense line, always burned into the DEM. 66 m cells average
+    // the real 10 m dunes and bank dikes down to ~1 m, so without it the sea
+    // walks straight over the beach and the gates protect nothing. Dune coast
+    // north of the mouth, dikes along both banks of the Nieuwe Waterweg up to
+    // the Maeslant gate ends, and the dammed/duned coast to the south — the
+    // waterway mouth is the ONLY opening; the gates close exactly that gap.
+    defenses: [[[4.180, 52.015], [4.120, 51.978], [4.167, 51.9615]],
+               [[4.095, 51.953], [4.161, 51.9455]],
+               [[4.095, 51.953], [4.095, 51.845]]],
+    barriers: { label: "storm-surge barriers",
+      // Maeslant crossing centered on the real Maeslantkering (4.164,
+      // 51.954); the waterway here spans lat ~51.946-51.960
+      segments: [[[4.161, 51.9455], [4.167, 51.9615]],
+                 [[4.276, 51.886], [4.293, 51.899]]] } },
+];
+const LVL_STEP = 0.25;
+
+const S = {
+  bbox: null, gw: 0, gh: 0, elev: null, flood: null,   // int16 decimeters
+  terrainPng: null, textureJpg: null,
+  stats: null, bld: [],
+  level: 1, mode: "conn", exag: 1, gates: false,
+  preset: PRESETS[0],
+  calls: 0, bytes: 0, isolate: null,
+  colLon: null, rowLat: null, cellM: 15,
+  statsBusy: false, runToken: 0,
+};
+
+function barriersParam() {
+  // permanent defenses (dune lines, dams the grid resolution flattens) are
+  // always burned in; the toggleable gate segments only when gates are on
+  const segs = [...(S.preset.defenses || []),
+                ...(S.gates && S.preset.barriers ? S.preset.barriers.segments : [])];
+  return segs.length ? JSON.stringify(segs) : "";
+}
+function syncUrl() {
+  const set = sp => { sp.set("city", S.preset.id); sp.set("level", S.level);
+    sp.set("exag", S.exag); sp.set("gates", S.gates ? "1" : "0");
+    sp.set("tab", document.body.classList.contains("build") ? "build" : "explore"); };
+  try { const u = new URL(location.href); set(u.searchParams);
+        history.replaceState(null, "", u); } catch (e) {}
+  try { const u = new URL(window.parent.location.href); set(u.searchParams);
+        window.parent.history.replaceState(null, "", u); } catch (e) {}
+}
+function urlParams() {
+  let p = new URLSearchParams(location.search);
+  if (!p.has("city") && !p.has("level")) {
+    try { const q = new URLSearchParams(window.parent.location.search);
+          if (q.has("city") || q.has("level")) p = q; } catch (e) {}
+  }
+  return p;
+}
+
+/* ------------------------------------------------ deck */
+const lighting = new deck.LightingEffect({
+  ambient: new deck.AmbientLight({ color: [255, 255, 255], intensity: 1.25 }),
+  dir: new deck.DirectionalLight({ color: [255, 250, 240], intensity: 1.3,
+                                   direction: [-2, -3, -1] }),
+});
+const dk = new deck.Deck({
+  parent: $("scene"),
+  views: new deck.MapView({ repeat: false }),
+  controller: { maxPitch: 85, inertia: 300 },
+  initialViewState: { longitude: 0, latitude: 0, zoom: 2, pitch: 0, bearing: 0 },
+  effects: [lighting],
+  layers: [],
+  getTooltip: deckTooltip,
+  parameters: { clearColor: [0, 0, 0, 0] },
+});
+
+function opacityFor(id) {
+  if (!S.isolate) return 1;
+  return S.isolate === id ? 1 : 0.12;
+}
+
+function wallPolygon(seg) {
+  // thin quad around a 2-point barrier segment, ~60 m wide
+  const [[x0, y0], [x1, y1]] = seg;
+  const mlat = (y0 + y1) / 2;
+  const w = 30 / 111320;                       // half-width in deg lat
+  let dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx * Math.cos(mlat * Math.PI / 180), dy) || 1e-9;
+  const nx = -dy / len * w, ny = dx * Math.cos(mlat * Math.PI / 180) ** 2 / len * w;
+  return [[x0 + nx, y0 + ny], [x1 + nx, y1 + ny], [x1 - nx, y1 - ny], [x0 - nx, y0 - ny]];
+}
+
+function buildLayers() {
+  if (!S.elev) return [];
+  const L = S.level, Ldm = L * 10, EX = S.exag, naive = S.mode === "naive";
+  const src = naive ? S.elev : S.flood;
+  const { gw, gh, elev, colLon, rowLat } = S;
+
+  // flooded cell indices (existing water included: rivers & bays rise too).
+  // Managed water (canals) and water cut off by a barrier never floods
+  // (flood=inf server-side) but still IS water today: render it static at 0.
+  const cells = [];
+  for (let i = 0; i < src.length; i++)
+    if (src[i] <= Ldm || elev[i] <= 0) cells.push(i);
+  const wet = i => src[i] <= Ldm;   // rising vs held-at-today's-level
+
+  const layers = [
+    new deck.TerrainLayer({
+      id: "terrain",
+      elevationData: S.terrainPng,
+      texture: S.textureJpg,
+      bounds: S.bbox,
+      elevationDecoder: { rScaler: 256 * EX, gScaler: EX, bScaler: EX / 256,
+                          offset: -32768 * EX },
+      // 1.0, not 3.5: coarse triangles sit metres above true ground in flat
+      // cities and BURY the shallow water columns (Miami showed flooded-red
+      // buildings standing on dry-looking mesh)
+      meshMaxError: 1.0,
+      loaders: [loaders.TerrainLoader],
+      loadOptions: { worker: false },
+      pickable: true,
+      opacity: opacityFor("terrain"),
+      updateTriggers: { elevationDecoder: [EX] },
+    }),
+    new deck.GridCellLayer({
+      id: "water",
+      data: cells,
+      cellSize: S.cellM * 1.15,
+      extruded: true,
+      getPosition: i => [colLon[i % gw], rowLat[Math.floor(i / gw) + 1]],
+      getElevation: i => (wet(i) ? Math.max(L, 0.06) : 0.06) * EX,
+      getFillColor: i => {
+        const depth = wet(i) ? L - Math.max(elev[i] / 10, 0) : 0;
+        const t = Math.min(Math.max(depth / 6, 0), 1);
+        return [70 - 45 * t, 195 - 115 * t, 250 - 70 * t, 62 + 76 * t];
+      },
+      material: false,
+      pickable: true,
+      opacity: opacityFor("water"),
+      updateTriggers: { getElevation: [L, EX], getFillColor: [L] },
+    }),
+    new deck.SolidPolygonLayer({
+      id: "bld",
+      data: S.bld,
+      extruded: true,
+      getPolygon: d => d.p.map(([x, y]) => [x, y, (d.g || 0) * EX]),
+      getElevation: d => d.h * EX,
+      getFillColor: d => {
+        if (d.fl <= L) {
+          const t = Math.min((L - d.fl) / 4, 1);
+          return [235 - 70 * t, 88 - 30 * t, 78 - 20 * t, 255];
+        }
+        return [206, 210, 218, 255];
+      },
+      material: { ambient: 0.42, diffuse: 0.62, shininess: 40, specularColor: [60, 70, 90] },
+      pickable: true,
+      opacity: opacityFor("bld"),
+      updateTriggers: { getFillColor: [L], getElevation: [EX], getPolygon: [EX] },
+    }),
+    new deck.SolidPolygonLayer({
+      id: "gates",
+      data: (S.gates && S.preset.barriers) ? S.preset.barriers.segments : [],
+      extruded: true,
+      getPolygon: seg => wallPolygon(seg),
+      getElevation: 16 * EX,
+      getFillColor: [168, 178, 192, 245],
+      material: { ambient: 0.5, diffuse: 0.55, shininess: 60, specularColor: [120, 130, 150] },
+      updateTriggers: { getElevation: [EX] },
+    }),
+    new deck.ScatterplotLayer({
+      id: "poi",
+      data: (S.stats ? S.stats.pois.pois : []).filter(p => p.flood_level <= L),
+      getPosition: p => [p.lon, p.lat, (L + 0.5) * EX + 6],
+      getFillColor: [255, 76, 66, 210],
+      radiusMinPixels: 3, radiusMaxPixels: 5,
+      pickable: true,
+      opacity: opacityFor("poi"),
+    }),
+  ];
+  return layers;
+}
+
+let raf = null;
+function redraw() {
+  if (raf) return;
+  raf = requestAnimationFrame(() => { raf = null; dk.setProps({ layers: buildLayers() }); });
+}
+
+/* ------------------------------------------------ tooltip */
+function gridAt(coord) {
+  if (!S.elev || !coord) return null;
+  const [xmin, ymin, xmax, ymax] = S.bbox;
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
+  const my0 = merc(ymax), my1 = merc(ymin);
+  const c = Math.round((coord[0] - xmin) / (xmax - xmin) * (S.gw - 1));
+  const r = Math.round((my0 - merc(coord[1])) / (my0 - my1) * (S.gh - 1));
+  if (c < 0 || c >= S.gw || r < 0 || r >= S.gh) return null;
+  const i = r * S.gw + c;
+  return { elev: S.elev[i] / 10, fl: S.flood[i] / 10 };
+}
+function deckTooltip(info) {
+  if (!info.layer) return null;
+  const st = "background:#0e1620f0;border:1px solid #232e3d;border-radius:8px;" +
+             "color:#e9eef4;font-size:12px;padding:7px 10px;";
+  if (info.layer.id === "bld" && info.object) {
+    const d = info.object;
+    const wet = d.fl <= S.level;
+    return { html: `<b>${d.h.toFixed(0)} m tall</b> · ground floods at
+      <b style="color:#46c8f5">+${Math.max(d.fl, 0).toFixed(2)} m</b><br>
+      <span style="color:${wet ? "#ff6257" : "#3ddc97"}">${wet
+        ? `~${Math.max(S.level - d.fl, 0).toFixed(1)} m of water at its base`
+        : "dry at this level"}</span>`, style: { ...styleObj(st) } };
+  }
+  if (info.layer.id === "poi" && info.object) {
+    const p = info.object;
+    return { html: `<b>${p.name}</b><br>${p.kind.replace("_", " ")} · floods at
+      <b style="color:#46c8f5">+${Math.max(p.flood_level, 0).toFixed(2)} m</b>`,
+      style: { ...styleObj(st) } };
+  }
+  const g = gridAt(info.coordinate);
+  if (!g) return null;
+  const wet = (S.mode === "naive" ? g.elev : g.fl) <= S.level;
+  return { html: `ground <b>${g.elev.toFixed(1)} m</b> · floods at
+    <b style="color:#46c8f5">+${Math.max(g.fl, 0).toFixed(2)} m</b>${wet
+      ? ` · <span style="color:#46c8f5">${(S.level - Math.max(g.elev, 0)).toFixed(1)} m deep</span>` : ""}`,
+    style: { ...styleObj(st) } };
+}
+function styleObj(css) {
+  const o = {};
+  css.split(";").forEach(kv => { const [k, v] = kv.split(":"); if (k && v) o[k.trim()] = v.trim(); });
+  return o;
+}
+
+/* ------------------------------------------------ python bridge */
+async function py(script, params) {
+  S.calls++; $("b-calls").textContent = S.calls;
+  const r = await fused.runPython(script, params);
+  S.bytes += JSON.stringify(r).length;
+  const kb = S.bytes / 1024;
+  $("b-recv").textContent = kb > 1024 ? (kb / 1024).toFixed(1) + " MB" : Math.round(kb) + " KB";
+  return r;
+}
+
+/* ------------------------------------------------ chain status (build tab) */
+function stat(id, state, txt) {
+  const el = $("st-" + id);
+  el.classList.toggle("done", state === "done");
+  el.innerHTML = (state === "done" ? '<span class="ok">✓</span> ' : "") + (txt || "");
+}
+function panelLoading(g, on) {
+  document.querySelector(`#chain .cz[data-g=${g}]`).classList.toggle("loading", on);
+}
+
+/* ------------------------------------------------ run a city */
+async function runCity(preset, keepCam) {
+  const token = ++S.runToken;
+  S.preset = preset;
+  S.stats = null; S.bld = []; S.elev = null; S.isolate = null;
+  if (!preset.barriers) S.gates = false;
+  $("gatesrow").style.display = preset.barriers ? "flex" : "none";
+  syncUrl();
+  renderStats(); renderChart();
+  $("scrim").classList.remove("hide");
+  $("scrimtxt").textContent = "building terrain…";
+  ["elev", "flood", "bld", "thresh"].forEach(g => panelLoading(g, true));
+  stat("terrain", "run", "mosaicking…");
+  stat("flood", "run", "flooding…");
+  stat("bld", "run", "");
+
+  const [xmin, ymin, xmax, ymax] = preset.bbox;
+  if (!keepCam) dk.setProps({ initialViewState: {
+    longitude: (xmin + xmax) / 2, latitude: (ymin + ymax) / 2 - 0.006,
+    ...preset.cam, transitionDuration: 900, transitionInterpolator: new deck.FlyToInterpolator(),
+  }});
+
+  try {
+    const r = await py("./flood_mask.py",
+      { xmin, ymin, xmax, ymax, barriers: barriersParam(),
+        seed_side: preset.seedSide || "", bank_min: preset.bankMin || 0 });
+    if (token !== S.runToken) return;
+    if (r.error) { $("scrimtxt").textContent = r.error; return; }
+    S.bbox = r.bbox; S.gw = r.grid_w; S.gh = r.grid_h;
+    S.elev = decodeI16(r.elev_b64); S.flood = decodeI16(r.flood_b64);
+    S.terrainPng = r.terrain_png; S.textureJpg = r.texture_jpg;
+    precomputeAxes();
+    stat("terrain", "done", `${r.meta.n_tiles}+${r.meta.n_sat_tiles} tiles · ${r.meta.ms_tiles} ms`);
+    stat("flood", "done", `${S.gw}×${S.gh} grid · ${r.meta.n_water_polys} water polys · ${r.meta.ms_flood} ms`);
+    $("scrim").classList.add("hide");
+    redraw();
+    btsDrawStatic();
+    ["elev", "flood", "thresh"].forEach(g => panelLoading(g, false));
+  } catch (e) {
+    $("scrimtxt").textContent = "terrain failed: " + e.message;
+    return;
+  }
+  runStats(preset, token);
+}
+
+async function runStats(preset, token) {
+  if (S.statsBusy) return;
+  S.statsBusy = true;
+  stat("bld", "run", "querying S3…");
+  const [xmin, ymin, xmax, ymax] = preset.bbox;
+  try {
+    for (let i = 0; i < 120; i++) {
+      const r = await py("./overture_stats.py", { xmin, ymin, xmax, ymax,
+        barriers: barriersParam(), min_area_m2: preset.minArea || 0,
+        seed_side: preset.seedSide || "", bank_min: preset.bankMin || 0 });
+      if (token !== S.runToken) break;
+      if (r.ready) {
+        S.stats = r; S.bld = r.buildings.bld;
+        stat("bld", "done",
+          `${r.buildings.total.toLocaleString()} bldgs · ${(r.timings.buildings / 1000).toFixed(1)} s<br>` +
+          `+ ${r.pois.pois.length} places · ${r.roads.total_km.toLocaleString()} km roads`);
+        $("sqltxt").textContent = r.sql;
+        renderStats(); renderChart(); redraw();
+        btsDrawBld();
+        panelLoading("bld", false);
+        break;
+      }
+      stat("bld", "run", `${r.next_step} · ${r.done}/${r.total}`);
+      await new Promise(res => setTimeout(res, 450));
+    }
+  } catch (e) {
+    stat("bld", "run", "failed — retry?");
+    console.error(e);
+  }
+  S.statsBusy = false;
+}
+
+/* ------------------------------------------------ grid helpers */
+function decodeI16(b64) {
+  const bin = atob(b64), buf = new ArrayBuffer(bin.length);
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Int16Array(buf);
+}
+function precomputeAxes() {
+  const [xmin, ymin, xmax, ymax] = S.bbox;
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
+  const imerc = m => (2 * Math.atan(Math.exp(m)) - Math.PI / 2) * 180 / Math.PI;
+  const my0 = merc(ymax), my1 = merc(ymin);
+  S.colLon = new Float64Array(S.gw);
+  for (let c = 0; c < S.gw; c++) S.colLon[c] = xmin + c / S.gw * (xmax - xmin);
+  S.rowLat = new Float64Array(S.gh + 1);
+  for (let r = 0; r <= S.gh; r++) S.rowLat[r] = imerc(my0 + r / S.gh * (my1 - my0));
+  const midLat = (ymin + ymax) / 2;
+  S.cellM = (xmax - xmin) / S.gw * 111320 * Math.cos(midLat * Math.PI / 180);
+}
+
+/* ------------------------------------------------ stats + chart */
+function lvIndex() { return Math.round(S.level / LVL_STEP); }
+function renderStats() {
+  const i = lvIndex(), st = S.stats;
+  $("impact").classList.toggle("loading", !st);
+  const spin = '<span class="minispin"></span>';
+  $("s-bld").innerHTML = st ? st.buildings.curve[i].toLocaleString() : spin;
+  $("s-rd").innerHTML  = st ? st.roads.curve_km[i].toLocaleString() + " km" : spin;
+  $("s-poi").innerHTML = st ? String(st.pois.pois.filter(p => p.flood_level <= S.level).length) : spin;
+}
+function renderChart() {
+  const svg = $("chart"), st = S.stats;
+  if (!st || !st.buildings.total) { svg.innerHTML = ""; return; }
+  const W = 316, H = 76, padB = 13, padT = 6;
+  const max = st.buildings.curve[st.buildings.curve.length - 1] || 1;
+  const pts = st.buildings.curve.map((v, i) =>
+    `${(i / 40) * W},${H - padB - (v / max) * (H - padB - padT)}`).join(" ");
+  const x = (S.level / 10) * W;
+  svg.innerHTML =
+    `<polyline points="${pts}" fill="none" stroke="#46c8f5" stroke-width="1.6"/>` +
+    `<line x1="${x}" y1="0" x2="${x}" y2="${H - padB}" stroke="#ffffff55"/>` +
+    `<text x="1" y="${H - 3}">0 m</text><text x="${W - 30}" y="${H - 3}">+10 m</text>` +
+    `<text x="1" y="${padT + 4}">buildings underwater →</text>`;
+}
+$("chart").addEventListener("click", e => {
+  const r = $("chart").getBoundingClientRect();
+  setLevel(Math.round(((e.clientX - r.left) / r.width) * 10 / LVL_STEP) * LVL_STEP);
+});
+
+/* ------------------------------------------------ controls */
+function setLevel(v) {
+  S.level = Math.min(10, Math.max(0, +v || 0));
+  $("slider").value = S.level;
+  $("lvl").innerHTML = `+${S.level.toFixed(2)}<small> m</small>`;
+  syncUrl();
+  renderStats(); renderChart(); redraw();
+}
+$("slider").addEventListener("input", e => setLevel(+e.target.value));
+
+const EXAGS = [1, 3, 6];
+EXAGS.forEach(x => {
+  const b = document.createElement("button");
+  b.textContent = x + "×";
+  b.dataset.x = x;
+  b.onclick = () => { S.exag = x; document.querySelectorAll("#exag button")
+    .forEach(e => e.classList.toggle("on", e === b)); syncUrl(); redraw(); };
+  $("exag").appendChild(b);
+});
+function markExag() {
+  document.querySelectorAll("#exag button")
+    .forEach(e => e.classList.toggle("on", +e.dataset.x === S.exag));
+}
+
+$("gateschk").addEventListener("change", e => {
+  S.gates = e.target.checked;
+  syncUrl();
+  const t0 = performance.now();
+  // same AOI, new elevation reality: re-run the flood fill, then refresh
+  // curves against the new grid (SQL results are already cached)
+  runCity(S.preset, true);
+  const iv = setInterval(() => {
+    if (S.stats) { clearInterval(iv);
+      $("gatesms").textContent = `re-flooded in ${((performance.now() - t0) / 1000).toFixed(1)} s`; }
+  }, 200);
+});
+
+PRESETS.forEach(p => {
+  const b = document.createElement("button");
+  b.textContent = p.name;
+  b.dataset.id = p.id;
+  b.onclick = () => {
+    document.querySelectorAll("#presets button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    runCity(p);
+  };
+  $("presets").appendChild(b);
+});
+
+/* ---- explore vs how-it's-built tab */
+function setTab(build) {
+  document.body.classList.toggle("build", build);
+  $("tab-build").classList.toggle("on", build);
+  $("tab-explore").classList.toggle("on", !build);
+  syncUrl();
+}
+$("tab-explore").onclick = () => setTab(false);
+$("tab-build").onclick = () => setTab(true);
+$("statload-link").onclick = () => setTab(true);
+$("scrimlink").onclick = () => setTab(true);
+
+/* ---- behind the scenes: draw the ACTUAL grids Python returned */
+let btsLvl = 2.0;
+
+function drawGrid(cvId, colorFn) {
+  const cv = $(cvId);
+  if (!cv || !S.elev) return;
+  const { gw, gh } = S;
+  cv.width = gw; cv.height = gh;
+  const ctx = cv.getContext("2d");
+  const img = ctx.createImageData(gw, gh);
+  const d = img.data;
+  for (let i = 0; i < gw * gh; i++) {
+    const c = colorFn(i);
+    d[4 * i] = c[0]; d[4 * i + 1] = c[1]; d[4 * i + 2] = c[2]; d[4 * i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t,
+                            a[2] + (b[2] - a[2]) * t];
+
+function btsDrawStatic() {                      // once per city
+  drawGrid("cv-elev", i => {
+    const e = S.elev[i] / 10;
+    if (e <= 0) return [11, 34, 58];                       // water
+    if (e >= 19) return [255, 236, 170];                   // burned dikes/gates
+    return lerp3([34, 62, 46], [212, 196, 150], Math.min(e / 12, 1) ** 0.55);
+  });
+  drawGrid("cv-flood", i => {
+    const f = S.flood[i] / 10;
+    if (f <= 0) return [70, 200, 245];                     // the sea itself
+    if (f > 10) return [14, 19, 28];                       // never reached
+    return lerp3([120, 205, 250], [12, 55, 125], f / 10);
+  });
+  btsDrawLive();
+}
+let btsMode = "conn";                           // conn | naive (threshold panel)
+function btsDrawLive() {                        // on mini-slider drag / mode switch
+  const L = btsLvl, Ldm = L * 10;
+  let fake = 0;
+  drawGrid("cv-thresh", btsMode === "naive"
+    ? i => {                                    // show what naive would wrongly flood
+        const e = S.elev[i];
+        if (e <= 0) return [11, 34, 58];                   // today's water
+        if (S.flood[i] <= Ldm) return [70, 200, 245];      // connected flood
+        if (e <= Ldm) { fake++; return [255, 138, 61]; }   // naive-only
+        const g = 34 + Math.min(e / 150, 1) * 60;
+        return [g, g + 6, g + 14];
+      }
+    : i => {
+        const e = S.elev[i] / 10;
+        if (S.flood[i] <= Ldm || e <= 0) {
+          const depth = Math.max(L - Math.max(e, 0), 0);
+          return lerp3([80, 200, 246], [15, 75, 160], Math.min(depth / 6, 1));
+        }
+        const g = 42 + Math.min(e / 15, 1) * 95;           // dry land, faint relief
+        return [g * .85, g * .95, g * .8];
+      });
+  $("bts-fake").textContent = fake.toLocaleString();
+  $("bts-fakeline").style.display = btsMode === "naive" ? "" : "none";
+  $("bts-lvlv").textContent = `+${L.toFixed(2)} m`;
+}
+$("bts-lvl").addEventListener("input", e => { btsLvl = +e.target.value; btsDrawLive(); });
+function btsSetMode(m) {
+  btsMode = m;
+  $("bm-conn").classList.toggle("on", m === "conn");
+  $("bm-naive").classList.toggle("on", m === "naive");
+  btsDrawLive();
+}
+$("bm-conn").onclick = () => btsSetMode("conn");
+$("bm-naive").onclick = () => btsSetMode("naive");
+
+/* buildings panel: every footprint DuckDB fetched, colored by flood level */
+function btsDrawBld() {
+  const cv = $("cv-bld");
+  if (!cv || !S.bld.length || !S.bbox) return;
+  const K = 2, gw = S.gw * K, gh = S.gh * K;
+  cv.width = gw; cv.height = gh;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#0e1420";
+  ctx.fillRect(0, 0, gw, gh);
+  const [xmin, ymin, xmax, ymax] = S.bbox;
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
+  const my0 = merc(ymax), my1 = merc(ymin);
+  for (const d of S.bld) {
+    const f = d.fl;
+    const c = f > 10 ? [62, 72, 88]
+      : lerp3([120, 205, 250], [12, 55, 125], f / 10);
+    ctx.fillStyle = `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+    ctx.beginPath();
+    const p = d.p;
+    ctx.moveTo((p[0][0] - xmin) / (xmax - xmin) * gw,
+               (my0 - merc(p[0][1])) / (my0 - my1) * gh);
+    for (let i = 1; i < p.length; i++)
+      ctx.lineTo((p[i][0] - xmin) / (xmax - xmin) * gw,
+                 (my0 - merc(p[i][1])) / (my0 - my1) * gh);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+/* the live-SQL drawer */
+$("sqlbtn").onclick = () => {
+  const open = !$("sqldrawer").classList.contains("open");
+  $("sqldrawer").classList.toggle("open", open);
+  $("sqlbtn").innerHTML = open ? "&#9662; hide the query" : "&#9656; show the live query";
+  if (open) $("sqldrawer").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
+
+/* cross-hover: anatomy tokens <-> chain panels */
+function focusG(g) {
+  $("chain").classList.toggle("focused", !!g);
+  $("anat").classList.toggle("focused", !!g);
+  document.querySelectorAll("#chain .cz")
+    .forEach(z => z.classList.toggle("hl", z.dataset.g === g));
+  document.querySelectorAll("#anatcode .tk")
+    .forEach(t => t.classList.toggle("hl", t.dataset.g === g));
+}
+document.querySelectorAll("#anatcode .tk, #chain .cz").forEach(el => {
+  el.addEventListener("mouseenter", () => focusG(el.dataset.g));
+  el.addEventListener("mouseleave", () => focusG(null));
+});
+
+/* ---- boot from URL (?city=&level=&exag=&gates=&tab=) so states are debuggable */
+const Q = urlParams();
+const startPreset = PRESETS.find(p => p.id === Q.get("city")) || PRESETS[0];
+S.exag = EXAGS.includes(+Q.get("exag")) ? +Q.get("exag") : 1;
+S.gates = Q.get("gates") === "1" && !!startPreset.barriers;
+$("gateschk").checked = S.gates;
+markExag();
+if (Q.get("tab") === "build") setTab(true);
+document.querySelector(`#presets button[data-id="${startPreset.id}"]`).classList.add("on");
+
+setLevel(Q.has("level") ? +Q.get("level") : 1);
+runCity(startPreset);
+</script>
+</body>
+</html>
