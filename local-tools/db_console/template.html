@@ -898,7 +898,9 @@
                             source: body.file || body.url };
       active = pendingConnection;
       closePicker();
-      setParams({ conn: body.file || body.url || "", sql: "" });
+      // Keep the credential-bearing source only in memory. Never put a raw
+      // connection URL into fused.params, which can be shared or persisted.
+      setEditorText("");
       render();
       return;
     }

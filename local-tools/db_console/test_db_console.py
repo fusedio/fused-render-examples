@@ -100,6 +100,8 @@ def test_template_guards_stateful_ui_regressions():
     assert "if (fetchingMore || !lastResult" in template
     assert "if (running) return;" in template
     assert "isUrl ? { url: state.conn } : { file: state.conn }" in template
+    assert "setParams({ conn: body.file || body.url" not in template
+    assert "credential-bearing source only in memory" in template
     for control_id in ("open-connect", "run", "cancel", "rail-toggle", "theme-toggle",
                        "tab-results", "tab-columns", "tab-history", "prev-page", "next-page"):
         assert f'id="{control_id}"' in template
