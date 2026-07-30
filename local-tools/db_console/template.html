@@ -396,6 +396,8 @@
   let queryId = null;
   let schemaPromise = null;
   let pendingConnection = null;
+  let sessionSql = null;
+  let fetchingMore = false;
   const editorTheme = new CM.Compartment();
 
   function escapeHtml(value) {
@@ -482,7 +484,8 @@
       return;
     }
     // conn is a file path (.dbconn / .sqlite / .duckdb) — reconnect silently.
-    const result = await apiPost("/connect", { file: state.conn });
+    const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(state.conn);
+    const result = await apiPost("/connect", isUrl ? { url: state.conn } : { file: state.conn });
     if (result.available === false || result.error) { active = { pending: result, path: state.conn, source: state.conn }; return; }
     await refreshConns();
     active = conns.find((c) => c.conn_id === result.conn_id) || result;
@@ -760,8 +763,8 @@
     clearTimeout(sqlSyncTimer);
     sqlSyncTimer = setTimeout(() => {
       const text = editorText();
-      if (text.length <= SQL_MAX) setParams({ sql: text }); // longer stays session-only
-      else if (fused.params.get("sql")) fused.params.set("sql", "");
+      if (text.length <= SQL_MAX) { sessionSql = null; setParams({ sql: text }); }
+      else { sessionSql = text; if (fused.params.get("sql")) fused.params.set("sql", ""); }
     }, 400);
   }
 
@@ -797,7 +800,9 @@
 
   async function cancelQuery() {
     if (!queryId || !active) return;
+    ++generation;
     await apiPost(`/cancel?c=${encodeURIComponent(active.conn_id)}`, { query_id: queryId }).catch(() => {});
+    queryId = null;
     running = false; runBtn.disabled = false; cancelBtn.hidden = true;
     resultSummary.textContent = "Cancelled";
   }
@@ -822,7 +827,9 @@
   }
 
   async function fetchMore() {
-    if (!lastResult || lastResult.browse || !lastResult.more || !active) return;
+    if (fetchingMore || !lastResult || lastResult.browse || !lastResult.more || !active) return;
+    fetchingMore = true;
+    nextPage.disabled = true;
     try {
       const data = await apiGet(`/fetch?c=${encodeURIComponent(active.conn_id)}&query_id=${encodeURIComponent(lastResult.query_id)}&n=${currentState().limit}`);
       if (data.error) { setError(data); return; }
@@ -837,6 +844,9 @@
       pagePosition.textContent = data.more ? "more rows available" : "end of result";
     } catch (err) {
       setError(err);
+    } finally {
+      fetchingMore = false;
+      if (lastResult && !lastResult.browse) nextPage.disabled = !lastResult.more;
     }
   }
 
@@ -938,7 +948,8 @@
     const state = currentState();
     fused.autoReload(!looksLikePath(state.conn) || (fused.params.get("_file") || "") === state.conn);
     renderChrome(state);
-    setEditorText(state.sql);
+    if (running) return;
+    setEditorText(sessionSql !== null ? sessionSql : state.sql);
     // Paint the shell before starting the (potentially cold) local daemon.
     if (!state.conn) noConnection();
     try {

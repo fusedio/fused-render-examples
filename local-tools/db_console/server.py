@@ -180,7 +180,7 @@ def _resolve_relative_db(url, base_dir):
     return url
 
 
-def _load_dbconn(path):
+def _load_dbconn(path, readonly=True):
     """Parse a `.dbconn` JSON descriptor. `url_env` names an env var the daemon
     reads so a checked-in descriptor stays credential-free; it wins over `url`."""
     with open(path, encoding="utf-8") as f:
@@ -194,8 +194,20 @@ def _load_dbconn(path):
         raise ValueError(f"{os.path.basename(path)}: no url (or url_env is unset)")
     url = _resolve_relative_db(url, os.path.dirname(os.path.abspath(path)))
     file_backed = url.lower().startswith(("sqlite://", "duckdb://"))
+    file_path = None
+    if file_backed:
+        import urllib.parse
+        rest = url.split(":///", 1)[1].split("?", 1)[0]
+        if rest.startswith("file:"):
+            rest = rest[5:]
+        file_path = os.path.abspath(urllib.parse.unquote(rest))
+        if url.lower().startswith("sqlite://"):
+            url = _sqlite_url(file_path, readonly=readonly)
+        else:
+            url = _duckdb_url(file_path)
     return {"url": url, "name": spec.get("name") or os.path.basename(path),
-            "options": spec.get("options") or {}, "file_backed": file_backed}
+            "options": spec.get("options") or {}, "file_backed": file_backed,
+            "file": file_path}
 
 
 def _resolve_file(path, readonly=True):
@@ -207,7 +219,7 @@ def _resolve_file(path, readonly=True):
     ap = os.path.abspath(os.path.expanduser(path))
     low = ap.lower()
     if low.endswith(".dbconn"):
-        return _load_dbconn(ap)
+        return _load_dbconn(ap, readonly=readonly)
     if low.endswith((".sqlite", ".sqlite3", ".db")):
         return {"url": _sqlite_url(ap, readonly), "name": os.path.basename(ap),
                 "options": {}, "file_backed": True, "file": ap}
@@ -437,8 +449,10 @@ def _serve():
         # is explicit; the pool is deliberately one connection per engine.
         if url_obj.get_backend_name() == "sqlite":
             connect_args.setdefault("check_same_thread", False)
-        return sa.create_engine(url_obj, pool_size=max(2, CURSORS_PER_CONN), max_overflow=1,
-                                pool_pre_ping=True, connect_args=connect_args)
+        options = {"pool_pre_ping": True, "connect_args": connect_args}
+        if not (url_obj.get_backend_name() == "sqlite" and url_obj.database == ":memory:"):
+            options.update(pool_size=max(2, CURSORS_PER_CONN), max_overflow=1)
+        return sa.create_engine(url_obj, **options)
 
     def _get_engine(conn_id):
         with eng_lock:

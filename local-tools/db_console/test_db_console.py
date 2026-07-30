@@ -82,6 +82,26 @@ def test_dbconn_relative_sqlite_is_resolved(tmp_path):
     assert os.path.abspath(str(tmp_path / "demo.sqlite")).replace("\\", "/") in url.replace("\\", "/")
 
 
+def test_dbconn_sqlite_is_reopened_readonly(tmp_path):
+    db = tmp_path / "demo.sqlite"
+    db.write_bytes(b"")
+    p = tmp_path / "readonly.dbconn"
+    p.write_text(json.dumps({"url": "sqlite:///./demo.sqlite"}), encoding="utf-8")
+    desc = server._load_dbconn(str(p), readonly=True)
+    assert desc["file_backed"] is True
+    assert desc["file"] == os.path.abspath(str(db))
+    assert "mode=ro" in desc["url"]
+
+
+def test_template_guards_stateful_ui_regressions():
+    template = open(os.path.join(os.path.dirname(__file__), "template.html"), encoding="utf-8").read()
+    assert "let sessionSql = null" in template
+    assert "setEditorText(sessionSql !== null ? sessionSql : state.sql)" in template
+    assert "if (fetchingMore || !lastResult" in template
+    assert "if (running) return;" in template
+    assert "isUrl ? { url: state.conn } : { file: state.conn }" in template
+
+
 def test_resolve_file_synthesizes_urls(tmp_path):
     sq = tmp_path / "a.sqlite"
     sq.write_bytes(b"")
