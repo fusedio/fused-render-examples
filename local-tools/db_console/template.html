@@ -395,6 +395,7 @@
   let running = false;
   let queryId = null;
   let schemaPromise = null;
+  let pendingConnection = null;
   const editorTheme = new CM.Compartment();
 
   function escapeHtml(value) {
@@ -883,9 +884,11 @@
     const result = await apiPost("/connect", body);
     if (result.available === false) {
       // surface the missing-driver card in the main area
-      active = { pending: result, path: body.file || body.url };
+      pendingConnection = { pending: result, path: body.file || body.url,
+                            source: body.file || body.url };
+      active = pendingConnection;
       closePicker();
-      setParams({ conn: body.file || "", sql: "" });
+      setParams({ conn: body.file || body.url || "", sql: "" });
       render();
       return;
     }
@@ -940,6 +943,11 @@
     if (!state.conn) noConnection();
     try {
       await ensureDaemon();
+      if (pendingConnection && pendingConnection.path === state.conn) {
+        active = pendingConnection;
+        render();
+        return;
+      }
       const prev = active && active.conn_id;
       await resolveConnection(state);
       if (active && active.conn_id && active.conn_id !== prev) {
@@ -1062,7 +1070,13 @@
     const btn = document.getElementById("install-driver");
     if (btn) { btn.disabled = true; btn.textContent = "Installing…"; }
     const res = await apiPost("/install_driver", { name }).catch((e) => ({ ok: false, error: errorMessage(e) }));
-    if (res.ok) { active = null; load(); }
+    if (res.ok) {
+      const source = pendingConnection && pendingConnection.path;
+      pendingConnection = null;
+      active = null;
+      if (source) doConnect(source.includes("://") ? { url: source } : { file: source });
+      else load();
+    }
     else if (btn) { btn.disabled = false; btn.textContent = "Install failed — retry"; showInstallError(res.error); }
   }
   function showInstallError(msg) {

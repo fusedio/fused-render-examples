@@ -193,8 +193,9 @@ def _load_dbconn(path):
     if not url:
         raise ValueError(f"{os.path.basename(path)}: no url (or url_env is unset)")
     url = _resolve_relative_db(url, os.path.dirname(os.path.abspath(path)))
+    file_backed = url.lower().startswith(("sqlite://", "duckdb://"))
     return {"url": url, "name": spec.get("name") or os.path.basename(path),
-            "options": spec.get("options") or {}, "file_backed": False}
+            "options": spec.get("options") or {}, "file_backed": file_backed}
 
 
 def _resolve_file(path, readonly=True):
@@ -831,7 +832,9 @@ def _serve():
         import subprocess
         pkg = OPTIONAL_DRIVERS[name][0]
         uv = shutil.which("uv") or os.path.expanduser("~/.local/bin/uv")
-        target = _venv_python(DAEMON_VENV) or sys.executable
+        if not os.path.exists(uv):
+            return {"ok": False, "error": "uv is unavailable; install uv and restart the console."}
+        target = sys.executable
         r = subprocess.run([uv, "pip", "install", "-p", target, pkg],
                            capture_output=True, text=True, timeout=600,
                            **_no_window_kwargs())
