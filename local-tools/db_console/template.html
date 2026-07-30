@@ -642,10 +642,13 @@
     resultSummary.textContent = "";
     const p = active && active.pending;
     if (p && p.available === false) {
+      const action = p.installable
+        ? `<div class="actions"><button class="button run-button" id="install-driver" data-name="${escapeHtml(p.dialect)}" type="button">Install ${escapeHtml(p.missing)}</button></div>`
+        : `<span>The local daemon normally bundles this driver. Restart the console, or install <code>${escapeHtml(p.missing)}</code> in its Python environment.</span>`;
       gridScroll.innerHTML = `<div class="status">
         <strong>Driver not installed</strong>
         <span>This <code>${escapeHtml(p.dialect || "")}</code> connection needs <code>${escapeHtml(p.missing)}</code>. ${escapeHtml(p.hint || "")}</span>
-        <div class="actions"><button class="button run-button" id="install-driver" data-name="${escapeHtml(p.dialect)}" type="button">Install ${escapeHtml(p.missing)}</button></div></div>`;
+        ${action}</div>`;
       return;
     }
     if (p && p.error) {
@@ -1020,19 +1023,25 @@
     if (tr && lastResult && !tr.classList.contains("row-detail")) toggleRowDetail(tr);
   });
 
-  function toggleRowDetail(tr) {
+  async function toggleRowDetail(tr) {
     const next = tr.nextElementSibling;
     if (next && next.classList.contains("row-detail")) { next.remove(); tr.classList.remove("expanded"); return; }
     const ri = number(tr.dataset.row);
     const row = lastResult.rows[ri] || [];
     const cols = lastResult.columns || [];
-    const kv = cols.map((c, i) => {
-      const v = row[i];
-      const disp = v && typeof v === "object" && "_trunc" in v ? escapeHtml(v.v) + "…" : renderCell(v);
-      return `<dt>${escapeHtml(c)}</dt><dd>${disp}</dd>`;
-    }).join("");
     tr.classList.add("expanded");
-    tr.insertAdjacentHTML("afterend", `<tr class="row-detail"><td colspan="${cols.length}"><dl class="kv">${kv}</dl></td></tr>`);
+    tr.insertAdjacentHTML("afterend", `<tr class="row-detail"><td colspan="${cols.length}">Loading full values&hellip;</td></tr>`);
+    const detail = tr.nextElementSibling;
+    const result = lastResult;
+    const values = await Promise.all(row.map(async (v, i) => {
+      if (!v || typeof v !== "object" || !("_trunc" in v) || !result.query_id || !active) return v;
+      const path = `/cell?c=${encodeURIComponent(active.conn_id)}&query_id=${encodeURIComponent(result.query_id)}&row=${ri}&col=${i}`;
+      const data = await apiGet(path).catch(() => null);
+      return data && !data.error ? data.value : v.v;
+    }));
+    if (!detail || !detail.isConnected || lastResult !== result) return;
+    const kv = cols.map((c, i) => `<dt>${escapeHtml(c)}</dt><dd>${renderCell(values[i])}</dd>`).join("");
+    detail.querySelector("td").innerHTML = `<dl class="kv">${kv}</dl>`;
   }
 
   async function installDriver(name) {

@@ -302,7 +302,8 @@ def _missing_driver_payload(backend, detail=""):
     pkg, hint = OPTIONAL_DRIVERS.get(
         backend, (BACKEND_PACKAGE.get(backend, backend), f"Install the `{backend}` driver."))
     return {"available": False, "dialect": backend, "missing": pkg,
-            "hint": hint, "detail": detail}
+            "hint": hint, "detail": detail,
+            "installable": backend in OPTIONAL_DRIVERS}
 
 
 def _jsonify(value):
@@ -397,6 +398,16 @@ def _build_order(preparer, sort, columns):
     return f" ORDER BY {preparer.quote_identifier(col)} {direction.upper()}"
 
 
+def _table_page_sql(backend, relation, where, order):
+    """Build dialect-correct pagination for the schema-browser grid."""
+    base = f"SELECT * FROM {relation}{where}"
+    if backend == "mssql":
+        # SQL Server requires ORDER BY before OFFSET/FETCH. A caller-selected
+        # sort is honoured; the fallback supplies syntax when none is chosen.
+        return f"{base}{order or ' ORDER BY (SELECT 0)'} OFFSET :_off ROWS FETCH NEXT :_lim ROWS ONLY"
+    return f"{base}{order} LIMIT :_lim OFFSET :_off"
+
+
 # ================================================================ daemon
 def _serve():
     import secrets
@@ -413,13 +424,20 @@ def _serve():
     engines = {}          # conn_id -> engine record
     eng_lock = threading.Lock()
     schema_cache = {}     # (conn_id, include_row_counts) -> schema dict
+    schema_lock = threading.Lock()
     cursors = {}          # (conn_id, query_id) -> open server-side cursor record
     running = {}          # (conn_id, query_id) -> raw connection of an in-flight query
     cur_lock = threading.Lock()
 
     def _build_engine(url_obj, options):
+        connect_args = dict(options or {})
+        # Query execution is timed in a worker while pages and cell expansion
+        # happen on request threads. SQLite rejects that hand-off unless this
+        # is explicit; the pool is deliberately one connection per engine.
+        if url_obj.get_backend_name() == "sqlite":
+            connect_args.setdefault("check_same_thread", False)
         return sa.create_engine(url_obj, pool_size=1, max_overflow=1,
-                                pool_pre_ping=True, connect_args=dict(options or {}))
+                                pool_pre_ping=True, connect_args=connect_args)
 
     def _get_engine(conn_id):
         with eng_lock:
@@ -482,7 +500,9 @@ def _serve():
                 "dialect": backend, "readonly": readonly, "file": file_path,
                 "name": name or (u.database or backend), "engine": engine,
                 "server_version": server_version, "last_used": time.time()}
-        schema_cache.pop(conn_id, None)
+        with schema_lock:
+            for key in [key for key in schema_cache if key[0] == conn_id]:
+                schema_cache.pop(key, None)
         return {"conn_id": conn_id, "dialect": backend, "display_url": display,
                 "server_version": server_version, "readonly": readonly,
                 "name": name or (u.database or backend)}
@@ -517,8 +537,9 @@ def _serve():
         if rec is None:
             return {"error": "unknown connection", "type": "no_conn"}
         cache_key = (conn_id, include_row_counts)
-        if not refresh and cache_key in schema_cache:
-            return schema_cache[cache_key]
+        with schema_lock:
+            if not refresh and cache_key in schema_cache:
+                return schema_cache[cache_key]
         engine = rec["engine"]
         backend = rec["dialect"]
         insp = sa.inspect(engine)
@@ -559,7 +580,8 @@ def _serve():
             out.append({"schema": sch, "relations": relations})
         result = {"schemas": out, "default_schema": default_schema,
                   "dialect": backend}
-        schema_cache[cache_key] = result
+        with schema_lock:
+            schema_cache[cache_key] = result
         return result
 
     def _cancel_raw(backend, raw):
@@ -585,14 +607,12 @@ def _serve():
                 _close_cursor(cursors.pop(k))
 
     def _close_cursor(rec):
-        try:
-            rec["cur"].close()
-        except Exception:
-            pass
-        try:
-            rec["raw"].close()
-        except Exception:
-            pass
+        for key in ("cur", "raw"):
+            try:
+                if rec.get(key) is not None:
+                    rec[key].close()
+            except Exception:
+                pass
 
     def _stash_cursor(conn_id, query_id, rec):
         with cur_lock:
@@ -670,7 +690,9 @@ def _serve():
         more = len(page) == limit
         types = _infer_types(columns, page)
         _stash_cursor(conn_id, query_id, {"raw": raw, "cur": cur, "columns": columns,
-                                          "last": time.time(), "page": page})
+                                          "last": time.time(), "rows": {
+                                              i: row for i, row in enumerate(page)},
+                                          "next_row": len(page)})
         return {"query_id": query_id, "columns": columns, "types": types,
                 "rows": [[_cell(v) for v in row] for row in page], "more": more,
                 "rowcount": len(page), "duration_ms": duration_ms}
@@ -692,7 +714,9 @@ def _serve():
         if rec is None:
             return {"error": "cursor expired", "type": "no_cursor"}
         page = rec["cur"].fetchmany(max(1, min(int(n or 100), PAGE_CAP)))
-        rec["page"] = page
+        start = rec["next_row"]
+        rec["rows"].update({start + i: row for i, row in enumerate(page)})
+        rec["next_row"] = start + len(page)
         rec["last"] = time.time()
         more = len(page) == max(1, min(int(n or 100), PAGE_CAP))
         return {"query_id": query_id, "columns": rec["columns"],
@@ -704,10 +728,10 @@ def _serve():
             rec = cursors.get((conn_id, query_id))
         if rec is None:
             return {"error": "cursor expired", "type": "no_cursor"}
-        page = rec.get("page") or []
-        if row < 0 or row >= len(page) or col < 0 or col >= len(page[row]):
+        values = (rec.get("rows") or {}).get(row)
+        if values is None or col < 0 or col >= len(values):
             return {"error": "out of range", "type": "bad_request"}
-        return {"value": _jsonify(page[row][col])}
+        return {"value": _jsonify(values[col])}
 
     def do_cancel(conn_id, query_id):
         rec = _get_engine(conn_id)
@@ -738,7 +762,7 @@ def _serve():
         where, binds = _build_where(preparer, filters, columns)
         order = _build_order(preparer, sort, columns)
         rel = (preparer.quote_schema(schema) + "." if schema else "") + preparer.quote_identifier(name)
-        stmt = sa.text(f"SELECT * FROM {rel}{where}{order} LIMIT :_lim OFFSET :_off")
+        stmt = sa.text(_table_page_sql(rec["dialect"], rel, where, order))
         if binds:
             stmt = stmt.bindparams(*binds)
         stmt = stmt.bindparams(_lim=limit, _off=offset)
@@ -750,7 +774,11 @@ def _serve():
             cols = list(cur.keys())
             rows = cur.fetchall()
         page = [list(r) for r in rows]
-        return {"columns": cols, "types": _infer_types(cols, page),
+        query_id = secrets.token_hex(8)
+        _stash_cursor(conn_id, query_id, {"raw": None, "cur": None, "columns": cols,
+                                          "last": time.time(), "rows": {
+                                              i: row for i, row in enumerate(page)}})
+        return {"query_id": query_id, "columns": cols, "types": _infer_types(cols, page),
                 "rows": [[_cell(v) for v in r] for r in page],
                 "total_rows": int(total), "offset": offset, "readonly": rec["readonly"]}
 
