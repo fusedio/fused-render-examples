@@ -1,0 +1,143 @@
+{
+  "last_node_id": 4,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        60,
+        140
+      ],
+      "size": [
+        250,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        "sample_people.jpg"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LTXVideoImageToVideo",
+      "pos": [
+        400,
+        140
+      ],
+      "size": [
+        300,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        "fal-ai/ltx-video-13b-distilled/image-to-video",
+        "the two people start walking forward, gentle camera push in",
+        ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "PreviewVideo",
+      "pos": [
+        780,
+        140
+      ],
+      "size": [
+        300,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 2
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "Note",
+      "pos": [
+        400,
+        420
+      ],
+      "size": [
+        300,
+        0
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {},
+      "widgets_values": [
+        "Image-to-video with LTX-Video 13B (distilled) via fal.ai \u2014 needs\na FAL_KEY (fal.ai/dashboard/keys), paste it in the \ud83d\udd11 Keys dialog\nor the node's api_key field. Generation submits once and polls;\npress Run again if it's still rendering \u2014 the task resumes rather\nthan resubmitting. Try Seedance (BytePlus) for a second video-gen\nbackend with the same submit/poll pattern."
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "VIDEO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "fused_view": {
+      "x": 80,
+      "y": 80,
+      "s": 0.75
+    }
+  },
+  "version": 0.4
+}

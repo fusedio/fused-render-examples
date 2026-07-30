@@ -1,0 +1,3651 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Comfy — fused render</title>
+<style>
+  :root {
+    --bg: #151515; --bar: #1d1d1f; --panel: #242427; --panel2: #2d2d31;
+    --node-bg: #353535; --node-title: #2f2f2f; --node-border: #4e4e4e;
+    --text: #d4d4d4; --text-dim: #9a9a9a; --accent: #4a90d9; --run: #2e7d32;
+    --err: #e05252; --sel: #ffffff;
+    --top: 68px;   /* menubar (38) + tab strip (30) */
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+    user-select: none; -webkit-user-select: none;
+  }
+
+  /* ---------- top bar ---------- */
+  #menubar {
+    position: fixed; top: 0; left: 0; right: 0; height: 38px; z-index: 500;
+    background: var(--bar); border-bottom: 1px solid #000;
+    display: flex; align-items: center; gap: 2px; padding: 0 10px;
+  }
+  #logo { font-weight: 700; color: #e8e8e8; margin-right: 10px; letter-spacing: .3px; }
+  #logo b { color: var(--accent); }
+  .menu-root {
+    padding: 5px 10px; border-radius: 5px; cursor: pointer; color: var(--text);
+  }
+  .menu-root:hover, .menu-root.open { background: #ffffff18; }
+  #wfname {
+    margin-left: 14px; color: var(--text-dim); font-size: 12px; max-width: 320px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  }
+  #wfname.dirty::after { content: " •"; color: var(--accent); }
+  #bar-spacer { flex: 1; }
+  #runstate { display: flex; align-items: center; gap: 8px; margin-right: 8px; }
+  #progress { width: 160px; height: 6px; background: #333; border-radius: 3px; overflow: hidden; display: none; }
+  #progress > div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+  #runlabel { font-size: 11px; color: var(--text-dim); }
+  .bar-btn {
+    padding: 6px 14px; border-radius: 6px; border: 1px solid #00000060; cursor: pointer;
+    background: var(--panel2); color: var(--text); font-size: 12.5px;
+  }
+  .bar-btn:hover { filter: brightness(1.2); }
+  #btn-run { background: var(--run); color: #fff; font-weight: 600; }
+  #btn-cancel { background: #7a2e2e; color: #fff; display: none; }
+  #btn-history { margin-left: 6px; }
+
+  /* ---------- workflow tabs ---------- */
+  #tabstrip {
+    position: fixed; top: 38px; left: 0; right: 0; height: 30px; z-index: 490;
+    background: var(--bg); border-bottom: 1px solid #000;
+    display: flex; align-items: flex-end; gap: 3px; padding: 0 8px;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  }
+  #tabstrip::-webkit-scrollbar { height: 5px; }
+  #tabstrip::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+  .tab {
+    display: flex; align-items: center; gap: 6px; flex: none; max-width: 190px;
+    height: 24px; padding: 0 6px 0 11px; border-radius: 7px 7px 0 0; cursor: pointer;
+    background: var(--bar); color: var(--text-dim); font-size: 12px;
+    border: 1px solid #000; border-bottom: none;
+  }
+  .tab:hover { background: #2a2a2e; color: var(--text); }
+  .tab.active { background: var(--panel2); color: #fff; }
+  .tab .tlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab .tclose {
+    flex: none; width: 16px; height: 16px; line-height: 15px; text-align: center;
+    border-radius: 4px; color: #999; font-size: 11px; opacity: .6;
+  }
+  .tab .tclose:hover { background: #ffffff28; color: #fff; opacity: 1; }
+  .tab-new {
+    flex: none; width: 24px; height: 24px; line-height: 22px; text-align: center;
+    border-radius: 6px; cursor: pointer; color: var(--text-dim); font-size: 17px;
+  }
+  .tab-new:hover { background: #ffffff18; color: #fff; }
+
+  /* ---------- viewport / canvas ---------- */
+  #viewport {
+    position: fixed; inset: var(--top) 0 0 0; overflow: hidden; cursor: default;
+    background-color: var(--bg);
+  }
+  #viewport.panning { cursor: grabbing; }
+  #world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
+  #groups, #nodes { position: absolute; left: 0; top: 0; }
+  #links { position: absolute; left: 0; top: 0; overflow: visible; width: 10px; height: 10px; }
+  #links path.link { fill: none; stroke-width: 3px; cursor: pointer; }
+  #links path.hit { fill: none; stroke: transparent; stroke-width: 14px; cursor: pointer; }
+  #links path.link.selected { stroke: #fff !important; }
+  #links path.link.running {
+    stroke-dasharray: 8 5; animation: dashmove .5s linear infinite;
+  }
+  @keyframes dashmove { to { stroke-dashoffset: -13; } }
+  #templink { position: absolute; left: 0; top: 0; overflow: visible; width: 10px; height: 10px; pointer-events: none; }
+  #templink path { fill: none; stroke-width: 3px; stroke-dasharray: 6 4; }
+
+  #boxsel {
+    position: absolute; border: 1px solid var(--accent); background: #4a90d922;
+    display: none; pointer-events: none; z-index: 5;
+  }
+
+  /* ---------- groups ---------- */
+  .group {
+    position: absolute; border-radius: 6px; border: 1px solid #0006;
+    pointer-events: none;
+  }
+  .group .gtitle {
+    pointer-events: auto; cursor: move; padding: 3px 10px; font-size: 13px; font-weight: 600;
+    color: #ffffffd8; text-shadow: 0 1px 2px #000;
+  }
+
+  /* ---------- nodes ---------- */
+  .node {
+    position: absolute; background: var(--node-bg); border: 1px solid var(--node-border);
+    border-radius: 8px; min-width: 140px; box-shadow: 0 3px 10px #00000066;
+    display: flex; flex-direction: column;
+  }
+  .node.selected { outline: 2px solid var(--sel); outline-offset: 0px; }
+  .node.running { outline: 2px solid #6cd96c; box-shadow: 0 0 14px #6cd96c66; }
+  .node.error { outline: 2px solid var(--err); }
+  .node.muted { opacity: .35; }
+  .node.bypassed .ntitle { text-decoration: line-through; }
+  .node.bypassed { background: #4a2f5c; }
+  .node.collapsed .nbody, .node.collapsed .nresize { display: none; }
+  .node.collapsed { min-width: 0; }
+  .ntitle {
+    background: var(--node-title); border-radius: 7px 7px 0 0; padding: 5px 9px;
+    font-size: 13px; font-weight: 600; color: #e3e3e3; cursor: move;
+    display: flex; align-items: center; gap: 7px; white-space: nowrap;
+  }
+  .node.collapsed .ntitle { border-radius: 7px; }
+  .ncollapse { width: 10px; height: 10px; border-radius: 3px; background: #ffffff2e; cursor: pointer; flex: none; }
+  .ncollapse:hover { background: #ffffff66; }
+  .ntext { overflow: hidden; text-overflow: ellipsis; }
+  .nbadge { margin-left: auto; font-size: 10px; color: var(--text-dim); font-weight: 400; }
+  .nbody { padding: 4px 0 6px; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; }
+  .slots { display: flex; justify-content: space-between; gap: 4px; }
+  .col-in, .col-out { display: flex; flex-direction: column; }
+  .slot { display: flex; align-items: center; gap: 5px; height: 21px; font-size: 12px; color: #cfcfcf; }
+  .col-out .slot { flex-direction: row-reverse; }
+  .dot {
+    width: 11px; height: 11px; border-radius: 50%; border: 1px solid #0009;
+    flex: none; cursor: crosshair; background: #888;
+  }
+  .slot.in .dot { margin-left: -6px; }
+  .slot.out .dot { margin-right: -6px; }
+  .dot.compat { box-shadow: 0 0 0 3px #ffffff70; }
+  .dot:hover { box-shadow: 0 0 0 3px #ffffffa8; }
+  .slot .sname { pointer-events: none; }
+  .slot.optional .sname { color: #8f8f8f; font-style: italic; }
+
+  /* ---------- widgets ---------- */
+  .widgets { display: flex; flex-direction: column; gap: 3px; padding: 2px 7px 0; flex: 1 1 auto; min-height: 0; }
+  .wtextwrap { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 54px; }
+  .wtextwrap .wtextarea { flex: 1 1 auto; }
+  .w {
+    background: #222; border: 1px solid #1a1a1a; border-radius: 10px; height: 21px;
+    display: flex; align-items: center; font-size: 12px; overflow: hidden;
+  }
+  .w .arr {
+    width: 18px; text-align: center; color: #777; cursor: pointer; font-size: 10px; flex: none;
+  }
+  .w .arr:hover { color: #fff; }
+  .w .wmid { flex: 1; display: flex; justify-content: space-between; padding: 0 4px; cursor: ew-resize; overflow: hidden; }
+  .w.combo .wmid { cursor: pointer; }
+  .w .wname { color: #9d9d9d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .w .wval { color: #dedede; white-space: nowrap; margin-left: 8px; }
+  .w input[type=text], .winline {
+    flex: 1; background: #222; border: none; outline: none; color: #dedede;
+    font: inherit; padding: 0 8px; height: 100%; min-width: 0;
+  }
+  .w input[type=color] { border: none; background: none; width: 40px; height: 19px; padding: 0; cursor: pointer; }
+  .w.wsecret input { font: 11px/1 ui-monospace, monospace; letter-spacing: .2px; }
+  .w.wsecret input::placeholder { color: #6b6b6b; }
+  .w .weye { cursor: pointer; user-select: none; font-size: 11px; }
+  .w.wbtn { justify-content: center; cursor: pointer; color: #bbb; }
+  .w.wbtn:hover { background: #2c2c2c; color: #fff; }
+  .wtextarea {
+    background: #222; border: 1px solid #1a1a1a; border-radius: 6px; color: #dedede;
+    font: 12px/1.4 ui-monospace, monospace; resize: vertical; min-height: 54px;
+    padding: 5px 7px; outline: none; width: 100%;
+  }
+  .npreview { padding: 5px 7px 0; display: flex; flex-direction: column; gap: 4px; }
+  .npreview img {
+    width: 100%; border-radius: 5px; display: block; cursor: zoom-in;
+    background: repeating-conic-gradient(#2a2a2a 0 25%, #222 0 50%) 0 0/16px 16px;
+  }
+  .npreview video { width: 100%; border-radius: 5px; display: block; background: #000; }
+  .npreview canvas.pcv {
+    width: 100%; height: 190px; border-radius: 5px; display: block; background: #101014;
+    cursor: grab; touch-action: none;
+  }
+  .npreview .pchint { font-size: 10px; color: #7d7d7d; text-align: center; padding-top: 2px; }
+  .ntext-out {
+    margin: 4px 7px 0; padding: 6px 8px; background: #20301f; border: 1px solid #3c5c3a;
+    border-radius: 5px; color: #cde8ca; font-size: 12px; user-select: text; white-space: pre-wrap;
+  }
+  .nerror {
+    margin: 4px 7px 0; padding: 5px 7px; background: #58202066; border: 1px solid var(--err);
+    border-radius: 5px; color: #ffb3b3; font-size: 11px; white-space: pre-wrap; user-select: text;
+    max-height: 90px; overflow: auto;
+  }
+  .nresize {
+    position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
+  }
+  .nresize::after {
+    content: ""; position: absolute; right: 3px; bottom: 3px; width: 8px; height: 8px;
+    border-right: 2px solid #666; border-bottom: 2px solid #666; border-radius: 1px;
+  }
+  .node.note-node { background: #4d4633; border-color: #6b6147; }
+  .node.note-node .ntitle { background: #453e2c; }
+
+  /* ---------- menus & dialogs ---------- */
+  .ctxmenu {
+    position: fixed; z-index: 1000; background: var(--panel); border: 1px solid #000;
+    border-radius: 8px; box-shadow: 0 8px 30px #000c; min-width: 190px; padding: 4px;
+    max-height: 70vh; overflow-y: auto;
+  }
+  .ctxmenu .mi {
+    padding: 6px 12px; border-radius: 5px; cursor: pointer; display: flex; gap: 10px;
+    align-items: center; white-space: nowrap;
+  }
+  .ctxmenu .mi:hover { background: var(--accent); color: #fff; }
+  .ctxmenu .mi.disabled { color: #666; pointer-events: none; }
+  .ctxmenu .mi .sub-arrow { margin-left: auto; font-size: 10px; color: #888; }
+  .ctxmenu .msep { height: 1px; background: #ffffff1c; margin: 4px 6px; }
+  .ctxmenu .mtitle { padding: 4px 12px; font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
+  .ctxmenu .msearch {
+    width: calc(100% - 8px); margin: 2px 4px 4px; background: #1a1a1a; border: 1px solid #000;
+    border-radius: 5px; color: #eee; padding: 5px 8px; outline: none; font: inherit;
+  }
+  .ctxmenu .swatches { display: flex; flex-wrap: wrap; gap: 5px; padding: 5px 12px; }
+  .ctxmenu .swatch { width: 20px; height: 20px; border-radius: 5px; cursor: pointer; border: 1px solid #0008; }
+  .ctxmenu .swatch:hover { outline: 2px solid #fff; }
+
+  #palette {
+    position: fixed; z-index: 1100; left: 50%; top: 18%; transform: translateX(-50%);
+    width: 460px; background: var(--panel); border: 1px solid #000; border-radius: 10px;
+    box-shadow: 0 14px 50px #000d; display: none; flex-direction: column; overflow: hidden;
+  }
+  #palette input {
+    background: #1a1a1a; border: none; border-bottom: 1px solid #000; color: #eee;
+    padding: 12px 14px; font-size: 15px; outline: none;
+  }
+  #palette-list { max-height: 46vh; overflow-y: auto; padding: 4px; }
+  #palette-list .pi { padding: 7px 12px; border-radius: 6px; cursor: pointer; display: flex; }
+  #palette-list .pi .pcat { margin-left: auto; color: var(--text-dim); font-size: 11px; }
+  #palette-list .pi.active { background: var(--accent); color: #fff; }
+  #palette-list .pi.active .pcat { color: #ffffffb0; }
+
+  /* ---------- side panel (history) ---------- */
+  #history {
+    position: fixed; top: var(--top); right: 0; bottom: 0; width: 340px; z-index: 400;
+    background: var(--panel); border-left: 1px solid #000; display: none; flex-direction: column;
+  }
+  #history header { padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #0008; }
+  #history header b { flex: 1; }
+  #history .hbtn { background: var(--panel2); border: 1px solid #0006; color: var(--text); border-radius: 5px; padding: 3px 9px; cursor: pointer; font-size: 11px; }
+  #history-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .hev { background: #ffffff08; border: 1px solid #ffffff12; border-radius: 6px; padding: 6px 9px; font-size: 11.5px; }
+  .hev .hk { color: var(--accent); font-weight: 600; }
+  .hev .ht { float: right; color: var(--text-dim); }
+  .hev .hd { color: #bdbdbd; margin-top: 2px; word-break: break-all; user-select: text; }
+
+  /* ---------- app mode ---------- */
+  #appmode {
+    position: fixed; inset: var(--top) 0 0 0; overflow-y: auto; display: none;
+    background: var(--bg);
+  }
+  .app-col { max-width: 800px; margin: 26px auto 80px; padding: 0 18px; display: flex; flex-direction: column; gap: 14px; }
+  .app-card {
+    background: var(--panel); border: 1px solid #00000090; border-radius: 12px; padding: 13px 16px 15px;
+  }
+  .app-card h4 { font-size: 13px; color: #dedede; margin-bottom: 9px; display: flex; align-items: center; gap: 8px; }
+  .app-card h4 .acat { font-size: 10.5px; color: var(--text-dim); font-weight: 400; margin-left: auto; }
+  .app-card .widgets { padding: 0; gap: 5px; }
+  .app-card .npreview { padding: 0; }
+  .app-card .npreview canvas.pcv { height: 340px; }
+  .app-card.out { border-color: #2e5c2e66; }
+  .app-empty { text-align: center; color: var(--text-dim); padding: 60px 0 8px; font-size: 13px; line-height: 2; }
+  .app-runrow { display: flex; justify-content: center; padding: 4px 0 2px; }
+  .app-runrow button {
+    background: var(--run); color: #fff; border: 1px solid #0008; border-radius: 8px;
+    padding: 10px 44px; font: 600 14px inherit; font-family: inherit; cursor: pointer;
+  }
+  .app-runrow button:hover { filter: brightness(1.15); }
+
+  /* ---------- assets sidebar ---------- */
+  #assets {
+    position: fixed; top: var(--top); left: 0; bottom: 0; width: 316px; z-index: 400;
+    background: var(--panel); border-right: 1px solid #000; display: none; flex-direction: column;
+  }
+  #assets header { padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #0008; }
+  #assets header b { flex: 1; }
+  #assets-grid {
+    flex: 1; overflow-y: auto; padding: 10px; display: grid;
+    grid-template-columns: 1fr 1fr; gap: 10px; align-content: start;
+  }
+  .asset { background: #ffffff08; border: 1px solid #ffffff14; border-radius: 8px; overflow: hidden; }
+  .asset .athumb {
+    width: 100%; height: 96px; object-fit: cover; display: block; cursor: zoom-in;
+    background: repeating-conic-gradient(#2a2a2a 0 25%, #222 0 50%) 0 0/14px 14px;
+  }
+  .asset .athumb.missing { display: flex; align-items: center; justify-content: center; color: #666; font-size: 11px; cursor: default; }
+  .asset .ameta { padding: 4px 7px 2px; font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .asset .abtns { display: flex; padding: 2px 4px 5px; gap: 2px; }
+  .asset .abtns button {
+    flex: 1; background: none; border: none; color: #9aa; cursor: pointer; font-size: 10.5px;
+    padding: 3px 0; border-radius: 4px;
+  }
+  .asset .abtns button:hover { background: #ffffff14; color: #fff; }
+  #assets .hbtn { background: var(--panel2); border: 1px solid #0006; color: var(--text); border-radius: 5px; padding: 3px 9px; cursor: pointer; font-size: 11px; }
+
+  /* ---------- keys dialog ---------- */
+  #keys {
+    position: fixed; z-index: 1100; left: 50%; top: 14%; transform: translateX(-50%);
+    width: 560px; background: var(--panel); border: 1px solid #000; border-radius: 10px;
+    box-shadow: 0 14px 50px #000d; display: none; flex-direction: column; padding: 14px 16px 16px;
+    gap: 10px;
+  }
+  #keys h3 { font-size: 15px; }
+  #keys .khint { font-size: 11.5px; color: var(--text-dim); }
+  .krow { display: flex; align-items: center; gap: 8px; }
+  .krow .kname { width: 120px; font-family: ui-monospace, monospace; font-size: 12px; color: #cfe4f7; flex: none; }
+  .krow input {
+    flex: 1; background: #1a1a1a; border: 1px solid #000; border-radius: 5px; color: #eee;
+    padding: 6px 8px; outline: none; font: 12px ui-monospace, monospace; min-width: 0;
+  }
+  .krow .kstate { font-size: 11px; color: #8fd98f; width: 96px; flex: none; overflow: hidden; text-overflow: ellipsis; }
+  .krow .kstate.unset { color: #777; }
+  .krow button {
+    background: var(--panel2); border: 1px solid #0006; color: var(--text); border-radius: 5px;
+    padding: 5px 11px; cursor: pointer; font-size: 12px; flex: none;
+  }
+  .krow button:hover { filter: brightness(1.25); }
+  .krow .kdesc { font-size: 10.5px; color: #8a8a8a; }
+  #keys .kclose { position: absolute; top: 10px; right: 12px; background: none; border: none; color: #999; cursor: pointer; font-size: 15px; }
+
+  /* ---------- in-app modal (replaces native prompt/confirm) ---------- */
+  #modal-overlay {
+    position: fixed; inset: 0; z-index: 1200; background: #0007; display: none;
+    align-items: flex-start; justify-content: center;
+  }
+  #modal {
+    margin-top: 14vh; width: 420px; background: var(--panel); border: 1px solid #000;
+    border-radius: 10px; box-shadow: 0 14px 50px #000d; padding: 14px 16px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #modal .mmsg { font-size: 13px; color: var(--text); line-height: 1.45; word-break: break-word; }
+  #modal input {
+    background: #1a1a1a; border: 1px solid #000; border-radius: 5px; color: #eee;
+    padding: 7px 9px; outline: none; font: 12.5px ui-monospace, monospace; width: 100%;
+  }
+  #modal input:focus { border-color: #4a90d9; }
+  #modal .mbtns { display: flex; justify-content: flex-end; gap: 8px; }
+  #modal .mbtns button {
+    background: var(--panel2); border: 1px solid #0006; color: var(--text); border-radius: 5px;
+    padding: 6px 14px; cursor: pointer; font-size: 12px;
+  }
+  #modal .mbtns button.primary { background: #2d6cdf; border-color: #1a4ba8; color: #fff; font-weight: 600; }
+  #modal .mbtns button:hover { filter: brightness(1.2); }
+
+  /* ---------- 3D fullscreen ---------- */
+  #viewer3d { position: fixed; inset: 0; z-index: 2000; background: #0b0b0ef2; display: none; }
+  #viewer3d canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  #viewer3d .v3d-info {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); pointer-events: none;
+    background: #000a; padding: 6px 14px; border-radius: 20px; font-size: 12px; color: #ccc;
+  }
+
+  /* ---------- lightbox ---------- */
+  #lightbox {
+    position: fixed; inset: 0; z-index: 2000; background: #000000e0; display: none;
+    overflow: hidden; cursor: grab;
+  }
+  #lightbox img { position: absolute; transform-origin: 0 0; image-rendering: auto; }
+  #lightbox .lb-info {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: #000a; padding: 6px 14px; border-radius: 20px; font-size: 12px; color: #ccc;
+    pointer-events: none;
+  }
+
+  /* ---------- misc ---------- */
+  #zoomctl {
+    position: fixed; left: 12px; bottom: 12px; z-index: 300; display: flex; gap: 4px;
+    background: #1d1d1fd8; border: 1px solid #000; border-radius: 8px; padding: 4px;
+  }
+  #zoomctl button {
+    background: none; border: none; color: #bbb; cursor: pointer; padding: 4px 8px;
+    border-radius: 5px; font: inherit; font-size: 12px;
+  }
+  #zoomctl button:hover { background: #ffffff18; color: #fff; }
+  #toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 3000; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .toast {
+    background: var(--panel2); border: 1px solid #000; padding: 8px 18px; border-radius: 8px;
+    box-shadow: 0 6px 24px #000a; font-size: 12.5px; animation: toastin .18s ease-out;
+  }
+  .toast.err { border-color: var(--err); color: #ffb9b9; }
+  @keyframes toastin { from { opacity: 0; transform: translateY(8px); } }
+  #droptip {
+    position: fixed; inset: var(--top) 0 0 0; z-index: 900; display: none; align-items: center; justify-content: center;
+    background: #4a90d922; border: 3px dashed var(--accent); font-size: 20px; color: #cfe4f7; pointer-events: none;
+  }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #444; border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<div id="menubar">
+  <span id="logo">⚡ fused<b>comfy</b></span>
+  <button class="bar-btn" id="btn-assets" title="generated assets gallery" style="padding:5px 10px">🖼</button>
+  <button class="bar-btn" id="btn-appmode" title="toggle app mode — inputs & outputs only, no graph" style="padding:5px 10px">▦ App</button>
+  <span class="menu-root" data-menu="workflow">Workflow</span>
+  <span class="menu-root" data-menu="edit">Edit</span>
+  <span class="menu-root" data-menu="node">Node</span>
+  <span id="wfname" title="click to rename / save as">unsaved workflow</span>
+  <span id="bar-spacer"></span>
+  <span id="runstate">
+    <span id="runlabel"></span>
+    <span id="progress"><div></div></span>
+  </span>
+  <button class="bar-btn" id="btn-cancel">✕ Cancel</button>
+  <button class="bar-btn" id="btn-run" title="Ctrl+Enter">▶ Run</button>
+  <button class="bar-btn" id="btn-keys" title="API keys for hosted-model nodes">🔑 Keys</button>
+  <button class="bar-btn" id="btn-history" title="event log (SQLite comfy.db)">☰ History</button>
+</div>
+
+<div id="tabstrip"></div>
+
+<div id="keys">
+  <button class="kclose" id="keys-close">✕</button>
+  <h3>API keys</h3>
+  <div class="khint">Used by the api/* nodes (HF Text to Image, HF Image Caption, Seedance). Stored in <code>secrets.json</code> next to this view (never committed, chmod 600, values never logged). Environment variables with the same names also work.</div>
+  <div id="keys-list"></div>
+</div>
+
+<div id="viewer3d"><canvas></canvas><div class="v3d-info">drag to orbit · wheel to zoom · Esc/✕ to close</div></div>
+
+<div id="appmode"><div class="app-col" id="app-col"></div></div>
+
+<div id="assets">
+  <header>
+    <b>Assets</b>
+    <button class="hbtn" id="a-refresh">refresh</button>
+    <button class="hbtn" id="a-close">✕</button>
+  </header>
+  <div id="assets-grid"></div>
+</div>
+
+<div id="viewport">
+  <div id="world">
+    <div id="groups"></div>
+    <svg id="links"></svg>
+    <div id="nodes"></div>
+    <svg id="templink"><path/></svg>
+  </div>
+  <div id="boxsel"></div>
+</div>
+
+<div id="zoomctl">
+  <button id="z-out" title="zoom out">−</button>
+  <button id="z-pct" title="reset zoom">100%</button>
+  <button id="z-in" title="zoom in">+</button>
+  <button id="z-fit" title="fit graph (F)">⛶ fit</button>
+</div>
+
+<div id="palette">
+  <input id="palette-input" placeholder="Search nodes…" spellcheck="false">
+  <div id="palette-list"></div>
+</div>
+
+<div id="history">
+  <header>
+    <b>History</b>
+    <button class="hbtn" id="h-refresh">refresh</button>
+    <button class="hbtn" id="h-clear">clear</button>
+    <button class="hbtn" id="h-close">✕</button>
+  </header>
+  <div id="history-list"></div>
+</div>
+
+<div id="lightbox"><img draggable="false"><div class="lb-info"></div></div>
+<div id="modal-overlay"><div id="modal"></div></div>
+<div id="toasts"></div>
+<div id="droptip">Drop workflow JSON, a PNG with an embedded workflow, or an image to import</div>
+<input type="file" id="file-json" accept=".json,application/json" hidden>
+<input type="file" id="file-png" accept=".png" hidden>
+<input type="file" id="file-img" accept="image/*" hidden>
+
+<script>
+"use strict";
+/* ================================================================== CORE-START
+   DOM-free graph model, node registry, serialization (ComfyUI workflow
+   schema), importers, topological sort, signatures. Testable in node. */
+
+const ENGINE_V = 1;
+const TYPE_COLORS = {
+  IMAGE: "#64B5F6", MASK: "#81C784", LATENT: "#FF9CF9", MODEL: "#B39DDB",
+  CLIP: "#FFD500", VAE: "#FF6E6E", CONDITIONING: "#FFA931", CONTROL_NET: "#6EE7B7",
+  CLIP_VISION: "#A8DADC", STYLE_MODEL: "#C2FFAE", NOISE: "#B0B0B0", GUIDER: "#66FFFF",
+  SAMPLER: "#ECB4B4", SIGMAS: "#CDFFCD", STRING: "#90EE90", INT: "#A8A8C8",
+  FLOAT: "#A8C8A8", BOOLEAN: "#C89898", POINTCLOUD: "#DCC274", VIDEO: "#E679C0",
+  "*": "#ffffff",
+};
+function typeColor(t) { return TYPE_COLORS[t] || "#8f8f8f"; }
+function typesCompatible(outT, inT) {
+  if (outT === inT) return true;
+  if (outT === "*" || inT === "*") return true;
+  if (outT === "INT" && inT === "FLOAT") return true;
+  return false;
+}
+
+let INPUT_FILES = [];   // filled by api setup; LoadImage combo reads it live
+let WORKFLOW_FILES = []; // saved-workflow list cache; seeded by setup, kept fresh by menuOpenList/saveWorkflow
+
+const NODE_DEFS = {};
+function defNode(type, cat, spec) {
+  NODE_DEFS[type] = Object.assign({ type, cat, title: spec.title || type.replace(/([a-z])([A-Z])/g, "$1 $2"), inputs: [], outputs: [], widgets: [], exec: true }, spec);
+}
+const num = (name, value, min, max, step, int) => ({ wtype: "number", name, value, min, max, step: step || 1, int: !!int });
+const combo = (name, value, options) => ({ wtype: "combo", name, value, options });
+const text = (name, value, multiline) => ({ wtype: "text", name, value, multiline: !!multiline });
+const color = (name, value) => ({ wtype: "color", name, value });
+const toggle = (name, value) => ({ wtype: "toggle", name, value });
+const seedW = (name, ctrl) => ({ wtype: "seed", name, value: 0, ctrl });
+const secret = (name, placeholder) => ({ wtype: "secret", name, value: "", placeholder: placeholder || "" });
+const button = (name, label) => ({ wtype: "button", name, label, noserial: true });
+
+defNode("LoadImage", "image/loaders", {
+  outputs: [["IMAGE", "IMAGE"], ["MASK", "MASK"]], width: 250,
+  widgets: [combo("image", "", () => INPUT_FILES), button("upload", "choose file to upload")],
+  showInputThumb: true,
+});
+defNode("EmptyImage", "image/generate", {
+  outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("width", 512, 8, 8192, 8, true), num("height", 512, 8, 8192, 8, true), color("color", "#000000")],
+});
+defNode("NoiseImage", "image/generate", {
+  title: "Noise", outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("width", 512, 8, 4096, 8, true), num("height", 512, 8, 4096, 8, true), seedW("seed"), combo("mode", "color", ["color", "grayscale"])],
+});
+defNode("GradientImage", "image/generate", {
+  title: "Gradient", outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("width", 512, 8, 8192, 8, true), num("height", 512, 8, 8192, 8, true), num("angle", 0, -360, 360, 1), color("color1", "#1a2b6d"), color("color2", "#e66465")],
+});
+defNode("BrightnessContrast", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("brightness", 1.0, 0, 3, 0.05), num("contrast", 1.0, 0, 3, 0.05)],
+});
+defNode("HueSaturation", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("hue_shift", 0, -180, 180, 1, true), num("saturation", 1.0, 0, 3, 0.05)],
+});
+defNode("Invert", "image/adjust", { inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]] });
+defNode("Grayscale", "image/adjust", { inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]] });
+defNode("Posterize", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("bits", 3, 1, 8, 1, true)],
+});
+defNode("Levels", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("black", 0, 0, 254, 1, true), num("white", 255, 1, 255, 1, true), num("gamma", 1.0, 0.1, 5, 0.05)],
+});
+defNode("AutoContrast", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("cutoff", 1, 0, 45, 0.5)],
+});
+defNode("Equalize", "image/adjust", { inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]] });
+defNode("Solarize", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("threshold", 128, 0, 255, 1, true)],
+});
+defNode("Sepia", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("strength", 0.8, 0, 1, 0.05)],
+});
+defNode("ColorBalance", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("red", 1.0, 0, 2.5, 0.05), num("green", 1.0, 0, 2.5, 0.05), num("blue", 1.0, 0, 2.5, 0.05)],
+});
+defNode("Tint", "image/adjust", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [color("color", "#3366aa"), num("strength", 0.5, 0, 1, 0.05)],
+});
+defNode("Vignette", "image/filter", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("strength", 0.6, 0, 1, 0.05), num("softness", 0.5, 0.05, 1, 0.05)],
+});
+defNode("Emboss", "image/filter", { inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]] });
+defNode("MedianFilter", "image/filter", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("size", 3, 3, 9, 2, true)],
+});
+defNode("FilmGrain", "image/filter", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("amount", 0.15, 0, 1, 0.01), seedW("seed", "fixed")],
+});
+defNode("AddBorder", "image/draw", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("size", 24, 1, 512, 1, true), color("color", "#ffffff")],
+});
+defNode("ChannelSplit", "image/channels", {
+  inputs: [["image", "IMAGE"]], outputs: [["R", "MASK"], ["G", "MASK"], ["B", "MASK"]],
+});
+defNode("ChannelMerge", "image/channels", {
+  inputs: [["red", "MASK"], ["green", "MASK"], ["blue", "MASK"]], outputs: [["IMAGE", "IMAGE"]],
+});
+defNode("GaussianBlur", "image/filter", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("radius", 4, 0, 64, 0.5)],
+});
+defNode("Sharpen", "image/filter", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("radius", 2, 0, 16, 0.5), num("percent", 150, 0, 500, 10, true)],
+});
+defNode("EdgeDetect", "image/filter", { inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]] });
+defNode("Pixelate", "image/filter", {
+  inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("factor", 8, 1, 64, 1, true)],
+});
+defNode("ImageResize", "image/transform", {
+  title: "Resize", inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("width", 512, 1, 8192, 8, true), num("height", 512, 1, 8192, 8, true), combo("method", "lanczos", ["lanczos", "bicubic", "bilinear", "nearest"])],
+});
+defNode("ImageScale", "image/transform", {
+  title: "Scale", inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]], widgets: [num("factor", 0.5, 0.01, 8, 0.05)],
+});
+defNode("ImageCrop", "image/transform", {
+  title: "Crop", inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("x", 0, 0, 8192, 1, true), num("y", 0, 0, 8192, 1, true), num("width", 256, 1, 8192, 1, true), num("height", 256, 1, 8192, 1, true)],
+});
+defNode("ImageRotate", "image/transform", {
+  title: "Rotate", inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("angle", 90, -360, 360, 1), toggle("expand", true)],
+});
+defNode("ImageFlip", "image/transform", {
+  title: "Flip", inputs: [["image", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [combo("axis", "horizontal", ["horizontal", "vertical"])],
+});
+defNode("ImageBlend", "image/composite", {
+  title: "Blend", inputs: [["image_a", "IMAGE"], ["image_b", "IMAGE"]], outputs: [["IMAGE", "IMAGE"]],
+  widgets: [combo("mode", "normal", ["normal", "multiply", "screen", "overlay", "add", "difference", "darken", "lighten"]), num("blend_factor", 0.5, 0, 1, 0.01)],
+});
+defNode("ImageComposite", "image/composite", {
+  title: "Composite", inputs: [["destination", "IMAGE"], ["source", "IMAGE"], ["mask", "MASK", { optional: true }]],
+  outputs: [["IMAGE", "IMAGE"]],
+  widgets: [num("x", 0, -8192, 8192, 1, true), num("y", 0, -8192, 8192, 1, true)],
+});
+defNode("TextOverlay", "image/draw", {
+  inputs: [["image", "IMAGE"], ["text", "STRING", { optional: true }]], outputs: [["IMAGE", "IMAGE"]], width: 240,
+  widgets: [text("text", "hello"), num("x", 32, -8192, 8192, 1, true), num("y", 32, -8192, 8192, 1, true), num("size", 48, 4, 512, 2, true), color("color", "#ffffff")],
+});
+defNode("Threshold", "mask", {
+  inputs: [["image", "IMAGE"]], outputs: [["MASK", "MASK"]], widgets: [num("threshold", 128, 0, 255, 1, true)],
+});
+defNode("MaskToImage", "mask", { inputs: [["mask", "MASK"]], outputs: [["IMAGE", "IMAGE"]] });
+defNode("PreviewImage", "image/output", {
+  inputs: [["image", "IMAGE"]], output_node: true, width: 240,
+});
+defNode("SaveImage", "image/output", {
+  inputs: [["image", "IMAGE"]], output_node: true, width: 250,
+  widgets: [text("filename_prefix", "comfy_%date%")],
+});
+defNode("PrimitiveString", "primitives", { title: "String", outputs: [["STRING", "STRING"]], widgets: [text("value", "", true)], width: 230 });
+defNode("PrimitiveInt", "primitives", { title: "Int", outputs: [["INT", "INT"]], widgets: [num("value", 0, -1e9, 1e9, 1, true)] });
+defNode("PrimitiveFloat", "primitives", { title: "Float", outputs: [["FLOAT", "FLOAT"]], widgets: [num("value", 0, -1e9, 1e9, 0.01)] });
+defNode("PrimitiveSeed", "primitives", { title: "Seed", outputs: [["INT", "INT"]], widgets: [seedW("seed")] });
+defNode("Reroute", "utils", { inputs: [["", "*"]], outputs: [["", "*"]], width: 90, collapsable: false });
+defNode("Note", "utils", { exec: false, width: 280, widgets: [text("text", "note…", true)] });
+
+// local CPU ML + 3D
+defNode("DepthEstimation", "ml", {
+  title: "Depth Estimation (local CPU)", inputs: [["image", "IMAGE"]], outputs: [["DEPTH", "IMAGE"]], width: 240,
+  widgets: [combo("size", 434, [266, 350, 434, 518]), toggle("invert", false)],
+});
+defNode("ObjectDetectionYOLO", "ml", {
+  title: "Object Detection (YOLOv10n, local CPU)", inputs: [["image", "IMAGE"]],
+  outputs: [["IMAGE", "IMAGE"], ["detections", "STRING"]], width: 260,
+  widgets: [num("threshold", 0.4, 0.05, 0.95, 0.05)],
+});
+defNode("BackgroundRemoval", "mask", {
+  title: "Background Removal (U2Net-p, local CPU)", inputs: [["image", "IMAGE"]], outputs: [["MASK", "MASK"]], width: 260,
+});
+defNode("ImageToPointCloud", "3d", {
+  title: "Image → Point Cloud", inputs: [["image", "IMAGE"], ["depth", "IMAGE"]], outputs: [["POINTCLOUD", "POINTCLOUD"]],
+  widgets: [num("stride", 3, 1, 32, 1, true), num("depth_scale", 0.6, 0.05, 4, 0.05)],
+});
+defNode("Preview3D", "3d", {
+  title: "Preview 3D", inputs: [["pointcloud", "POINTCLOUD"]], output_node: true, width: 300,
+});
+
+// hosted-API nodes (need keys from the 🔑 dialog)
+defNode("HFTextToImage", "api/huggingface", {
+  title: "HF Text to Image", keyName: "HF_TOKEN", inputs: [["prompt", "STRING", { optional: true }]], outputs: [["IMAGE", "IMAGE"]], width: 280,
+  widgets: [
+    combo("model", "black-forest-labs/FLUX.1-schnell",
+      ["black-forest-labs/FLUX.1-schnell", "black-forest-labs/FLUX.1-dev", "stabilityai/stable-diffusion-xl-base-1.0", "stabilityai/sdxl-turbo"]),
+    text("prompt", "a scenic mountain landscape at sunset", true),
+    num("width", 768, 64, 1536, 64, true), num("height", 768, 64, 1536, 64, true),
+    seedW("seed", "fixed"),
+    secret("api_key", "HF_TOKEN — paste here (applies to all HF nodes)"),
+  ],
+});
+defNode("HFImageCaption", "api/huggingface", {
+  title: "HF Image Caption", keyName: "HF_TOKEN", inputs: [["image", "IMAGE"]], outputs: [["STRING", "STRING"]], width: 260,
+  widgets: [combo("model", "Salesforce/blip-image-captioning-large",
+    ["Salesforce/blip-image-captioning-large", "Salesforce/blip-image-captioning-base", "nlpconnect/vit-gpt2-image-captioning"]),
+    secret("api_key", "HF_TOKEN — paste here (applies to all HF nodes)")],
+});
+defNode("HFVisualQA", "api/huggingface", {
+  title: "HF Visual Q&A", keyName: "HF_TOKEN", inputs: [["image", "IMAGE"], ["question", "STRING", { optional: true }]],
+  outputs: [["STRING", "STRING"]], width: 260,
+  widgets: [
+    combo("model", "dandelin/vilt-b32-finetuned-vqa", ["dandelin/vilt-b32-finetuned-vqa"]),
+    text("question", "what is in this image?"),
+    secret("api_key", "HF_TOKEN — paste here (applies to all HF nodes)"),
+  ],
+});
+defNode("HFImageEdit", "api/huggingface", {
+  title: "HF Image Edit", keyName: "HF_TOKEN", inputs: [["image", "IMAGE"], ["prompt", "STRING", { optional: true }]],
+  outputs: [["IMAGE", "IMAGE"]], width: 280,
+  widgets: [
+    combo("model", "timbrooks/instruct-pix2pix", ["timbrooks/instruct-pix2pix", "Qwen/Qwen-Image-Edit"]),
+    text("prompt", "turn the sky into a sunset", true),
+    secret("api_key", "HF_TOKEN — paste here (applies to all HF nodes)"),
+  ],
+});
+defNode("SeedanceTextToVideo", "api/seedance", {
+  title: "Seedance Text to Video", keyName: "ARK_API_KEY", inputs: [["prompt", "STRING", { optional: true }]], outputs: [["VIDEO", "VIDEO"]], width: 300,
+  widgets: [
+    text("model", "seedance-1-0-lite-t2v-250428"),
+    text("prompt", "a corgi running on a beach, golden hour", true),
+    combo("resolution", "720p", ["480p", "720p", "1080p"]),
+    combo("duration", 5, [5, 10]),
+    text("endpoint", "https://ark.ap-southeast.bytepluses.com/api/v3"),
+    secret("api_key", "ARK_API_KEY — paste here (applies to all Seedance nodes)"),
+  ],
+});
+defNode("LTXVideoImageToVideo", "api/fal", {
+  title: "LTX-Video Image to Video (fal.ai)", keyName: "FAL_KEY", inputs: [["image", "IMAGE"], ["prompt", "STRING", { optional: true }]],
+  outputs: [["VIDEO", "VIDEO"]], width: 300,
+  widgets: [
+    text("model", "fal-ai/ltx-video-13b-distilled/image-to-video"),
+    text("prompt", "the camera slowly pushes in, gentle motion", true),
+    secret("api_key", "FAL_KEY — paste here (applies to all fal.ai nodes)"),
+  ],
+});
+defNode("LoadVideo", "video", {
+  outputs: [["VIDEO", "VIDEO"]], width: 260, widgets: [text("video", "seedance_.mp4")],
+});
+defNode("VideoTrim", "video", {
+  title: "Trim Video", inputs: [["video", "VIDEO"]], outputs: [["VIDEO", "VIDEO"]], width: 260,
+  widgets: [num("start", 0, 0, 3600, 0.1), num("end", 3, 0.1, 3600, 0.1), num("max_width", 480, 0, 4096, 8, true)],
+});
+defNode("VideoInterpolateRIFE", "video", {
+  title: "Frame Interpolate (RIFE, local CPU)", inputs: [["video", "VIDEO"]], outputs: [["VIDEO", "VIDEO"]], width: 280,
+  widgets: [combo("multiplier", 2, [2, 3, 4]), num("max_seconds", 2, 0.5, 6, 0.5), num("max_width", 384, 64, 960, 8, true)],
+});
+defNode("PreviewVideo", "video", {
+  inputs: [["video", "VIDEO"]], output_node: true, width: 300,
+});
+
+// widget names for popular ComfyUI node types so ghost imports stay readable
+const GHOST_WIDGET_NAMES = {
+  KSampler: ["seed", "steps", "cfg", "sampler_name", "scheduler", "denoise"],
+  KSamplerAdvanced: ["add_noise", "noise_seed", "steps", "cfg", "sampler_name", "scheduler", "start_at_step", "end_at_step", "return_with_leftover_noise"],
+  CheckpointLoaderSimple: ["ckpt_name"],
+  CLIPTextEncode: ["text"],
+  EmptyLatentImage: ["width", "height", "batch_size"],
+  VAELoader: ["vae_name"],
+  LoraLoader: ["lora_name", "strength_model", "strength_clip"],
+  ControlNetLoader: ["control_net_name"],
+  UpscaleModelLoader: ["model_name"],
+  ImageScaleBy: ["upscale_method", "scale_by"],
+};
+
+function hashStr(s) {
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (h1 ^ c) >>> 0; h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 = (h2 + c) >>> 0; h2 = (Math.imul(h2, 31) + 7) >>> 0;
+  }
+  return ("00000000" + h1.toString(16)).slice(-8) + ("00000000" + h2.toString(16)).slice(-8);
+}
+
+class Graph {
+  constructor() { this.clear(); }
+  clear() {
+    this.nodes = new Map();      // id -> node
+    this.links = new Map();      // id -> {id, origin_id, origin_slot, target_id, target_slot, type}
+    this.groups = [];
+    this.lastNodeId = 0;
+    this.lastLinkId = 0;
+    this.extra = {};
+  }
+
+  addNode(type, pos, opts = {}) {
+    const def = NODE_DEFS[type];
+    const n = {
+      id: opts.id || ++this.lastNodeId,
+      type, title: opts.title || (def ? def.title : type),
+      pos: [Math.round(pos[0]), Math.round(pos[1])],
+      size: [opts.width || (def && def.width) || 210, 0],
+      flags: {}, mode: 0, order: 0,
+      color: opts.color || null, bgcolor: opts.bgcolor || null,
+      properties: opts.properties || {},
+      ghost: !def,
+      inputs: [], outputs: [], widgets: {}, wdefs: [],
+    };
+    this.lastNodeId = Math.max(this.lastNodeId, n.id);
+    if (def) {
+      for (const [name, t, o] of def.inputs) n.inputs.push({ name, type: t, link: null, optional: !!(o && o.optional) });
+      for (const [name, t] of def.outputs) n.outputs.push({ name, type: t, links: [] });
+      n.wdefs = def.widgets.map(w => Object.assign({}, w));
+      for (const w of n.wdefs) {
+        if (w.noserial) continue;
+        n.widgets[w.name] = w.value;
+        if (w.wtype === "seed") n.widgets[w.name + "__control"] = w.ctrl || "randomize";
+      }
+      if (type === "LoadImage" && INPUT_FILES.length && !n.widgets.image) n.widgets.image = INPUT_FILES[0];
+    }
+    this.nodes.set(n.id, n);
+    return n;
+  }
+
+  removeNode(id) {
+    const n = this.nodes.get(id);
+    if (!n) return;
+    for (const inp of n.inputs) if (inp.link != null) this.removeLink(inp.link);
+    for (const out of n.outputs) for (const lid of [...out.links]) this.removeLink(lid);
+    this.nodes.delete(id);
+  }
+
+  removeLink(id) {
+    const l = this.links.get(id);
+    if (!l) return;
+    const o = this.nodes.get(l.origin_id), t = this.nodes.get(l.target_id);
+    if (o && o.outputs[l.origin_slot]) o.outputs[l.origin_slot].links = o.outputs[l.origin_slot].links.filter(x => x !== id);
+    if (t && t.inputs[l.target_slot] && t.inputs[l.target_slot].link === id) t.inputs[l.target_slot].link = null;
+    this.links.delete(id);
+  }
+
+  wouldCycle(fromId, toId) {
+    if (fromId === toId) return true;
+    const seen = new Set();
+    const walk = (id) => {
+      if (id === fromId) return true;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      const n = this.nodes.get(id);
+      if (!n) return false;
+      for (const out of n.outputs) for (const lid of out.links) {
+        const l = this.links.get(lid);
+        if (l && walk(l.target_id)) return true;
+      }
+      return false;
+    };
+    return walk(toId);
+  }
+
+  connect(fromId, fromSlot, toId, toSlot) {
+    const o = this.nodes.get(fromId), t = this.nodes.get(toId);
+    if (!o || !t) throw "node not found";
+    const out = o.outputs[fromSlot], inp = t.inputs[toSlot];
+    if (!out || !inp) throw "port not found";
+    if (!typesCompatible(out.type, inp.type)) throw `type mismatch: ${out.type} → ${inp.type}`;
+    if (this.wouldCycle(fromId, toId)) throw "connection would create a cycle";
+    if (inp.link != null) this.removeLink(inp.link);
+    const id = ++this.lastLinkId;
+    const type = out.type === "*" ? inp.type : out.type;
+    const l = { id, origin_id: fromId, origin_slot: fromSlot, target_id: toId, target_slot: toSlot, type };
+    this.links.set(id, l);
+    out.links.push(id);
+    inp.link = id;
+    return l;
+  }
+
+  // ---- serialization: ComfyUI workflow schema -----------------------------
+  serialize(extra = {}) {
+    const nodes = [...this.nodes.values()].map(n => {
+      const out = {
+        id: n.id, type: n.type,
+        pos: [n.pos[0], n.pos[1]], size: [n.size[0], n.size[1]],
+        flags: Object.assign({}, n.flags), order: n.order, mode: n.mode,
+        properties: n.properties || {},
+      };
+      if (n.inputs.length) out.inputs = n.inputs.map(i => ({ name: i.name, type: i.type, link: i.link }));
+      if (n.outputs.length) out.outputs = n.outputs.map((o, i) => ({ name: o.name, type: o.type, links: [...o.links], slot_index: i }));
+      const wv = this.widgetValuesArray(n);
+      if (wv.length) out.widgets_values = wv;
+      if (n.title !== (NODE_DEFS[n.type] ? NODE_DEFS[n.type].title : n.type)) out.title = n.title;
+      if (n.color) out.color = n.color;
+      if (n.bgcolor) out.bgcolor = n.bgcolor;
+      return out;
+    });
+    const links = [...this.links.values()].map(l => [l.id, l.origin_id, l.origin_slot, l.target_id, l.target_slot, l.type]);
+    return {
+      last_node_id: this.lastNodeId, last_link_id: this.lastLinkId,
+      nodes, links, groups: this.groups.map(g => Object.assign({}, g)),
+      config: {}, extra: Object.assign({}, this.extra, extra), version: 0.4,
+    };
+  }
+
+  widgetValuesArray(n) {
+    if (n.ghost) return Array.isArray(n.rawWidgets) ? n.rawWidgets : [];
+    const arr = [];
+    for (const w of n.wdefs) {
+      if (w.noserial) continue;
+      arr.push(n.widgets[w.name]);
+      if (w.wtype === "seed") arr.push(n.widgets[w.name + "__control"] || "randomize");
+    }
+    return arr;
+  }
+
+  applyWidgetValues(n, wv) {
+    if (!Array.isArray(wv)) { if (wv && typeof wv === "object") Object.assign(n.widgets, wv); return; }
+    let i = 0;
+    for (const w of n.wdefs) {
+      if (w.noserial) continue;
+      if (i < wv.length) n.widgets[w.name] = wv[i++];
+      if (w.wtype === "seed") {
+        if (i < wv.length && typeof wv[i] === "string") n.widgets[w.name + "__control"] = wv[i++];
+      }
+    }
+  }
+
+  // ---- load: our/ComfyUI workflow JSON, or ComfyUI API-format JSON --------
+  load(json) {
+    if (json && Array.isArray(json.nodes)) return this.loadWorkflow(json);
+    if (json && typeof json === "object" && Object.values(json).every(v => v && typeof v === "object" && v.class_type)) {
+      return this.loadApiFormat(json);
+    }
+    throw new Error("unrecognized workflow JSON format");
+  }
+
+  loadWorkflow(json) {
+    this.clear();
+    this.extra = json.extra || {};
+    this.groups = (json.groups || []).map(g => ({
+      title: g.title || "Group",
+      bounding: (g.bounding || [0, 0, 300, 200]).map(Number),
+      color: g.color || "#3f789e55",
+    }));
+    let ghostCount = 0;
+    for (const jn of json.nodes) {
+      const def = NODE_DEFS[jn.type];
+      const pos = Array.isArray(jn.pos) ? jn.pos : [jn.pos["0"] || 0, jn.pos["1"] || 0];
+      const size = Array.isArray(jn.size) ? jn.size : [jn.size && jn.size["0"] || 210, jn.size && jn.size["1"] || 0];
+      const n = this.addNode(jn.type, [pos[0] || 0, pos[1] || 0], { id: jn.id, properties: jn.properties });
+      n.size[0] = Math.max(90, size[0] || 210);
+      n.flags = jn.flags || {};
+      n.mode = jn.mode || 0;
+      n.order = jn.order || 0;
+      if (jn.title) n.title = jn.title;
+      if (jn.color) n.color = jn.color;
+      if (jn.bgcolor) n.bgcolor = jn.bgcolor;
+      // instance ports from JSON win (accurate for real ComfyUI graphs)
+      if (Array.isArray(jn.inputs)) {
+        n.inputs = jn.inputs.map((i, idx) => ({
+          name: i.name || `in${idx}`, type: i.type || "*", link: null,
+          optional: n.inputs[idx] ? !!n.inputs[idx].optional : n.ghost,
+        }));
+      }
+      if (Array.isArray(jn.outputs)) {
+        n.outputs = jn.outputs.map((o, idx) => ({ name: o.name || `out${idx}`, type: o.type || "*", links: [] }));
+      }
+      if (n.ghost) {
+        ghostCount++;
+        n.rawWidgets = Array.isArray(jn.widgets_values) ? [...jn.widgets_values] : [];
+        n.wdefs = this.ghostWidgetDefs(jn.type, n.rawWidgets);
+        n.rawWidgets.forEach((v, i) => { n.widgets["#" + i] = v; });
+      } else if (jn.widgets_values !== undefined) {
+        this.applyWidgetValues(n, jn.widgets_values);
+      }
+    }
+    for (const jl of json.links || []) {
+      const [id, oid, oslot, tid, tslot, type] = jl;
+      const o = this.nodes.get(oid), t = this.nodes.get(tid);
+      if (!o || !t || !o.outputs[oslot] || !t.inputs[tslot]) continue;
+      const l = { id, origin_id: oid, origin_slot: oslot, target_id: tid, target_slot: tslot, type: type || o.outputs[oslot].type };
+      this.links.set(id, l);
+      o.outputs[oslot].links.push(id);
+      t.inputs[tslot].link = id;
+      this.lastLinkId = Math.max(this.lastLinkId, id);
+    }
+    this.lastNodeId = Math.max(this.lastNodeId, json.last_node_id || 0);
+    this.lastLinkId = Math.max(this.lastLinkId, json.last_link_id || 0);
+    return { format: "workflow", nodes: this.nodes.size, ghosts: ghostCount };
+  }
+
+  ghostWidgetDefs(type, rawWidgets) {
+    const names = GHOST_WIDGET_NAMES[type];
+    const defs = [];
+    let ni = 0;
+    rawWidgets.forEach((v, i) => {
+      let name = `value ${i}`;
+      if (names) {
+        // ComfyUI stores seed control ("fixed"/"randomize"/…) right after seed
+        if (names.length + 1 === rawWidgets.length && i > 0 && /^(fixed|increment|decrement|randomize)$/.test(String(v)))
+          name = "(after gen)";
+        else { name = ni < names.length ? names[ni] : `value ${i}`; ni++; }
+      }
+      const wtype = typeof v === "number" ? "number" : typeof v === "boolean" ? "toggle" : "text";
+      defs.push({ wtype, name: "#" + i, label: name, value: v, ghost: true,
+        min: -1e18, max: 1e18, step: Number.isInteger(v) ? 1 : 0.01, int: Number.isInteger(v),
+        multiline: typeof v === "string" && v.length > 40 });
+    });
+    return defs;
+  }
+
+  loadApiFormat(json) {
+    this.clear();
+    const ids = Object.keys(json);
+    const idMap = new Map();
+    // depth for auto-layout
+    const depth = new Map();
+    const depthOf = (key, stack = new Set()) => {
+      if (depth.has(key)) return depth.get(key);
+      if (stack.has(key)) return 0;
+      stack.add(key);
+      let d = 0;
+      const inputs = json[key].inputs || {};
+      for (const v of Object.values(inputs)) {
+        if (Array.isArray(v) && v.length === 2 && json[v[0]] !== undefined)
+          d = Math.max(d, depthOf(String(v[0]), stack) + 1);
+      }
+      depth.set(key, d);
+      return d;
+    };
+    ids.forEach(k => depthOf(k));
+    const colY = {};
+    for (const key of ids.sort((a, b) => depth.get(a) - depth.get(b))) {
+      const jn = json[key];
+      const d = depth.get(key);
+      const y = (colY[d] = (colY[d] || 60));
+      const n = this.addNode(jn.class_type, [80 + d * 320, y]);
+      idMap.set(key, n.id);
+      const widgetEntries = [], linkEntries = [];
+      for (const [name, v] of Object.entries(jn.inputs || {})) {
+        if (Array.isArray(v) && v.length === 2 && json[v[0]] !== undefined) linkEntries.push([name, v]);
+        else widgetEntries.push([name, v]);
+      }
+      if (n.ghost) {
+        n.rawWidgets = widgetEntries.map(([, v]) => v);
+        n.wdefs = widgetEntries.map(([name, v], i) => ({
+          wtype: typeof v === "number" ? "number" : typeof v === "boolean" ? "toggle" : "text",
+          name: "#" + i, label: name, value: v, ghost: true,
+          min: -1e18, max: 1e18, step: Number.isInteger(v) ? 1 : 0.01, int: Number.isInteger(v),
+          multiline: typeof v === "string" && v.length > 40,
+        }));
+        n.rawWidgets.forEach((v, i) => { n.widgets["#" + i] = v; });
+        for (const [name] of linkEntries) n.inputs.push({ name, type: "*", link: null, optional: true });
+        n._pendingLinks = linkEntries;
+      } else {
+        for (const [name, v] of widgetEntries) if (name in n.widgets) n.widgets[name] = v;
+        n._pendingLinks = linkEntries;
+      }
+      colY[d] = y + 140 + n.wdefs.length * 26 + n.inputs.length * 22;
+    }
+    // links (source slot counts inferred as we go)
+    for (const key of ids) {
+      const n = this.nodes.get(idMap.get(key));
+      if (!n || !n._pendingLinks) continue;
+      for (const [name, [srcKey, srcSlot]] of n._pendingLinks) {
+        const src = this.nodes.get(idMap.get(String(srcKey)));
+        if (!src) continue;
+        while (src.outputs.length <= srcSlot) src.outputs.push({ name: `out${src.outputs.length}`, type: "*", links: [] });
+        let tslot = n.inputs.findIndex(i => i.name === name);
+        if (tslot < 0) { n.inputs.push({ name, type: "*", link: null, optional: true }); tslot = n.inputs.length - 1; }
+        try { this.connect(src.id, srcSlot, n.id, tslot); } catch (e) { /* skip bad link */ }
+      }
+      delete n._pendingLinks;
+    }
+    return { format: "api", nodes: this.nodes.size, ghosts: [...this.nodes.values()].filter(n => n.ghost).length };
+  }
+
+  // ---- execution helpers ---------------------------------------------------
+  outputTargets() {
+    return [...this.nodes.values()].filter(n => {
+      const def = NODE_DEFS[n.type];
+      return def && def.output_node && n.mode === 0;
+    }).map(n => n.id);
+  }
+
+  topoOrder(targetIds) {
+    const needed = new Set();
+    const visit = (id) => {
+      if (needed.has(id)) return;
+      needed.add(id);
+      const n = this.nodes.get(id);
+      if (!n) return;
+      for (const inp of n.inputs) {
+        if (inp.link == null) continue;
+        const l = this.links.get(inp.link);
+        if (l) visit(l.origin_id);
+      }
+    };
+    (targetIds || [...this.nodes.keys()]).forEach(visit);
+    // Kahn over the needed subgraph
+    const indeg = new Map(), order = [];
+    for (const id of needed) {
+      const n = this.nodes.get(id);
+      let d = 0;
+      for (const inp of n.inputs) {
+        if (inp.link == null) continue;
+        const l = this.links.get(inp.link);
+        if (l && needed.has(l.origin_id)) d++;
+      }
+      indeg.set(id, d);
+    }
+    const q = [...needed].filter(id => indeg.get(id) === 0).sort((a, b) => a - b);
+    while (q.length) {
+      const id = q.shift();
+      order.push(id);
+      const n = this.nodes.get(id);
+      for (const out of n.outputs) for (const lid of out.links) {
+        const l = this.links.get(lid);
+        if (!l || !needed.has(l.target_id)) continue;
+        indeg.set(l.target_id, indeg.get(l.target_id) - 1);
+        if (indeg.get(l.target_id) === 0) q.push(l.target_id);
+      }
+    }
+    return order;
+  }
+
+  execWidgets(n) {
+    const w = {};
+    for (const wd of n.wdefs) {
+      if (wd.noserial || wd.ghost) continue;
+      if (wd.wtype === "seed") w[wd.name] = n.widgets[wd.name];
+      else w[wd.name] = n.widgets[wd.name];
+    }
+    // a key pasted into ANY node of a given service applies to sibling nodes
+    // of that service whose api_key field is left blank
+    const def = NODE_DEFS[n.type];
+    if (def && def.keyName && !(typeof w.api_key === "string" && w.api_key.trim())) {
+      const shared = this.sharedInlineKey(def.keyName);
+      if (shared) w.api_key = shared;
+    }
+    return w;
+  }
+
+  sharedInlineKey(keyName) {
+    for (const m of this.nodes.values()) {
+      const d = NODE_DEFS[m.type];
+      if (d && d.keyName === keyName) {
+        const v = m.widgets && m.widgets.api_key;
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+    }
+    return null;
+  }
+
+  computeSig(n, inputSigs, salt) {
+    return hashStr(JSON.stringify([ENGINE_V, n.type, this.execWidgets(n), inputSigs, salt || ""]));
+  }
+}
+
+// PNG tEXt/iTXt chunk parsing (for drag-in workflow restore) — pure function
+function pngExtractText(buf) {
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  const out = {};
+  if (u8.length < 8 || u8[0] !== 0x89 || u8[1] !== 0x50) return out;
+  let p = 8;
+  const rd32 = i => (u8[i] << 24 | u8[i + 1] << 16 | u8[i + 2] << 8 | u8[i + 3]) >>> 0;
+  while (p + 8 <= u8.length) {
+    const len = rd32(p);
+    const type = String.fromCharCode(u8[p + 4], u8[p + 5], u8[p + 6], u8[p + 7]);
+    const data = u8.subarray(p + 8, p + 8 + len);
+    if (type === "tEXt") {
+      const z = data.indexOf(0);
+      if (z > 0) {
+        const key = String.fromCharCode(...data.subarray(0, z));
+        let txt = "";
+        const body = data.subarray(z + 1);
+        for (let i = 0; i < body.length; i += 32768) txt += String.fromCharCode(...body.subarray(i, i + 32768));
+        out[key] = txt;
+      }
+    } else if (type === "iTXt") {
+      const z = data.indexOf(0);
+      if (z > 0 && data[z + 1] === 0) { // uncompressed only
+        const key = String.fromCharCode(...data.subarray(0, z));
+        let q = z + 3;
+        for (let skipped = 0; skipped < 2 && q < data.length; q++) if (data[q] === 0) skipped++;
+        try { out[key] = new TextDecoder("utf-8").decode(data.subarray(q)); } catch (e) {}
+      }
+    } else if (type === "IEND") break;
+    p += 12 + len;
+  }
+  return out;
+}
+/* ================================================================ CORE-END */
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { Graph, NODE_DEFS, pngExtractText, typesCompatible, hashStr, TYPE_COLORS };
+}
+if (typeof document !== "undefined") (function () {
+/* ============================================================== UI LAYER */
+
+const $ = id => document.getElementById(id);
+const viewport = $("viewport"), world = $("world"), nodesEl = $("nodes"),
+      linksSvg = $("links"), groupsEl = $("groups"), tempSvg = $("templink"),
+      boxsel = $("boxsel");
+
+let ROOT = null;                 // abs dir of this html (from api setup)
+const graph = new Graph();
+const view = { x: 80, y: 80, s: 1 };
+const sel = new Set();           // selected node ids
+let selLink = null;
+const domNodes = new Map();      // id -> element
+const results = new Map();       // nodeId -> {sig, outputs, ui}
+const memo = new Map();          // sig -> result (client-side cache)
+const uploadSalt = new Map();    // filename -> counter (invalidate LoadImage cache on re-upload)
+let clipboard = null;
+const undoStack = [], redoStack = [];
+let running = false, cancelRequested = false;
+let currentWfPath = null, dirty = false;
+let lastCanvasPoint = [200, 200];
+
+// ---- workflow tabs (browser-style). One live `graph`; inactive tabs hold a
+// serialized snapshot. Switching captures the live state, then restores another.
+let tabs = [];        // [{ id, snapshot, view, currentWfPath, dirty, results }]
+let activeTab = -1;   // index into tabs
+let tabSeq = 0;
+
+// ------------------------------------------------------------- utilities
+function toast(msg, isErr) {
+  const t = document.createElement("div");
+  t.className = "toast" + (isErr ? " err" : "");
+  t.textContent = msg;
+  $("toasts").appendChild(t);
+  setTimeout(() => t.remove(), isErr ? 5200 : 2800);
+}
+function logEvent(kind, detail) {
+  fused.runPython("./api.py", { op: "log", kind, detail: JSON.stringify(detail || {}) }).catch(() => {});
+}
+
+// in-app modal replacing native prompt()/confirm() (blocking popups don't fit
+// the embedded-iframe UX). askText resolves to the string or null on cancel;
+// askConfirm resolves to true/false.
+function showModal(build) {
+  return new Promise(resolve => {
+    const overlay = $("modal-overlay"), box = $("modal");
+    box.innerHTML = "";
+    const done = (v) => { overlay.style.display = "none"; document.removeEventListener("keydown", onKey, true); resolve(v); };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(build.cancelValue); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    overlay.addEventListener("pointerdown", function onDown(e) {
+      if (e.target === overlay) { overlay.removeEventListener("pointerdown", onDown); done(build.cancelValue); }
+    });
+    build.fill(box, done);
+    overlay.style.display = "flex";
+  });
+}
+
+function askText(message, initial, placeholder) {
+  return showModal({
+    cancelValue: null,
+    fill(box, done) {
+      const msg = document.createElement("div");
+      msg.className = "mmsg"; msg.textContent = message;
+      const inp = document.createElement("input");
+      inp.value = initial || ""; inp.placeholder = placeholder || "";
+      inp.addEventListener("keydown", e => {
+        e.stopPropagation();
+        if (e.key === "Enter") done(inp.value.trim() || null);
+      });
+      const btns = document.createElement("div");
+      btns.className = "mbtns";
+      const cancel = document.createElement("button");
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => done(null));
+      const ok = document.createElement("button");
+      ok.className = "primary"; ok.textContent = "OK";
+      ok.addEventListener("click", () => done(inp.value.trim() || null));
+      btns.appendChild(cancel); btns.appendChild(ok);
+      box.appendChild(msg); box.appendChild(inp); box.appendChild(btns);
+      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    },
+  });
+}
+
+function askConfirm(message, okLabel) {
+  return showModal({
+    cancelValue: false,
+    fill(box, done) {
+      const msg = document.createElement("div");
+      msg.className = "mmsg"; msg.textContent = message;
+      const btns = document.createElement("div");
+      btns.className = "mbtns";
+      const cancel = document.createElement("button");
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => done(false));
+      const ok = document.createElement("button");
+      ok.className = "primary"; ok.textContent = okLabel || "OK";
+      ok.addEventListener("click", () => done(true));
+      btns.appendChild(cancel); btns.appendChild(ok);
+      box.appendChild(msg); box.appendChild(btns);
+      setTimeout(() => ok.focus(), 0);
+    },
+  });
+}
+function worldPos(e) {
+  const r = viewport.getBoundingClientRect();
+  return [(e.clientX - r.left - view.x) / view.s, (e.clientY - r.top - view.y) / view.s];
+}
+function applyView() {
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
+  const g = 24 * view.s, G = 120 * view.s;
+  viewport.style.backgroundImage =
+    `linear-gradient(#ffffff07 1px, transparent 1px), linear-gradient(90deg, #ffffff07 1px, transparent 1px),` +
+    `linear-gradient(#ffffff0d 1px, transparent 1px), linear-gradient(90deg, #ffffff0d 1px, transparent 1px)`;
+  viewport.style.backgroundSize = `${g}px ${g}px, ${g}px ${g}px, ${G}px ${G}px, ${G}px ${G}px`;
+  viewport.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  $("z-pct").textContent = Math.round(view.s * 100) + "%";
+}
+function markDirty() {
+  dirty = true;
+  $("wfname").classList.add("dirty");
+  scheduleAutosave();
+}
+
+// ------------------------------------------------------------- undo/redo
+function pushUndo() {
+  const snap = JSON.stringify(graph.serialize());
+  if (undoStack.length && undoStack[undoStack.length - 1] === snap) return;
+  undoStack.push(snap);
+  if (undoStack.length > 100) undoStack.shift();
+  redoStack.length = 0;
+}
+function restore(snapStr) {
+  graph.load(JSON.parse(snapStr));
+  sel.clear(); selLink = null;
+  renderAll();
+  markDirty();
+}
+function undo() {
+  if (!undoStack.length) return toast("nothing to undo");
+  redoStack.push(JSON.stringify(graph.serialize()));
+  restore(undoStack.pop());
+}
+function redo() {
+  if (!redoStack.length) return toast("nothing to redo");
+  undoStack.push(JSON.stringify(graph.serialize()));
+  restore(redoStack.pop());
+}
+
+// ------------------------------------------------------------- rendering
+function renderAll() {
+  nodesEl.innerHTML = ""; domNodes.clear();
+  for (const n of graph.nodes.values()) buildNode(n);
+  renderGroups();
+  drawLinks(true);
+}
+function renderGroups() {
+  groupsEl.innerHTML = "";
+  graph.groups.forEach((g, gi) => {
+    const el = document.createElement("div");
+    el.className = "group";
+    el.style.cssText = `left:${g.bounding[0]}px; top:${g.bounding[1]}px; width:${g.bounding[2]}px; height:${g.bounding[3]}px; background:${(g.color || "#3f789e") + "2e"}; border-color:${g.color || "#3f789e"}`;
+    const t = document.createElement("div");
+    t.className = "gtitle";
+    t.textContent = g.title;
+    t.addEventListener("pointerdown", e => startGroupDrag(e, gi));
+    el.appendChild(t);
+    groupsEl.appendChild(el);
+  });
+}
+
+const PALETTE_COLORS = { red: "#642e2e", green: "#2e5c2e", blue: "#2e4a63", pale_blue: "#3f5159", cyan: "#2e5c5c", purple: "#4b2e63", yellow: "#63602e", black: "#222", none: null };
+
+function buildNode(n) {
+  const old = domNodes.get(n.id);
+  if (old) old.remove();
+  const def = NODE_DEFS[n.type];
+  const el = document.createElement("div");
+  el.className = "node";
+  el.dataset.id = n.id;
+  if (n.type === "Note") el.classList.add("note-node");
+  el.style.width = (n.flags.collapsed ? "auto" : n.size[0] + "px");
+  if (!n.flags.collapsed && n.size[1] > 0) el.style.minHeight = n.size[1] + "px";
+  if (n.bgcolor) el.style.background = n.bgcolor;
+  el.classList.toggle("collapsed", !!n.flags.collapsed);
+  el.classList.toggle("muted", n.mode === 2);
+  el.classList.toggle("bypassed", n.mode === 4);
+  el.classList.toggle("selected", sel.has(n.id));
+
+  // title
+  const title = document.createElement("div");
+  title.className = "ntitle";
+  if (n.color) title.style.background = n.color;
+  const dotc = document.createElement("span");
+  dotc.className = "ncollapse";
+  dotc.title = "collapse/expand";
+  dotc.addEventListener("pointerdown", e => e.stopPropagation());
+  dotc.addEventListener("click", e => { e.stopPropagation(); toggleCollapse(n); });
+  title.appendChild(dotc);
+  const tt = document.createElement("span");
+  tt.className = "ntext";
+  tt.textContent = n.title;
+  title.appendChild(tt);
+  const badge = document.createElement("span");
+  badge.className = "nbadge";
+  if (n.ghost) { badge.textContent = "ghost"; badge.title = "no local implementation — imported ComfyUI node (kept for round-trip)"; }
+  title.appendChild(badge);
+  tt.addEventListener("dblclick", e => { e.stopPropagation(); renameNode(n); });
+  el.appendChild(title);
+
+  // body
+  const body = document.createElement("div");
+  body.className = "nbody";
+  const slots = document.createElement("div");
+  slots.className = "slots";
+  const cin = document.createElement("div"); cin.className = "col-in";
+  const cout = document.createElement("div"); cout.className = "col-out";
+  n.inputs.forEach((inp, i) => {
+    const s = document.createElement("div");
+    s.className = "slot in" + (inp.optional ? " optional" : "");
+    const d = document.createElement("div");
+    d.className = "dot";
+    d.dataset.io = "in"; d.dataset.slot = i; d.dataset.node = n.id;
+    d.style.background = inp.link != null ? typeColor(effInType(n, i)) : "#2b2b2b";
+    d.style.borderColor = typeColor(effInType(n, i));
+    d.title = `${inp.name || "input"} (${inp.type})`;
+    s.appendChild(d);
+    const lab = document.createElement("span");
+    lab.className = "sname";
+    lab.textContent = inp.name || "";
+    s.appendChild(lab);
+    cin.appendChild(s);
+  });
+  n.outputs.forEach((out, i) => {
+    const s = document.createElement("div");
+    s.className = "slot out";
+    const d = document.createElement("div");
+    d.className = "dot";
+    d.dataset.io = "out"; d.dataset.slot = i; d.dataset.node = n.id;
+    d.style.background = typeColor(out.type);
+    d.style.borderColor = typeColor(out.type);
+    d.title = `${out.name || "output"} (${out.type})`;
+    s.appendChild(d);
+    const lab = document.createElement("span");
+    lab.className = "sname";
+    lab.textContent = out.name || "";
+    s.appendChild(lab);
+    cout.appendChild(s);
+  });
+  slots.appendChild(cin); slots.appendChild(cout);
+  body.appendChild(slots);
+
+  // widgets
+  if (n.wdefs.length) {
+    const ws = document.createElement("div");
+    ws.className = "widgets";
+    for (const wd of n.wdefs) ws.appendChild(buildWidget(n, wd));
+    body.appendChild(ws);
+  }
+
+  // input thumbnail for LoadImage
+  if (def && def.showInputThumb && n.widgets.image && ROOT) {
+    const pv = document.createElement("div");
+    pv.className = "npreview";
+    const img = document.createElement("img");
+    img.src = fused.rawUrl(ROOT + "/input/" + n.widgets.image) + "&_s=" + (uploadSalt.get(n.widgets.image) || 0);
+    img.addEventListener("click", () => openLightbox(img.src, n.widgets.image));
+    pv.appendChild(img);
+    body.appendChild(pv);
+  }
+
+  // execution previews
+  const res = results.get(n.id);
+  appendUiPreviews(body, res);
+  if (n._error) {
+    const err = document.createElement("div");
+    err.className = "nerror";
+    err.textContent = n._error;
+    body.appendChild(err);
+    el.classList.add("error");
+  }
+  el.appendChild(body);
+
+  const rz = document.createElement("div");
+  rz.className = "nresize";
+  rz.addEventListener("pointerdown", e => startResize(e, n));
+  el.appendChild(rz);
+
+  el.style.transform = `translate(${n.pos[0]}px, ${n.pos[1]}px)`;
+  el.addEventListener("pointerdown", e => onNodePointerDown(e, n));
+  el.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(n.id)) selectOnly(n.id); nodeMenu(e.clientX, e.clientY, n); });
+  nodesEl.appendChild(el);
+  domNodes.set(n.id, el);
+  n._portCache = null;
+  return el;
+}
+
+function appendUiPreviews(body, res) {
+  if (!res || !res.ui) return;
+  if (res.ui.images && res.ui.images.length) {
+    const pv = document.createElement("div");
+    pv.className = "npreview";
+    for (const ref of res.ui.images) {
+      const img = document.createElement("img");
+      img.src = fused.rawUrl(ref.__image__);
+      img.addEventListener("click", () => openLightbox(img.src, `${ref.w}×${ref.h}`));
+      pv.appendChild(img);
+    }
+    body.appendChild(pv);
+  }
+  if (res.ui.videos && res.ui.videos.length) {
+    const pv = document.createElement("div");
+    pv.className = "npreview";
+    for (const path of res.ui.videos) {
+      const vid = document.createElement("video");
+      vid.src = fused.rawUrl(path);
+      vid.controls = true; vid.loop = true; vid.muted = true;
+      vid.addEventListener("pointerdown", e => e.stopPropagation());
+      pv.appendChild(vid);
+    }
+    body.appendChild(pv);
+  }
+  if (typeof res.ui.text === "string") {
+    const t = document.createElement("div");
+    t.className = "ntext-out";
+    t.textContent = res.ui.text;
+    t.addEventListener("pointerdown", e => e.stopPropagation());
+    body.appendChild(t);
+  }
+  if (res.ui.pointcloud) {
+    const pv = document.createElement("div");
+    pv.className = "npreview";
+    const canvas = document.createElement("canvas");
+    canvas.className = "pcv";
+    pv.appendChild(canvas);
+    const hint = document.createElement("div");
+    hint.className = "pchint";
+    hint.textContent = `${res.ui.pointcloud.points.toLocaleString()} points — drag to orbit, dbl-click to expand`;
+    pv.appendChild(hint);
+    body.appendChild(pv);
+    fetchPointCloud(res.ui.pointcloud.__pointcloud__)
+      .then(data => attachPointCloud(canvas, data))
+      .catch(err => { hint.textContent = "3D load failed: " + err.message; });
+  }
+}
+
+function effInType(n, slot) {
+  const inp = n.inputs[slot];
+  if (inp.type !== "*" || inp.link == null) return inp.type;
+  const l = graph.links.get(inp.link);
+  return l ? l.type : "*";
+}
+
+function updateNodePos(n) {
+  const el = domNodes.get(n.id);
+  if (el) el.style.transform = `translate(${n.pos[0]}px, ${n.pos[1]}px)`;
+  n._portCache = null;
+}
+
+function portPos(n, io, slot) {
+  const el = domNodes.get(n.id);
+  if (!el) return [n.pos[0], n.pos[1]];
+  if (n.flags.collapsed) {
+    const w = el.offsetWidth, h = el.offsetHeight;
+    return io === "in" ? [n.pos[0], n.pos[1] + h / 2] : [n.pos[0] + w, n.pos[1] + h / 2];
+  }
+  if (!n._portCache) n._portCache = {};
+  const key = io + slot;
+  if (!n._portCache[key]) {
+    const dot = el.querySelector(`.dot[data-io="${io}"][data-slot="${slot}"]`);
+    if (!dot) return [n.pos[0], n.pos[1]];
+    let x = dot.offsetLeft + dot.offsetWidth / 2, y = dot.offsetTop + dot.offsetHeight / 2;
+    let p = dot.offsetParent;
+    while (p && p !== el) { x += p.offsetLeft; y += p.offsetTop; p = p.offsetParent; }
+    n._portCache[key] = [x, y];
+  }
+  return [n.pos[0] + n._portCache[key][0], n.pos[1] + n._portCache[key][1]];
+}
+
+function linkPath(x1, y1, x2, y2) {
+  const d = Math.max(40, Math.min(220, Math.abs(x2 - x1) * 0.55));
+  return `M ${x1} ${y1} C ${x1 + d} ${y1}, ${x2 - d} ${y2}, ${x2} ${y2}`;
+}
+
+const linkPaths = new Map(); // linkId -> {vis, hit}
+function drawLinks(full) {
+  if (full) { linksSvg.innerHTML = ""; linkPaths.clear(); }
+  for (const l of graph.links.values()) {
+    let pair = linkPaths.get(l.id);
+    if (!pair) {
+      const hit = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      hit.setAttribute("class", "hit");
+      const vis = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      vis.setAttribute("class", "link");
+      const pick = e => { e.stopPropagation(); selLink = l.id; sel.clear(); refreshSelection(); drawLinks(); };
+      hit.addEventListener("pointerdown", pick);
+      vis.addEventListener("pointerdown", pick);
+      linksSvg.appendChild(hit); linksSvg.appendChild(vis);
+      pair = { vis, hit };
+      linkPaths.set(l.id, pair);
+    }
+    const o = graph.nodes.get(l.origin_id), t = graph.nodes.get(l.target_id);
+    if (!o || !t) continue;
+    const [x1, y1] = portPos(o, "out", l.origin_slot);
+    const [x2, y2] = portPos(t, "in", l.target_slot);
+    const p = linkPath(x1, y1, x2, y2);
+    pair.vis.setAttribute("d", p);
+    pair.hit.setAttribute("d", p);
+    pair.vis.style.stroke = typeColor(l.type);
+    pair.vis.classList.toggle("selected", selLink === l.id);
+    pair.vis.style.opacity = (o.mode === 2 || t.mode === 2) ? .3 : 1;
+  }
+  for (const [id, pair] of [...linkPaths]) {
+    if (!graph.links.has(id)) { pair.vis.remove(); pair.hit.remove(); linkPaths.delete(id); }
+  }
+}
+
+function refreshSelection() {
+  for (const [id, el] of domNodes) el.classList.toggle("selected", sel.has(id));
+}
+function selectOnly(id) { sel.clear(); sel.add(id); selLink = null; refreshSelection(); drawLinks(); }
+
+// ------------------------------------------------------------- widgets UI
+function fmtNum(v, wd) {
+  if (wd.int) return String(Math.round(v));
+  const s = Math.abs(wd.step || 0.01) < 0.1 ? 2 : 1;
+  return Number(v).toFixed(s);
+}
+function setWidget(n, wd, value, skipRebuild) {
+  pushUndo();
+  n.widgets[wd.name] = value;
+  if (n.ghost) {
+    const idx = parseInt(wd.name.slice(1), 10);
+    if (!isNaN(idx) && n.rawWidgets) n.rawWidgets[idx] = value;
+  }
+  n._error = null;
+  markDirty();
+  if (!skipRebuild) { buildNode(n); drawLinks(); }
+}
+
+function buildWidget(n, wd) {
+  const stop = el => el.addEventListener("pointerdown", e => e.stopPropagation());
+  const label = wd.label || wd.name;
+
+  if (wd.wtype === "button") {
+    const w = document.createElement("div");
+    w.className = "w wbtn";
+    w.textContent = wd.label || wd.name;
+    stop(w);
+    w.addEventListener("click", () => uploadForNode(n));
+    return w;
+  }
+
+  if (wd.wtype === "seed") {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "display:flex;flex-direction:column;gap:3px";
+    wrap.appendChild(buildNumberRow(n, Object.assign({}, wd, { wtype: "number", int: true, min: 0, max: Number.MAX_SAFE_INTEGER, step: 1, label }), label));
+    const ctrlDef = { wtype: "combo", name: wd.name + "__control", label: "after gen", options: ["fixed", "randomize", "increment", "decrement"] };
+    wrap.appendChild(buildComboRow(n, ctrlDef));
+    return wrap;
+  }
+  if (wd.wtype === "number") return buildNumberRow(n, wd, label);
+  if (wd.wtype === "combo") return buildComboRow(n, wd);
+
+  if (wd.wtype === "toggle") {
+    const w = document.createElement("div");
+    w.className = "w";
+    stop(w);
+    const mid = document.createElement("div");
+    mid.className = "wmid"; mid.style.cursor = "pointer";
+    mid.innerHTML = `<span class="wname"></span><span class="wval"></span>`;
+    mid.querySelector(".wname").textContent = label;
+    const upd = () => { mid.querySelector(".wval").textContent = n.widgets[wd.name] ? "true" : "false"; mid.querySelector(".wval").style.color = n.widgets[wd.name] ? "#8fd98f" : "#d98f8f"; };
+    upd();
+    mid.addEventListener("click", () => { setWidget(n, wd, !n.widgets[wd.name], true); upd(); });
+    w.appendChild(mid);
+    return w;
+  }
+
+  if (wd.wtype === "color") {
+    const w = document.createElement("div");
+    w.className = "w";
+    stop(w);
+    const mid = document.createElement("div");
+    mid.className = "wmid"; mid.style.cursor = "default";
+    mid.innerHTML = `<span class="wname"></span>`;
+    mid.querySelector(".wname").textContent = label;
+    const inp = document.createElement("input");
+    inp.type = "color";
+    inp.value = /^#[0-9a-fA-F]{6}$/.test(String(n.widgets[wd.name])) ? n.widgets[wd.name] : "#000000";
+    inp.addEventListener("input", () => setWidget(n, wd, inp.value, true));
+    mid.appendChild(inp);
+    w.appendChild(mid);
+    return w;
+  }
+
+  if (wd.wtype === "secret") {
+    const w = document.createElement("div");
+    w.className = "w wsecret";
+    stop(w);
+    const inp = document.createElement("input");
+    // shown as plain text by default so the value is visible ("so I know what it is");
+    // the 👁 toggle masks it for screen-sharing.
+    inp.type = "text";
+    inp.className = "winline";
+    inp.value = String(n.widgets[wd.name] ?? "");
+    inp.placeholder = wd.placeholder || "api key";
+    inp.spellcheck = false; inp.autocomplete = "off";
+    inp.addEventListener("change", () => setWidget(n, wd, inp.value, true));
+    inp.addEventListener("keydown", e => e.stopPropagation());
+    const eye = document.createElement("span");
+    eye.className = "arr weye";
+    eye.textContent = "👁";
+    eye.title = "show / hide";
+    eye.addEventListener("click", () => {
+      const hidden = inp.type === "password";
+      inp.type = hidden ? "text" : "password";
+      eye.style.opacity = hidden ? "1" : ".5";
+    });
+    w.appendChild(inp);
+    w.appendChild(eye);
+    return w;
+  }
+
+  // text
+  if (wd.multiline || (typeof n.widgets[wd.name] === "string" && n.widgets[wd.name].includes("\n"))) {
+    const ta = document.createElement("textarea");
+    ta.className = "wtextarea";
+    ta.value = String(n.widgets[wd.name] ?? "");
+    ta.title = label;
+    ta.spellcheck = false;
+    stop(ta);
+    ta.addEventListener("change", () => setWidget(n, wd, ta.value, true));
+    ta.addEventListener("keydown", e => e.stopPropagation());
+    const wrap = document.createElement("div");
+    wrap.className = "wtextwrap";
+    if (label && label !== "value") {
+      const lab = document.createElement("div");
+      lab.style.cssText = "font-size:10.5px;color:#8d8d8d;padding:0 2px 1px";
+      lab.textContent = label;
+      wrap.appendChild(lab);
+    }
+    wrap.appendChild(ta);
+    return wrap;
+  }
+  const w = document.createElement("div");
+  w.className = "w";
+  stop(w);
+  const nameSpan = document.createElement("span");
+  nameSpan.className = "wname";
+  nameSpan.style.padding = "0 0 0 8px";
+  nameSpan.textContent = label;
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.value = String(n.widgets[wd.name] ?? "");
+  inp.spellcheck = false;
+  inp.addEventListener("change", () => setWidget(n, wd, inp.value, true));
+  inp.addEventListener("keydown", e => e.stopPropagation());
+  w.appendChild(nameSpan);
+  w.appendChild(inp);
+  return w;
+}
+
+function buildNumberRow(n, wd, label) {
+  const w = document.createElement("div");
+  w.className = "w num";
+  w.addEventListener("pointerdown", e => e.stopPropagation());
+  const la = document.createElement("span"); la.className = "arr"; la.textContent = "◀";
+  const ra = document.createElement("span"); ra.className = "arr"; ra.textContent = "▶";
+  const mid = document.createElement("div"); mid.className = "wmid";
+  const nameEl = document.createElement("span"); nameEl.className = "wname"; nameEl.textContent = label || wd.name;
+  const valEl = document.createElement("span"); valEl.className = "wval";
+  const cur = () => Number(n.widgets[wd.name]) || 0;
+  const clamp = v => Math.max(wd.min ?? -Infinity, Math.min(wd.max ?? Infinity, v));
+  const show = () => valEl.textContent = fmtNum(cur(), wd);
+  const commit = v => { setWidget(n, wd, wd.int ? Math.round(clamp(v)) : clamp(v), true); show(); };
+  show();
+  mid.appendChild(nameEl); mid.appendChild(valEl);
+  la.addEventListener("click", () => commit(cur() - (wd.step || 1)));
+  ra.addEventListener("click", () => commit(cur() + (wd.step || 1)));
+  // drag-to-scrub, click(no move)-to-type
+  mid.addEventListener("pointerdown", e => {
+    e.stopPropagation(); e.preventDefault();
+    const x0 = e.clientX, v0 = cur();
+    let moved = false;
+    const mv = ev => {
+      const dx = ev.clientX - x0;
+      if (Math.abs(dx) > 3) moved = true;
+      if (moved) commit(v0 + Math.round(dx / 4) * (wd.step || 1));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", mv);
+      window.removeEventListener("pointerup", up);
+      if (!moved) editInline();
+    };
+    window.addEventListener("pointermove", mv);
+    window.addEventListener("pointerup", up);
+  });
+  function editInline() {
+    const inp = document.createElement("input");
+    inp.className = "winline";
+    inp.value = String(cur());
+    mid.replaceWith(inp);
+    inp.focus(); inp.select();
+    inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = String(cur()); inp.blur(); } });
+    inp.addEventListener("blur", () => {
+      const v = parseFloat(inp.value);
+      if (!isNaN(v)) commit(v);
+      inp.replaceWith(mid);
+      show();
+    });
+  }
+  w.appendChild(la); w.appendChild(mid); w.appendChild(ra);
+  return w;
+}
+
+function buildComboRow(n, wd) {
+  const w = document.createElement("div");
+  w.className = "w combo";
+  w.addEventListener("pointerdown", e => e.stopPropagation());
+  const options = () => (typeof wd.options === "function" ? wd.options() : wd.options) || [];
+  const la = document.createElement("span"); la.className = "arr"; la.textContent = "◀";
+  const ra = document.createElement("span"); ra.className = "arr"; ra.textContent = "▶";
+  const mid = document.createElement("div"); mid.className = "wmid";
+  const nameEl = document.createElement("span"); nameEl.className = "wname"; nameEl.textContent = wd.label || wd.name;
+  const valEl = document.createElement("span"); valEl.className = "wval";
+  const show = () => valEl.textContent = String(n.widgets[wd.name] ?? "");
+  show();
+  const cycle = dir => {
+    const opts = options();
+    if (!opts.length) return;
+    let i = opts.indexOf(n.widgets[wd.name]);
+    i = (i + dir + opts.length) % opts.length;
+    setWidget(n, wd, opts[i], wd.name.endsWith("__control"));
+    show();
+    if (!wd.name.endsWith("__control")) { buildNode(n); drawLinks(); }
+  };
+  la.addEventListener("click", () => cycle(-1));
+  ra.addEventListener("click", () => cycle(1));
+  mid.addEventListener("click", e => {
+    const opts = options();
+    if (!opts.length) return toast("no options available");
+    showMenu(e.clientX, e.clientY, opts.map(o => ({
+      label: String(o) + (o === n.widgets[wd.name] ? "  ✓" : ""),
+      cb: () => { setWidget(n, wd, o, wd.name.endsWith("__control")); show(); if (!wd.name.endsWith("__control")) { buildNode(n); drawLinks(); } },
+    })));
+  });
+  mid.appendChild(nameEl); mid.appendChild(valEl);
+  w.appendChild(la); w.appendChild(mid); w.appendChild(ra);
+  return w;
+}
+
+async function uploadForNode(n) {
+  const fi = $("file-img");
+  fi.onchange = async () => {
+    const f = fi.files[0];
+    fi.value = "";
+    if (!f) return;
+    await uploadFile(f, n);
+  };
+  fi.click();
+}
+async function uploadFile(f, node) {
+  try {
+    const buf = await f.arrayBuffer();
+    let bin = "";
+    const u8 = new Uint8Array(buf);
+    for (let i = 0; i < u8.length; i += 32768) bin += String.fromCharCode(...u8.subarray(i, i + 32768));
+    const r = await fused.runPython("./api.py", { op: "upload", name: f.name, data_b64: btoa(bin) });
+    INPUT_FILES = r.inputs;
+    uploadSalt.set(r.name, (uploadSalt.get(r.name) || 0) + 1);
+    toast(`uploaded ${r.name}`);
+    if (node) {
+      pushUndo();
+      node.widgets.image = r.name;
+      markDirty();
+      buildNode(node); drawLinks();
+    }
+    return r.name;
+  } catch (e) {
+    toast("upload failed: " + e.message, true);
+    return null;
+  }
+}
+
+// ------------------------------------------------------------- node ops
+function toggleCollapse(n) {
+  pushUndo();
+  n.flags.collapsed = !n.flags.collapsed;
+  buildNode(n); drawLinks();
+  markDirty();
+}
+async function renameNode(n) {
+  const t = await askText("Node title", n.title);
+  if (t == null) return;
+  pushUndo();
+  n.title = t || n.title;
+  buildNode(n); drawLinks(); markDirty();
+}
+function setMode(ids, mode) {
+  pushUndo();
+  for (const id of ids) {
+    const n = graph.nodes.get(id);
+    if (n) { n.mode = n.mode === mode ? 0 : mode; buildNode(n); }
+  }
+  drawLinks(); markDirty();
+}
+function deleteSelection() {
+  if (!sel.size && selLink == null) return;
+  pushUndo();
+  if (selLink != null) { graph.removeLink(selLink); selLink = null; }
+  for (const id of sel) { graph.removeNode(id); const el = domNodes.get(id); if (el) el.remove(); domNodes.delete(id); }
+  sel.clear();
+  drawLinks(true); markDirty();
+}
+function copySelection() {
+  if (!sel.size) return;
+  const nodes = [...sel].map(id => graph.nodes.get(id)).filter(Boolean);
+  const snap = graph.serialize();
+  clipboard = {
+    nodes: snap.nodes.filter(n => sel.has(n.id)),
+    links: snap.links.filter(l => sel.has(l[1]) && sel.has(l[3])),
+  };
+  toast(`copied ${nodes.length} node(s)`);
+}
+function pasteClipboard(at) {
+  if (!clipboard || !clipboard.nodes.length) return;
+  pushUndo();
+  const minX = Math.min(...clipboard.nodes.map(n => n.pos[0]));
+  const minY = Math.min(...clipboard.nodes.map(n => n.pos[1]));
+  const base = at || [lastCanvasPoint[0] + 24, lastCanvasPoint[1] + 24];
+  const idMap = new Map();
+  sel.clear();
+  for (const jn of clipboard.nodes) {
+    const copy = JSON.parse(JSON.stringify(jn));
+    const nid = ++graph.lastNodeId;
+    idMap.set(jn.id, nid);
+    copy.id = nid;
+    copy.pos = [base[0] + (jn.pos[0] - minX), base[1] + (jn.pos[1] - minY)];
+    if (copy.inputs) copy.inputs.forEach(i => i.link = null);
+    if (copy.outputs) copy.outputs.forEach(o => o.links = []);
+    const tmp = { nodes: [copy], links: [], groups: [], extra: {} };
+    // reuse loader logic for a single node by manual add
+    const def = NODE_DEFS[copy.type];
+    const n = graph.addNode(copy.type, copy.pos, { id: nid, title: copy.title, properties: copy.properties, color: copy.color, bgcolor: copy.bgcolor });
+    n.size[0] = copy.size[0] || n.size[0];
+    n.flags = copy.flags || {};
+    n.mode = copy.mode || 0;
+    if (!def) {
+      n.inputs = (copy.inputs || []).map(i => ({ name: i.name, type: i.type, link: null, optional: true }));
+      n.outputs = (copy.outputs || []).map(o => ({ name: o.name, type: o.type, links: [] }));
+      n.rawWidgets = Array.isArray(copy.widgets_values) ? [...copy.widgets_values] : [];
+      n.wdefs = graph.ghostWidgetDefs(copy.type, n.rawWidgets);
+      n.rawWidgets.forEach((v, i) => { n.widgets["#" + i] = v; });
+    } else if (copy.widgets_values) graph.applyWidgetValues(n, copy.widgets_values);
+    buildNode(n);
+    sel.add(nid);
+  }
+  for (const [lid, oid, oslot, tid, tslot] of clipboard.links) {
+    try { graph.connect(idMap.get(oid), oslot, idMap.get(tid), tslot); } catch (e) {}
+  }
+  for (const id of sel) buildNode(graph.nodes.get(id));
+  refreshSelection();
+  drawLinks(true); markDirty();
+}
+function duplicateSelection() {
+  copySelection();
+  pasteClipboard();
+}
+
+// ------------------------------------------------------------- pointer interactions
+let drag = null; // {kind, ...}
+
+viewport.addEventListener("pointerdown", e => {
+  closeMenus();
+  const wp = worldPos(e);
+  lastCanvasPoint = wp;
+  if (e.target.classList && e.target.classList.contains("dot")) return; // handled below via node
+  if (e.button === 1 || (e.button === 0 && spaceHeld) || e.button === 2) {
+    drag = { kind: "pan", x0: e.clientX, y0: e.clientY, vx: view.x, vy: view.y, moved: false, btn: e.button };
+    viewport.classList.add("panning");
+    viewport.setPointerCapture(e.pointerId);
+    return;
+  }
+  if (e.button === 0) {
+    // empty canvas: box select
+    if (!e.shiftKey) { sel.clear(); selLink = null; refreshSelection(); drawLinks(); }
+    drag = { kind: "box", x0: e.clientX, y0: e.clientY, base: new Set(sel) };
+    viewport.setPointerCapture(e.pointerId);
+  }
+});
+
+document.addEventListener("pointerdown", e => {
+  if (e.target.classList && e.target.classList.contains("dot")) {
+    e.stopPropagation(); e.preventDefault();
+    startLinkDrag(e);
+  }
+}, true);
+
+function onNodePointerDown(e, n) {
+  if (e.button === 2) return;
+  if (e.target.closest(".w") || e.target.closest(".wtextarea") || e.target.closest(".npreview") || e.target.closest(".nresize") || e.target.classList.contains("dot")) return;
+  e.stopPropagation();
+  closeMenus();
+  if (e.button === 1) return;
+  if (e.shiftKey) {
+    if (sel.has(n.id)) sel.delete(n.id); else sel.add(n.id);
+    refreshSelection();
+  } else if (!sel.has(n.id)) {
+    selectOnly(n.id);
+  }
+  selLink = null;
+  const starts = new Map();
+  for (const id of sel) { const m = graph.nodes.get(id); if (m) starts.set(id, [m.pos[0], m.pos[1]]); }
+  drag = { kind: "move", x0: e.clientX, y0: e.clientY, starts, moved: false };
+  document.body.setPointerCapture && viewport.setPointerCapture(e.pointerId);
+}
+
+function startResize(e, n) {
+  e.stopPropagation(); e.preventDefault();
+  pushUndo();
+  // measure the natural (content-driven) height so a drag can't crush content
+  const el = domNodes.get(n.id);
+  let minH = 40;
+  if (el) {
+    const prev = el.style.minHeight, prevH = el.style.height;
+    el.style.minHeight = "0px"; el.style.height = "auto";
+    minH = el.offsetHeight;
+    el.style.minHeight = prev; el.style.height = prevH;
+  }
+  drag = { kind: "resize", node: n, x0: e.clientX, y0: e.clientY, w0: n.size[0], h0: n.size[1] || minH, minH };
+  viewport.setPointerCapture(e.pointerId);
+}
+
+function startGroupDrag(e, gi) {
+  e.stopPropagation(); e.preventDefault();
+  pushUndo();
+  const g = graph.groups[gi];
+  const inside = [...graph.nodes.values()].filter(n => {
+    const cx = n.pos[0] + n.size[0] / 2, cy = n.pos[1] + 40;
+    return cx >= g.bounding[0] && cx <= g.bounding[0] + g.bounding[2] && cy >= g.bounding[1] && cy <= g.bounding[1] + g.bounding[3];
+  });
+  const starts = new Map(inside.map(n => [n.id, [n.pos[0], n.pos[1]]]));
+  drag = { kind: "group", gi, x0: e.clientX, y0: e.clientY, g0: [g.bounding[0], g.bounding[1]], starts };
+  viewport.setPointerCapture(e.pointerId);
+}
+
+let linkDrag = null;
+function startLinkDrag(e) {
+  const io = e.target.dataset.io, slot = +e.target.dataset.slot, nid = +e.target.dataset.node;
+  const n = graph.nodes.get(nid);
+  if (!n) return;
+  closeMenus();
+  let from;
+  if (io === "in" && n.inputs[slot].link != null) {
+    // detach: drag continues from the original output
+    const l = graph.links.get(n.inputs[slot].link);
+    pushUndo();
+    graph.removeLink(l.id);
+    buildNode(n);
+    from = { nid: l.origin_id, slot: l.origin_slot, io: "out" };
+    markDirty();
+  } else {
+    from = { nid, slot, io };
+  }
+  const fn = graph.nodes.get(from.nid);
+  const ftype = from.io === "out" ? fn.outputs[from.slot].type : fn.inputs[from.slot].type;
+  linkDrag = { from, type: ftype };
+  // highlight compatible ports
+  document.querySelectorAll(".dot").forEach(d => {
+    const dn = graph.nodes.get(+d.dataset.node);
+    if (!dn || dn.id === from.nid) return;
+    const dio = d.dataset.io, dslot = +d.dataset.slot;
+    if (dio === from.io) return;
+    const ok = from.io === "out"
+      ? typesCompatible(ftype, dn.inputs[dslot].type)
+      : typesCompatible(dn.outputs[dslot].type, ftype);
+    if (ok) d.classList.add("compat");
+  });
+  const path = tempSvg.querySelector("path");
+  path.style.stroke = typeColor(ftype);
+  const move = ev => {
+    const [mx, my] = worldPos(ev);
+    const [px, py] = portPos(fn, from.io, from.slot);
+    path.setAttribute("d", from.io === "out" ? linkPath(px, py, mx, my) : linkPath(mx, my, px, py));
+  };
+  move(e);
+  const up = ev => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    path.setAttribute("d", "");
+    document.querySelectorAll(".dot.compat").forEach(d => d.classList.remove("compat"));
+    const target = document.elementFromPoint(ev.clientX, ev.clientY);
+    const ld = linkDrag; linkDrag = null;
+    if (target && target.classList.contains("dot")) {
+      const tio = target.dataset.io, tslot = +target.dataset.slot, tnid = +target.dataset.node;
+      try {
+        pushUndo();
+        if (ld.from.io === "out" && tio === "in") graph.connect(ld.from.nid, ld.from.slot, tnid, tslot);
+        else if (ld.from.io === "in" && tio === "out") graph.connect(tnid, tslot, ld.from.nid, ld.from.slot);
+        else throw "connect an output to an input";
+        resolveRerouteTypes();
+        buildNode(graph.nodes.get(tnid));
+        buildNode(graph.nodes.get(ld.from.nid));
+        drawLinks(true); markDirty();
+      } catch (err) {
+        undoStack.pop();
+        toast(String(err), true);
+        drawLinks(true);
+      }
+    } else if (target && (target.id === "viewport" || target.closest("#world"))) {
+      openPalette(worldPos(ev), ld);
+    } else {
+      drawLinks(true);
+    }
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+function resolveRerouteTypes() {
+  for (const n of graph.nodes.values()) {
+    if (n.type !== "Reroute") continue;
+    let t = "*";
+    if (n.inputs[0].link != null) {
+      const l = graph.links.get(n.inputs[0].link);
+      if (l) t = l.type;
+    }
+    for (const lid of n.outputs[0].links) {
+      const l = graph.links.get(lid);
+      if (l && t !== "*") l.type = t;
+    }
+  }
+}
+
+viewport.addEventListener("pointermove", e => {
+  if (!drag) return;
+  if (drag.kind === "pan") {
+    view.x = drag.vx + e.clientX - drag.x0;
+    view.y = drag.vy + e.clientY - drag.y0;
+    if (Math.abs(e.clientX - drag.x0) + Math.abs(e.clientY - drag.y0) > 4) drag.moved = true;
+    applyView();
+  } else if (drag.kind === "move") {
+    const dx = (e.clientX - drag.x0) / view.s, dy = (e.clientY - drag.y0) / view.s;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 1) { pushUndo(); drag.moved = true; }
+    if (!drag.moved) return;
+    for (const [id, [sx, sy]] of drag.starts) {
+      const n = graph.nodes.get(id);
+      if (!n) continue;
+      n.pos[0] = Math.round(sx + dx); n.pos[1] = Math.round(sy + dy);
+      if (e.shiftKey) { n.pos[0] = Math.round(n.pos[0] / 10) * 10; n.pos[1] = Math.round(n.pos[1] / 10) * 10; }
+      updateNodePos(n);
+    }
+    drawLinks();
+  } else if (drag.kind === "resize") {
+    const n = drag.node;
+    n.size[0] = Math.max(120, Math.round(drag.w0 + (e.clientX - drag.x0) / view.s));
+    n.size[1] = Math.max(drag.minH, Math.round(drag.h0 + (e.clientY - drag.y0) / view.s));
+    const el = domNodes.get(n.id);
+    if (el) { el.style.width = n.size[0] + "px"; el.style.minHeight = n.size[1] + "px"; }
+    n._portCache = null;
+    drawLinks();
+  } else if (drag.kind === "group") {
+    const dx = (e.clientX - drag.x0) / view.s, dy = (e.clientY - drag.y0) / view.s;
+    const g = graph.groups[drag.gi];
+    g.bounding[0] = Math.round(drag.g0[0] + dx); g.bounding[1] = Math.round(drag.g0[1] + dy);
+    for (const [id, [sx, sy]] of drag.starts) {
+      const n = graph.nodes.get(id);
+      if (n) { n.pos[0] = Math.round(sx + dx); n.pos[1] = Math.round(sy + dy); updateNodePos(n); }
+    }
+    renderGroups(); drawLinks();
+  } else if (drag.kind === "box") {
+    const r = viewport.getBoundingClientRect();
+    const x = Math.min(drag.x0, e.clientX) - r.left, y = Math.min(drag.y0, e.clientY) - r.top;
+    const w = Math.abs(e.clientX - drag.x0), h = Math.abs(e.clientY - drag.y0);
+    Object.assign(boxsel.style, { display: "block", left: x + "px", top: y + "px", width: w + "px", height: h + "px" });
+    const wx1 = (x - view.x) / view.s, wy1 = (y - view.y) / view.s;
+    const wx2 = wx1 + w / view.s, wy2 = wy1 + h / view.s;
+    sel.clear();
+    drag.base.forEach(id => sel.add(id));
+    for (const n of graph.nodes.values()) {
+      const el = domNodes.get(n.id);
+      const nw = el ? el.offsetWidth : n.size[0], nh = el ? el.offsetHeight : 60;
+      if (n.pos[0] < wx2 && n.pos[0] + nw > wx1 && n.pos[1] < wy2 && n.pos[1] + nh > wy1) sel.add(n.id);
+    }
+    refreshSelection();
+  }
+});
+
+viewport.addEventListener("pointerup", e => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  viewport.classList.remove("panning");
+  boxsel.style.display = "none";
+  if (d.kind === "pan") {
+    saveViewSoon();
+    if (d.btn === 2 && !d.moved) canvasMenu(e.clientX, e.clientY);
+  }
+  if (d.kind === "move" && d.moved) markDirty();
+  if (d.kind === "resize") { buildNode(d.node); drawLinks(); markDirty(); }
+  if (d.kind === "group") markDirty();
+});
+
+viewport.addEventListener("contextmenu", e => e.preventDefault());
+viewport.addEventListener("dblclick", e => {
+  if (e.target === viewport) openPalette(worldPos(e), null);
+});
+
+viewport.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = viewport.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const k = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const ns = Math.max(0.1, Math.min(3, view.s * k));
+  view.x = mx - (mx - view.x) * (ns / view.s);
+  view.y = my - (my - view.y) * (ns / view.s);
+  view.s = ns;
+  applyView();
+  saveViewSoon();
+}, { passive: false });
+
+let spaceHeld = false;
+
+// ------------------------------------------------------------- menus
+let openMenuEls = [];
+function closeMenus() {
+  openMenuEls.forEach(m => m.remove());
+  openMenuEls = [];
+  document.querySelectorAll(".menu-root.open").forEach(m => m.classList.remove("open"));
+}
+document.addEventListener("pointerdown", e => {
+  if (!e.target.closest(".ctxmenu") && !e.target.closest(".menu-root")) closeMenus();
+});
+
+function showMenu(x, y, items, opts = {}) {
+  const m = document.createElement("div");
+  m.className = "ctxmenu";
+  if (opts.title) {
+    const t = document.createElement("div");
+    t.className = "mtitle"; t.textContent = opts.title;
+    m.appendChild(t);
+  }
+  if (opts.search) {
+    const s = document.createElement("input");
+    s.className = "msearch";
+    s.placeholder = "search…";
+    s.addEventListener("input", () => {
+      const q = s.value.toLowerCase();
+      m.querySelectorAll(".mi").forEach(el => {
+        el.style.display = !q || el.textContent.toLowerCase().includes(q) ? "" : "none";
+      });
+    });
+    s.addEventListener("pointerdown", e => e.stopPropagation());
+    m.appendChild(s);
+    setTimeout(() => s.focus(), 0);
+  }
+  for (const it of items) {
+    if (it.sep) { const s = document.createElement("div"); s.className = "msep"; m.appendChild(s); continue; }
+    if (it.swatches) {
+      const row = document.createElement("div");
+      row.className = "swatches";
+      for (const [name, c] of Object.entries(PALETTE_COLORS)) {
+        const sw = document.createElement("div");
+        sw.className = "swatch";
+        sw.style.background = c || "#35353533";
+        sw.title = name;
+        sw.addEventListener("click", () => { it.cb(c); closeMenus(); });
+        row.appendChild(sw);
+      }
+      m.appendChild(row);
+      continue;
+    }
+    const el = document.createElement("div");
+    el.className = "mi" + (it.disabled ? " disabled" : "");
+    el.textContent = it.label;
+    if (it.sub) {
+      const a = document.createElement("span");
+      a.className = "sub-arrow"; a.textContent = "▶";
+      el.appendChild(a);
+      el.addEventListener("pointerenter", () => {
+        openMenuEls.filter(x => x._parent === m).forEach(x => { x.remove(); openMenuEls = openMenuEls.filter(y => y !== x); });
+        const r = el.getBoundingClientRect();
+        const sub = showMenu(r.right + 2, r.top - 4, it.sub, it.subOpts || {});
+        sub._parent = m;
+      });
+    } else if (it.cb) {
+      el.addEventListener("click", () => { closeMenus(); it.cb(); });
+    }
+    m.appendChild(el);
+  }
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, innerWidth - r.width - 8) + "px";
+  m.style.top = Math.min(y, innerHeight - r.height - 8) + "px";
+  openMenuEls.push(m);
+  return m;
+}
+
+function nodeCategoryTree() {
+  const cats = {};
+  for (const def of Object.values(NODE_DEFS)) {
+    const parts = def.cat.split("/");
+    let cur = cats;
+    for (const p of parts) cur = (cur[p] = cur[p] || {});
+    (cur.__items = cur.__items || []).push(def);
+  }
+  const build = (obj) => {
+    const items = [];
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === "__items") continue;
+      items.push({ label: k, sub: build(v) });
+    }
+    for (const def of obj.__items || []) {
+      items.push({ label: def.title, cb: () => addNodeAt(def.type, lastCanvasPoint) });
+    }
+    return items;
+  };
+  return build(cats);
+}
+
+function canvasMenu(x, y) {
+  closeMenus();
+  showMenu(x, y, [
+    { label: "Add node", sub: nodeCategoryTree(), subOpts: {} },
+    { label: "Search nodes…  (dbl-click)", cb: () => openPalette(lastCanvasPoint, null) },
+    { sep: true },
+    { label: "Paste", disabled: !clipboard, cb: () => pasteClipboard(lastCanvasPoint) },
+    { label: "Add group around selection", disabled: !sel.size, cb: addGroupAroundSelection },
+    { sep: true },
+    { label: "Fit view (F)", cb: fitView },
+    { label: "Clear graph", cb: () => { pushUndo(); graph.clear(); sel.clear(); results.clear(); renderAll(); markDirty(); } },
+  ]);
+}
+
+function nodeMenu(x, y, n) {
+  closeMenus();
+  const multi = sel.size > 1;
+  showMenu(x, y, [
+    { label: multi ? `${sel.size} nodes selected` : n.title, disabled: true },
+    { sep: true },
+    { label: "Rename (dbl-click title)", cb: () => renameNode(n) },
+    { label: (n.flags.collapsed ? "Expand" : "Collapse"), cb: () => toggleCollapse(n) },
+    { label: (n.mode === 2 ? "Unmute" : "Mute") + "  (Ctrl+M)", cb: () => setMode(sel.size ? [...sel] : [n.id], 2) },
+    { label: (n.mode === 4 ? "Un-bypass" : "Bypass") + "  (Ctrl+B)", cb: () => setMode(sel.size ? [...sel] : [n.id], 4) },
+    { label: "Title color", swatches: true, cb: c => { pushUndo(); for (const id of (sel.size ? sel : [n.id])) { const m = graph.nodes.get(id); if (m) { m.color = c; buildNode(m); } } drawLinks(); markDirty(); } },
+    { label: ((n.properties && n.properties.fused_app) ? "✓ " : "") + "Show in App mode", cb: () => { pushUndo(); n.properties = n.properties || {}; n.properties.fused_app = !n.properties.fused_app; markDirty(); toast(n.properties.fused_app ? `${n.title} pinned to App mode` : `${n.title} removed from App mode`); } },
+    { sep: true },
+    { label: "Copy  (Ctrl+C)", cb: copySelection },
+    { label: "Duplicate  (Ctrl+D)", cb: duplicateSelection },
+    { label: "Disconnect all links", cb: () => { pushUndo(); for (const inp of n.inputs) if (inp.link != null) graph.removeLink(inp.link); for (const o of n.outputs) for (const l of [...o.links]) graph.removeLink(l); buildNode(n); drawLinks(true); markDirty(); } },
+    { sep: true },
+    { label: "Remove  (Del)", cb: deleteSelection },
+  ]);
+}
+
+function addGroupAroundSelection() {
+  if (!sel.size) return;
+  pushUndo();
+  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+  for (const id of sel) {
+    const n = graph.nodes.get(id), el = domNodes.get(id);
+    x1 = Math.min(x1, n.pos[0]); y1 = Math.min(y1, n.pos[1]);
+    x2 = Math.max(x2, n.pos[0] + (el ? el.offsetWidth : n.size[0]));
+    y2 = Math.max(y2, n.pos[1] + (el ? el.offsetHeight : 80));
+  }
+  graph.groups.push({ title: "Group", bounding: [x1 - 24, y1 - 44, x2 - x1 + 48, y2 - y1 + 72], color: "#3f789e" });
+  renderGroups(); markDirty();
+}
+
+function addNodeAt(type, pos) {
+  pushUndo();
+  const n = graph.addNode(type, pos);
+  buildNode(n);
+  selectOnly(n.id);
+  markDirty();
+  return n;
+}
+
+// ------------------------------------------------------------- search palette
+const palette = $("palette"), paletteInput = $("palette-input"), paletteList = $("palette-list");
+let paletteCtx = null; // {pos, linkDrag}
+let paletteIdx = 0;
+
+function openPalette(pos, ld) {
+  paletteCtx = { pos, ld };
+  palette.style.display = "flex";
+  paletteInput.value = "";
+  renderPalette("");
+  paletteInput.focus();
+}
+function closePalette() { palette.style.display = "none"; paletteCtx = null; }
+function paletteCandidates(q) {
+  q = q.toLowerCase();
+  let defs = Object.values(NODE_DEFS);
+  if (paletteCtx && paletteCtx.ld) {
+    const ld = paletteCtx.ld;
+    defs = defs.filter(def => {
+      const ports = ld.from.io === "out" ? def.inputs : def.outputs;
+      return ports.some(p => ld.from.io === "out" ? typesCompatible(ld.type, p[1]) : typesCompatible(p[1], ld.type));
+    });
+  }
+  return defs.filter(d => !q || d.title.toLowerCase().includes(q) || d.type.toLowerCase().includes(q) || d.cat.includes(q));
+}
+function renderPalette(q) {
+  const defs = paletteCandidates(q);
+  paletteIdx = Math.min(paletteIdx, Math.max(0, defs.length - 1));
+  paletteList.innerHTML = "";
+  defs.forEach((def, i) => {
+    const el = document.createElement("div");
+    el.className = "pi" + (i === paletteIdx ? " active" : "");
+    el.innerHTML = `<span></span><span class="pcat"></span>`;
+    el.firstChild.textContent = def.title;
+    el.lastChild.textContent = def.cat;
+    el.addEventListener("click", () => pickPalette(def));
+    el.addEventListener("pointermove", () => { paletteIdx = i; paletteList.querySelectorAll(".pi").forEach((x, j) => x.classList.toggle("active", j === i)); });
+    paletteList.appendChild(el);
+  });
+}
+function pickPalette(def) {
+  const ctx = paletteCtx;
+  closePalette();
+  const n = addNodeAt(def.type, ctx.pos);
+  if (ctx.ld) {
+    const ld = ctx.ld;
+    try {
+      if (ld.from.io === "out") {
+        const slot = n.inputs.findIndex(i => typesCompatible(ld.type, i.type));
+        if (slot >= 0) graph.connect(ld.from.nid, ld.from.slot, n.id, slot);
+      } else {
+        const slot = n.outputs.findIndex(o => typesCompatible(o.type, ld.type));
+        if (slot >= 0) graph.connect(n.id, slot, ld.from.nid, ld.from.slot);
+      }
+      resolveRerouteTypes();
+      buildNode(n);
+      buildNode(graph.nodes.get(ctx.ld.from.nid));
+      drawLinks(true);
+    } catch (e) { toast(String(e), true); }
+  }
+}
+paletteInput.addEventListener("input", () => { paletteIdx = 0; renderPalette(paletteInput.value); });
+paletteInput.addEventListener("keydown", e => {
+  e.stopPropagation();
+  const defs = paletteCandidates(paletteInput.value);
+  if (e.key === "Escape") closePalette();
+  else if (e.key === "ArrowDown") { paletteIdx = Math.min(defs.length - 1, paletteIdx + 1); renderPalette(paletteInput.value); }
+  else if (e.key === "ArrowUp") { paletteIdx = Math.max(0, paletteIdx - 1); renderPalette(paletteInput.value); }
+  else if (e.key === "Enter" && defs[paletteIdx]) pickPalette(defs[paletteIdx]);
+});
+document.addEventListener("pointerdown", e => {
+  if (palette.style.display === "flex" && !e.target.closest("#palette")) closePalette();
+});
+
+// ------------------------------------------------------------- execution
+function setRunUI(on, label) {
+  running = on;
+  $("btn-run").style.display = on ? "none" : "";
+  $("btn-cancel").style.display = on ? "" : "none";
+  $("progress").style.display = on ? "" : "none";
+  $("runlabel").textContent = label || "";
+  if (!on) $("progress").firstElementChild.style.width = "0";
+}
+
+async function runGraph() {
+  if (running) return;
+  const targets = graph.outputTargets();
+  if (!targets.length) return toast("no output nodes (add PreviewImage or SaveImage)", true);
+  const order = graph.topoOrder(targets).filter(id => {
+    const n = graph.nodes.get(id);
+    const def = NODE_DEFS[n.type];
+    return def && def.exec !== false;
+  });
+  cancelRequested = false;
+  setRunUI(true);
+  const t0 = performance.now();
+  logEvent("run_start", { nodes: order.length, targets: targets.length });
+  // apply seed controls BEFORE run (comfy applies after; before-run keeps the
+  // displayed value equal to the value actually used)
+  for (const id of order) {
+    const n = graph.nodes.get(id);
+    for (const wd of n.wdefs) {
+      if (wd.wtype !== "seed" || n.mode !== 0) continue;
+      const ctrl = n.widgets[wd.name + "__control"] || "randomize";
+      if (n._seedUsed === undefined) n._seedUsed = true; // first run uses current value
+      else if (ctrl === "randomize") n.widgets[wd.name] = Math.floor(Math.random() * 0xFFFFFFFF);
+      else if (ctrl === "increment") n.widgets[wd.name] = (Number(n.widgets[wd.name]) || 0) + 1;
+      else if (ctrl === "decrement") n.widgets[wd.name] = (Number(n.widgets[wd.name]) || 0) - 1;
+      buildNode(n);
+    }
+  }
+  const sigs = new Map();   // nodeId -> sig
+  const values = new Map(); // nodeId -> outputs array (or null for muted)
+  let executed = 0, cachedCount = 0, errored = false;
+  const workflowJson = JSON.stringify(graph.serialize());
+
+  for (let i = 0; i < order.length; i++) {
+    if (cancelRequested) { toast("cancelled"); break; }
+    const n = graph.nodes.get(order[i]);
+    const def = NODE_DEFS[n.type];
+    $("progress").firstElementChild.style.width = Math.round(i / order.length * 100) + "%";
+    $("runlabel").textContent = `${i + 1}/${order.length} ${n.title}`;
+
+    // resolve inputs
+    const resolved = [];
+    let missingRequired = false;
+    for (const inp of n.inputs) {
+      let v = null;
+      if (inp.link != null) {
+        const l = graph.links.get(inp.link);
+        const src = values.get(l.origin_id);
+        v = src ? src[l.origin_slot] : null;
+      }
+      if (v == null && !inp.optional && inp.link != null) missingRequired = true;
+      if (v == null && !inp.optional && inp.link == null) missingRequired = true;
+      resolved.push(v);
+    }
+
+    if (n.mode === 2) { values.set(n.id, n.outputs.map(() => null)); continue; }
+    if (n.mode === 4) { // bypass: pass through by type
+      const used = new Set();
+      values.set(n.id, n.outputs.map(out => {
+        for (let s = 0; s < n.inputs.length; s++) {
+          if (used.has(s)) continue;
+          if (typesCompatible(effInType(n, s), out.type) || out.type === "*") {
+            used.add(s);
+            return resolved[s];
+          }
+        }
+        return null;
+      }));
+      continue;
+    }
+    if (missingRequired) {
+      values.set(n.id, n.outputs.map(() => null));
+      if (def.output_node) { n._error = "missing input (upstream muted or not connected)"; buildNode(n); drawLinks(); }
+      continue;
+    }
+
+    // signature: widgets + input sigs (+ upload salt for LoadImage)
+    const inputSigs = n.inputs.map(inp => {
+      if (inp.link == null) return null;
+      const l = graph.links.get(inp.link);
+      return (sigs.get(l.origin_id) || "x") + ":" + l.origin_slot;
+    });
+    const salt = n.type === "LoadImage" ? (uploadSalt.get(n.widgets.image) || 0) : "";
+    const sig = graph.computeSig(n, inputSigs, salt);
+    sigs.set(n.id, sig);
+
+    const prev = memo.get(sig);
+    if (prev) {
+      values.set(n.id, prev.outputs);
+      results.set(n.id, { sig, outputs: prev.outputs, ui: prev.ui });
+      cachedCount++;
+      if (prev.ui && prev.ui.images) { buildNode(n); }
+      continue;
+    }
+
+    // execute
+    const el = domNodes.get(n.id);
+    n._error = null;
+    if (el) { el.classList.add("running"); el.classList.remove("error"); }
+    for (const inp of n.inputs) {
+      if (inp.link != null) {
+        const p = linkPaths.get(inp.link);
+        if (p) p.vis.classList.add("running");
+      }
+    }
+    try {
+      const payload = {};
+      n.inputs.forEach((inp, idx) => {
+        if (resolved[idx] == null) return;
+        // map by our def's slot names so imported ComfyUI port names still work
+        const name = (def.inputs[idx] && def.inputs[idx][0]) || inp.name || `in${idx}`;
+        payload[name] = resolved[idx];
+      });
+      const r = await fused.runPython("./engine.py", {
+        node_type: n.type,
+        widgets: JSON.stringify(graph.execWidgets(n)),
+        inputs: JSON.stringify(payload),
+        sig,
+        workflow: def.output_node ? workflowJson : "",
+      });
+      values.set(n.id, r.outputs || []);
+      results.set(n.id, { sig, outputs: r.outputs || [], ui: r.ui || null });
+      memo.set(sig, { outputs: r.outputs || [], ui: r.ui || null });
+      if (memo.size > 300) memo.delete(memo.keys().next().value);
+      if (r.cached) cachedCount++; else executed++;
+      if (r.ui && r.ui.saved) toast("saved " + r.ui.saved.map(p => p.split("/").pop()).join(", "));
+      recordAssets(n, r, workflowJson);
+      buildNode(n);
+    } catch (err) {
+      n._error = (err.type ? err.type + ": " : "") + err.message;
+      buildNode(n);
+      logEvent("node_error", { node: n.type, id: n.id, error: String(err.message).slice(0, 400) });
+      toast(`${n.title}: ${err.message}`, true);
+      errored = true;
+      break;
+    } finally {
+      const el2 = domNodes.get(n.id);
+      if (el2) el2.classList.remove("running");
+      drawLinks(true);
+    }
+  }
+  $("progress").firstElementChild.style.width = "100%";
+  setRunUI(false);
+  const ms = Math.round(performance.now() - t0);
+  logEvent("run_done", { executed, cached: cachedCount, ms, error: errored, cancelled: cancelRequested });
+  if (!errored && !cancelRequested) toast(`done — ${executed} executed, ${cachedCount} cached (${(ms / 1000).toFixed(1)}s)`);
+  if (appMode) renderApp();
+  if (assetsPanel.style.display === "flex" && executed) refreshAssets();
+}
+
+$("btn-run").addEventListener("click", runGraph);
+$("btn-cancel").addEventListener("click", () => { cancelRequested = true; });
+
+// ------------------------------------------------------------- workflow IO
+function wfDisplayName() {
+  return currentWfPath ? currentWfPath.split("/").pop().replace(/\.json$/, "") : "unsaved workflow";
+}
+function refreshWfName() {
+  $("wfname").textContent = wfDisplayName();
+  $("wfname").classList.toggle("dirty", dirty);
+  renderTabs();
+}
+
+// ------------------------------------------------------------- workflow tabs
+const DEFAULT_VIEW = () => ({ x: 80, y: 80, s: 1 });
+
+function newTabObj(over = {}) {
+  return Object.assign(
+    { id: ++tabSeq, snapshot: null, view: DEFAULT_VIEW(), currentWfPath: null, dirty: false, results: null },
+    over);
+}
+
+function tabName(t, live) {
+  const path = live ? currentWfPath : t.currentWfPath;
+  return path ? path.split("/").pop().replace(/\.json$/, "") : "untitled";
+}
+
+// snapshot the live editor state back into the active tab record
+function captureActiveTab() {
+  const t = tabs[activeTab];
+  if (!t) return;
+  try { t.snapshot = graph.serialize(); } catch (e) { /* keep previous snapshot */ }
+  t.view = { x: view.x, y: view.y, s: view.s };
+  t.currentWfPath = currentWfPath;
+  t.dirty = dirty;
+  t.results = new Map(results);
+}
+
+// load a tab record into the single live graph + globals
+function loadTabIntoLive(t) {
+  try {
+    if (t.snapshot && Array.isArray(t.snapshot.nodes) && t.snapshot.nodes.length) graph.load(t.snapshot);
+    else graph.clear();
+  } catch (e) { graph.clear(); }
+  currentWfPath = t.currentWfPath || null;
+  dirty = !!t.dirty;
+  Object.assign(view, t.view || DEFAULT_VIEW());
+  sel.clear(); selLink = null;
+  results.clear();
+  if (t.results) for (const [k, v] of t.results) results.set(k, v);
+  undoStack.length = 0; redoStack.length = 0;
+  try { fused.params.set("wf", currentWfPath || ""); } catch (e) {}
+  renderAll();
+  applyView();
+  resolveRerouteTypes();
+  refreshWfName();
+  if (appMode) renderApp();
+}
+
+function switchToTab(i) {
+  if (i === activeTab) return;
+  if (running) return toast("finish the current run before switching tabs", true);
+  if (i < 0 || i >= tabs.length) return;
+  captureActiveTab();
+  activeTab = i;
+  loadTabIntoLive(tabs[i]);
+  renderTabs();
+  scheduleAutosave();
+}
+
+// open a fresh tab; if `loader` is given it runs against the live (empty) graph
+function openNewTab(over = {}, loader = null) {
+  if (running) { toast("finish the current run before opening a tab", true); return null; }
+  captureActiveTab();
+  const t = newTabObj(over);
+  tabs.push(t);
+  activeTab = tabs.length - 1;
+  loadTabIntoLive(t);
+  if (loader) { try { loader(); } catch (e) { toast(e.message, true); } }
+  renderTabs();
+  scheduleAutosave();
+  return t;
+}
+
+async function closeTab(i) {
+  if (running) return toast("finish the current run before closing a tab", true);
+  const t = tabs[i];
+  if (!t) return;
+  const d = (i === activeTab) ? dirty : t.dirty;
+  if (d && !(await askConfirm(`"${tabName(t, i === activeTab)}" has unsaved changes. Close it anyway?`, "Close"))) return;
+  if (tabs.length === 1) {                 // last tab -> reset to a fresh empty one
+    tabs[0] = newTabObj();
+    activeTab = 0;
+    loadTabIntoLive(tabs[0]);
+    renderTabs();
+    scheduleAutosave();
+    return;
+  }
+  const wasActive = i === activeTab;
+  tabs.splice(i, 1);
+  if (activeTab > i) activeTab--;
+  else if (wasActive) activeTab = Math.min(i, tabs.length - 1);
+  if (wasActive) loadTabIntoLive(tabs[activeTab]);
+  renderTabs();
+  scheduleAutosave();
+}
+
+function renderTabs() {
+  const strip = $("tabstrip");
+  if (!strip) return;
+  strip.innerHTML = "";
+  tabs.forEach((t, i) => {
+    const isActive = i === activeTab;
+    const d = isActive ? dirty : t.dirty;
+    const el = document.createElement("div");
+    el.className = "tab" + (isActive ? " active" : "");
+    el.title = (isActive ? currentWfPath : t.currentWfPath) || "unsaved workflow";
+    const lab = document.createElement("span");
+    lab.className = "tlabel";
+    lab.textContent = tabName(t, isActive) + (d ? " •" : "");
+    el.appendChild(lab);
+    const x = document.createElement("span");
+    x.className = "tclose";
+    x.textContent = "✕";
+    x.title = "close tab";
+    x.addEventListener("click", e => { e.stopPropagation(); closeTab(i); });
+    el.appendChild(x);
+    el.addEventListener("click", () => switchToTab(i));
+    el.addEventListener("pointerdown", e => { if (e.button === 1) { e.preventDefault(); closeTab(i); } }); // middle-click
+    strip.appendChild(el);
+  });
+  const add = document.createElement("div");
+  add.className = "tab-new";
+  add.textContent = "+";
+  add.title = "new workflow tab";
+  add.addEventListener("click", () => newWorkflow());
+  strip.appendChild(add);
+}
+
+let autosaveTimer = null;
+function scheduleAutosave() {
+  refreshWfName();
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(async () => {
+    if (!ROOT) return;
+    try {
+      captureActiveTab();   // fold live editor state into the active tab record
+      const payload = {
+        __fused_tabs: tabs.map(t => ({
+          snapshot: t.snapshot || null,
+          currentWfPath: t.currentWfPath || null,
+          view: t.view || DEFAULT_VIEW(),
+          dirty: !!t.dirty,
+        })),
+        __active: activeTab,
+      };
+      await fused.writeFile(ROOT + "/autosave.json", JSON.stringify(payload, null, 1));
+    } catch (e) { console.warn("autosave failed", e); }
+  }, 600);
+}
+let viewTimer = null;
+function saveViewSoon() { clearTimeout(viewTimer); viewTimer = setTimeout(scheduleAutosave, 400); }
+
+async function saveWorkflow(saveAs) {
+  let path = currentWfPath;
+  if (!path || saveAs) {
+    const name = await askText("Save workflow as (name):",
+      wfDisplayName() === "unsaved workflow" ? "my_workflow" : wfDisplayName());
+    if (!name) return;
+    path = ROOT + "/workflows/" + name.replace(/[^\w.\- ]+/g, "_").replace(/\.json$/, "") + ".json";
+  }
+  try {
+    await fused.writeFile(path, JSON.stringify(graph.serialize({ fused_view: view }), null, 1));
+    currentWfPath = path;
+    dirty = false;
+    fused.params.set("wf", path);
+    refreshWfName();
+    // keep the Open/Import menu cache current without a server roundtrip
+    const nm = path.split("/").pop();
+    if (!WORKFLOW_FILES.some(w => w.path === path)) WORKFLOW_FILES.push({ name: nm, path });
+    logEvent("save", { path });
+    toast("saved " + nm);
+  } catch (e) {
+    toast("save failed: " + e.message, true);
+  }
+}
+
+function afterLoad(info, sourceLabel) {
+  sel.clear(); selLink = null;
+  results.clear();
+  undoStack.length = 0; redoStack.length = 0;
+  const v = graph.extra && graph.extra.fused_view;
+  if (v && typeof v.x === "number") Object.assign(view, v);
+  renderAll();
+  applyView();
+  if (!v) fitView();
+  resolveRerouteTypes();
+  refreshWfName();
+  if (appMode) renderApp();
+  if (info && info.ghosts) toast(`${info.nodes} nodes loaded from ${sourceLabel} — ${info.ghosts} ghost node(s) have no local implementation`);
+  else if (info) toast(`${info.nodes} nodes loaded from ${sourceLabel}`);
+}
+
+// load parsed workflow JSON into the CURRENT tab's live graph (used at boot)
+function loadJsonIntoCurrentTab(json, { path = null, dirty: d = false, label } = {}) {
+  const info = graph.load(json);
+  currentWfPath = path;
+  dirty = d;
+  try { fused.params.set("wf", path || ""); } catch (e) {}
+  afterLoad(info, label);
+  return info;
+}
+
+// open parsed workflow JSON in a NEW tab, leaving other tabs untouched
+function loadJsonIntoNewTab(json, opts = {}) {
+  if (running) { toast("finish the current run before opening", true); return null; }
+  captureActiveTab();
+  tabs.push(newTabObj());
+  activeTab = tabs.length - 1;
+  try {
+    return loadJsonIntoCurrentTab(json, opts);
+  } catch (e) {
+    tabs.pop();                                    // roll back the tab on failure
+    activeTab = tabs.length - 1;
+    if (tabs[activeTab]) loadTabIntoLive(tabs[activeTab]);
+    renderTabs();
+    throw e;
+  } finally {
+    renderTabs();
+    scheduleAutosave();
+  }
+}
+
+async function openWorkflowPath(path) {
+  try {
+    const txt = await fused.readFile(path);
+    loadJsonIntoNewTab(JSON.parse(txt), { path, dirty: false, label: path.split("/").pop() });
+    logEvent("open", { path });
+  } catch (e) {
+    toast("open failed: " + e.message, true);
+  }
+}
+
+function importJsonText(txt, label) {
+  try {
+    const info = loadJsonIntoNewTab(JSON.parse(txt), { path: null, dirty: true, label });
+    if (info) logEvent("import", { source: label, nodes: info.nodes, ghosts: info.ghosts, format: info.format });
+  } catch (e) {
+    toast("import failed: " + e.message, true);
+  }
+}
+
+function exportWorkflow() {
+  const data = JSON.stringify(graph.serialize(), null, 2);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+  a.download = wfDisplayName().replace(/[^\w.\-]+/g, "_") + ".json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  logEvent("export", { name: a.download, nodes: graph.nodes.size });
+  toast("exported " + a.download);
+}
+
+function newWorkflow() {
+  if (openNewTab()) logEvent("new", {});
+}
+
+// merged Open + Import: pick a saved workflow, or import a JSON/PNG — all open
+// in a new tab. Opens INSTANTLY from the cached list (seeded by setup, kept
+// current by saveWorkflow) and refreshes in the background — a slow or failing
+// api call must never block the menu or silently hide saved workflows.
+function menuOpenList() {
+  const importItems = [
+    { label: "⤵ Import JSON file…", cb: () => $("file-json").click() },
+    { label: "⤵ Import from PNG…", cb: () => $("file-png").click() },
+  ];
+  const root = document.querySelector('.menu-root[data-menu="workflow"]');
+  const rr = root ? root.getBoundingClientRect() : { left: 60, bottom: 38 };
+  const render = (wfs) => {
+    const items = wfs.map(w => ({ label: "📄 " + w.name, cb: () => openWorkflowPath(w.path) }));
+    const all = items.length ? [...items, { sep: true }, ...importItems] : importItems;
+    return showMenu(rr.left, rr.bottom + 4, all, { title: "open / import", search: items.length > 8 });
+  };
+  const m = render(WORKFLOW_FILES);
+  // background refresh: swap the menu in place if it's still open and changed
+  fused.runPython("./api.py", { op: "list_workflows" }).then(r => {
+    const fresh = r.workflows || [];
+    const changed = JSON.stringify(fresh.map(w => w.path)) !== JSON.stringify(WORKFLOW_FILES.map(w => w.path));
+    WORKFLOW_FILES = fresh;
+    if (changed && m.isConnected) {
+      m.remove();
+      openMenuEls = openMenuEls.filter(x => x !== m);
+      render(WORKFLOW_FILES);
+    }
+  }).catch(e => {
+    if (!WORKFLOW_FILES.length) toast("couldn't list saved workflows: " + e.message, true);
+  });
+}
+
+// menubar
+const MENUS = {
+  workflow: () => [
+    { label: "New tab", cb: newWorkflow },
+    { label: "Open / Import…", cb: menuOpenList },
+    { sep: true },
+    { label: "Save  (Ctrl+S)", cb: () => saveWorkflow(false) },
+    { label: "Save as…", cb: () => saveWorkflow(true) },
+    { label: "Export / download JSON", cb: exportWorkflow },
+    { sep: true },
+    { label: "Load demo workflow", cb: () => openNewTab({}, buildDemo) },
+    { label: "Load 3D demo (local CPU model)", cb: () => openNewTab({}, buildDemo3D) },
+    { label: "Load API demo (needs 🔑 HF_TOKEN)", cb: () => openNewTab({}, buildDemoApi) },
+  ],
+  edit: () => [
+    { label: "Undo  (Ctrl+Z)", cb: undo, disabled: !undoStack.length },
+    { label: "Redo  (Ctrl+Shift+Z)", cb: redo, disabled: !redoStack.length },
+    { sep: true },
+    { label: "Copy  (Ctrl+C)", cb: copySelection, disabled: !sel.size },
+    { label: "Paste  (Ctrl+V)", cb: () => pasteClipboard(), disabled: !clipboard },
+    { label: "Duplicate  (Ctrl+D)", cb: duplicateSelection, disabled: !sel.size },
+    { label: "Delete  (Del)", cb: deleteSelection, disabled: !sel.size && selLink == null },
+    { label: "Select all  (Ctrl+A)", cb: () => { sel.clear(); for (const id of graph.nodes.keys()) sel.add(id); refreshSelection(); } },
+    { sep: true },
+    { label: "Clear execution cache", cb: () => { memo.clear(); results.clear(); renderAll(); toast("cache cleared"); } },
+  ],
+  node: () => [
+    { label: "Add node", sub: nodeCategoryTree() },
+    { label: "Search nodes…", cb: () => openPalette([lastCanvasPoint[0], lastCanvasPoint[1]], null) },
+    { sep: true },
+    { label: "Mute selection  (Ctrl+M)", cb: () => setMode([...sel], 2), disabled: !sel.size },
+    { label: "Bypass selection  (Ctrl+B)", cb: () => setMode([...sel], 4), disabled: !sel.size },
+    { label: "Collapse selection", cb: () => { pushUndo(); for (const id of sel) { const n = graph.nodes.get(id); n.flags.collapsed = !n.flags.collapsed; buildNode(n); } drawLinks(); markDirty(); }, disabled: !sel.size },
+  ],
+};
+document.querySelectorAll(".menu-root").forEach(el => {
+  el.addEventListener("click", () => {
+    const wasOpen = el.classList.contains("open");
+    closeMenus();
+    if (wasOpen) return;
+    el.classList.add("open");
+    const r = el.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 4, MENUS[el.dataset.menu]());
+  });
+});
+$("wfname").addEventListener("click", () => saveWorkflow(true));
+
+$("file-json").addEventListener("change", async () => {
+  const f = $("file-json").files[0];
+  $("file-json").value = "";
+  if (f) importJsonText(await f.text(), f.name);
+});
+$("file-png").addEventListener("change", async () => {
+  const f = $("file-png").files[0];
+  $("file-png").value = "";
+  if (f) await importFromPngFile(f);
+});
+
+async function importFromPngFile(f) {
+  const buf = await f.arrayBuffer();
+  const texts = pngExtractText(buf);
+  const wf = texts.workflow || texts.Workflow;
+  if (wf) return importJsonText(wf, f.name + " (embedded workflow)");
+  if (texts.prompt) return importJsonText(texts.prompt, f.name + " (embedded prompt/API)");
+  toast("no embedded workflow in this PNG — uploading as input image");
+  const name = await uploadFile(f, null);
+  if (name) {
+    const n = addNodeAt("LoadImage", lastCanvasPoint);
+    n.widgets.image = name;
+    buildNode(n); drawLinks();
+  }
+}
+
+// OS drag & drop
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; $("droptip").style.display = "flex"; });
+window.addEventListener("dragleave", e => { if (--dragDepth <= 0) { dragDepth = 0; $("droptip").style.display = "none"; } });
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", async e => {
+  e.preventDefault();
+  dragDepth = 0;
+  $("droptip").style.display = "none";
+  const r = viewport.getBoundingClientRect();
+  lastCanvasPoint = [(e.clientX - r.left - view.x) / view.s, (e.clientY - r.top - view.y) / view.s];
+  for (const f of e.dataTransfer.files) {
+    if (f.name.toLowerCase().endsWith(".json")) importJsonText(await f.text(), f.name);
+    else if (f.name.toLowerCase().endsWith(".png")) await importFromPngFile(f);
+    else if (f.type.startsWith("image/")) {
+      const name = await uploadFile(f, null);
+      if (name) { const n = addNodeAt("LoadImage", lastCanvasPoint); n.widgets.image = name; buildNode(n); drawLinks(); }
+    } else toast("unsupported file: " + f.name, true);
+  }
+});
+
+// ------------------------------------------------------------- history panel
+$("btn-history").addEventListener("click", async () => {
+  const h = $("history");
+  const open = h.style.display === "flex";
+  h.style.display = open ? "none" : "flex";
+  if (!open) refreshHistory();
+});
+$("h-close").addEventListener("click", () => $("history").style.display = "none");
+$("h-refresh").addEventListener("click", refreshHistory);
+$("h-clear").addEventListener("click", async () => {
+  await fused.runPython("./api.py", { op: "clear_history" });
+  refreshHistory();
+});
+async function refreshHistory() {
+  const list = $("history-list");
+  list.innerHTML = "<div style='color:#888;padding:8px'>loading…</div>";
+  try {
+    const r = await fused.runPython("./api.py", { op: "history", limit: "200" });
+    list.innerHTML = "";
+    if (!r.events.length) list.innerHTML = "<div style='color:#888;padding:8px'>no events yet</div>";
+    for (const ev of r.events) {
+      const el = document.createElement("div");
+      el.className = "hev";
+      const detail = typeof ev.detail === "object" ? JSON.stringify(ev.detail) : String(ev.detail);
+      el.innerHTML = `<span class="hk"></span><span class="ht"></span><div class="hd"></div>`;
+      el.querySelector(".hk").textContent = ev.kind;
+      el.querySelector(".ht").textContent = ev.time;
+      el.querySelector(".hd").textContent = detail.slice(0, 300);
+      list.appendChild(el);
+    }
+  } catch (e) {
+    list.innerHTML = "";
+    toast("history failed: " + e.message, true);
+  }
+}
+
+// ------------------------------------------------------------- 3D point cloud viewer (WebGL1, no deps)
+const pcCache = new Map(); // path -> Promise<Float32Array>
+function fetchPointCloud(path) {
+  if (!pcCache.has(path)) {
+    if (pcCache.size > 12) pcCache.delete(pcCache.keys().next().value);
+    pcCache.set(path, fetch(fused.rawUrl(path)).then(r => {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.arrayBuffer();
+    }).then(b => new Float32Array(b)));
+  }
+  return pcCache.get(path);
+}
+
+const PC_VS = `
+attribute vec3 aPos; attribute vec3 aCol;
+uniform float uYaw, uPitch, uDist, uAspect, uPtSize;
+varying vec3 vCol;
+void main() {
+  vec3 p = aPos;
+  float cy = cos(uYaw), sy = sin(uYaw);
+  p = vec3(cy*p.x + sy*p.z, p.y, -sy*p.x + cy*p.z);
+  float cp = cos(uPitch), sp = sin(uPitch);
+  p = vec3(p.x, cp*p.y - sp*p.z, sp*p.y + cp*p.z);
+  float z = p.z + uDist;
+  float f = 1.9;
+  gl_Position = vec4(p.x * f / uAspect, p.y * f, (z - 0.05) / 12.0, z);
+  gl_PointSize = clamp(uPtSize / z, 1.0, 7.0);
+  vCol = aCol;
+}`;
+const PC_FS = `
+precision mediump float; varying vec3 vCol;
+void main() { gl_FragColor = vec4(vCol, 1.0); }`;
+
+const pcViewers = new Set();
+let pcLoopRunning = false;
+
+function attachPointCloud(canvas, data) {
+  const gl = canvas.getContext("webgl", { antialias: true, preserveDrawingBuffer: true });
+  if (!gl) { throw new Error("WebGL unavailable"); }
+  const compile = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, PC_VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, PC_FS));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, "aPos"), aCol = gl.getAttribLocation(prog, "aCol");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 24, 0);
+  gl.enableVertexAttribArray(aCol);
+  gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 24, 12);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.063, 0.063, 0.078, 1);
+  const U = name => gl.getUniformLocation(prog, name);
+  const v = {
+    canvas, gl, n: data.length / 6,
+    yaw: -0.45, pitch: 0.18, dist: 1.7, auto: true,
+    u: { yaw: U("uYaw"), pitch: U("uPitch"), dist: U("uDist"), aspect: U("uAspect"), pt: U("uPtSize") },
+    draw() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      gl.viewport(0, 0, w, h);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.uniform1f(this.u.yaw, this.yaw);
+      gl.uniform1f(this.u.pitch, this.pitch);
+      gl.uniform1f(this.u.dist, this.dist);
+      gl.uniform1f(this.u.aspect, w / h);
+      gl.uniform1f(this.u.pt, 5.5 * dpr);
+      gl.drawArrays(gl.POINTS, 0, this.n);
+    },
+  };
+  canvas.__pcData = data;
+  canvas.addEventListener("pointerdown", e => {
+    e.stopPropagation(); e.preventDefault();
+    v.auto = false;
+    canvas.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, y0 = e.clientY, yaw0 = v.yaw, pitch0 = v.pitch;
+    const mv = ev => {
+      v.yaw = yaw0 + (ev.clientX - x0) * 0.01;
+      v.pitch = Math.max(-1.5, Math.min(1.5, pitch0 + (ev.clientY - y0) * 0.01));
+    };
+    const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", mv);
+    window.addEventListener("pointerup", up);
+  });
+  canvas.addEventListener("wheel", e => {
+    e.stopPropagation(); e.preventDefault();
+    v.dist = Math.max(0.4, Math.min(8, v.dist * (e.deltaY > 0 ? 1.1 : 1 / 1.1)));
+  }, { passive: false });
+  canvas.addEventListener("dblclick", e => {
+    e.stopPropagation();
+    if (!canvas.__isFullscreen) open3DViewer(data);
+  });
+  pcViewers.add(v);
+  if (!pcLoopRunning) {
+    pcLoopRunning = true;
+    (function loop() {
+      let any = false;
+      for (const vw of [...pcViewers]) {
+        if (!vw.canvas.isConnected) { pcViewers.delete(vw); continue; }
+        any = true;
+        if (vw.auto) vw.yaw += 0.004;
+        vw.draw();
+      }
+      pcLoopRunning = any;
+      if (any) requestAnimationFrame(loop);
+    })();
+  }
+  return v;
+}
+
+const viewer3d = $("viewer3d");
+function open3DViewer(data) {
+  const old = viewer3d.querySelector("canvas");
+  const canvas = document.createElement("canvas");
+  canvas.__isFullscreen = true;
+  old.replaceWith(canvas);
+  viewer3d.style.display = "block";
+  const v = attachPointCloud(canvas, data);
+  v.auto = false; v.dist = 1.4;
+}
+viewer3d.addEventListener("click", e => { if (e.target === viewer3d) viewer3d.style.display = "none"; });
+
+// ------------------------------------------------------------- API keys dialog
+const keysDlg = $("keys");
+$("btn-keys").addEventListener("click", () => {
+  const open = keysDlg.style.display === "flex";
+  keysDlg.style.display = open ? "none" : "flex";
+  if (!open) refreshKeys();
+});
+$("keys-close").addEventListener("click", () => keysDlg.style.display = "none");
+
+async function refreshKeys() {
+  const list = $("keys-list");
+  list.innerHTML = "<div class='khint'>loading…</div>";
+  let keys;
+  try {
+    keys = (await fused.runPython("./api.py", { op: "list_secrets" })).keys;
+  } catch (e) { list.innerHTML = ""; return toast("keys load failed: " + e.message, true); }
+  list.innerHTML = "";
+  const addRow = (k) => {
+    const row = document.createElement("div");
+    row.className = "krow";
+    row.style.marginTop = "8px";
+    const name = document.createElement("span");
+    name.className = "kname"; name.textContent = k.name;
+    const state = document.createElement("span");
+    state.className = "kstate" + (k.set ? "" : " unset");
+    state.textContent = k.set ? (k.masked + (k.from_env ? " (env)" : "")) : "not set";
+    const inp = document.createElement("input");
+    inp.type = "password"; inp.placeholder = k.set ? "replace…" : "paste key…";
+    inp.autocomplete = "off";
+    const save = document.createElement("button");
+    save.textContent = "Save";
+    save.addEventListener("click", async () => {
+      if (!inp.value.trim()) return;
+      try {
+        await fused.runPython("./api.py", { op: "set_secret", name: k.name, value: inp.value.trim() });
+        toast(`${k.name} saved`);
+        refreshKeys();
+      } catch (e) { toast("save failed: " + e.message, true); }
+    });
+    inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") save.click(); });
+    row.appendChild(name); row.appendChild(state); row.appendChild(inp); row.appendChild(save);
+    if (k.set && !k.from_env) {
+      const del = document.createElement("button");
+      del.textContent = "✕";
+      del.title = "delete key";
+      del.addEventListener("click", async () => {
+        await fused.runPython("./api.py", { op: "set_secret", name: k.name, value: "" });
+        toast(`${k.name} removed`);
+        refreshKeys();
+      });
+      row.appendChild(del);
+    }
+    list.appendChild(row);
+    if (k.hint && k.hint !== "custom") {
+      const d = document.createElement("div");
+      d.className = "khint"; d.style.paddingLeft = "128px";
+      d.textContent = k.hint;
+      list.appendChild(d);
+    }
+  };
+  keys.forEach(addRow);
+  // custom key row
+  const row = document.createElement("div");
+  row.className = "krow";
+  row.style.marginTop = "12px";
+  const nameInp = document.createElement("input");
+  nameInp.placeholder = "CUSTOM_KEY_NAME"; nameInp.style.flex = "0 0 160px";
+  const valInp = document.createElement("input");
+  valInp.type = "password"; valInp.placeholder = "value…";
+  const add = document.createElement("button");
+  add.textContent = "Add";
+  add.addEventListener("click", async () => {
+    if (!nameInp.value.trim() || !valInp.value.trim()) return;
+    await fused.runPython("./api.py", { op: "set_secret", name: nameInp.value.trim(), value: valInp.value.trim() });
+    toast("key added");
+    refreshKeys();
+  });
+  [nameInp, valInp].forEach(i => i.addEventListener("keydown", e => e.stopPropagation()));
+  row.appendChild(nameInp); row.appendChild(valInp); row.appendChild(add);
+  list.appendChild(row);
+}
+
+// ------------------------------------------------------------- app mode
+let appMode = false;
+function setAppMode(on) {
+  appMode = on;
+  $("appmode").style.display = on ? "block" : "none";
+  $("viewport").style.display = on ? "none" : "";
+  $("zoomctl").style.display = on ? "none" : "";
+  $("btn-appmode").textContent = on ? "⧉ Graph" : "▦ App";
+  try { fused.params.set("mode", on ? "app" : ""); } catch (e) {}
+  if (on) renderApp();
+}
+$("btn-appmode").addEventListener("click", () => setAppMode(!appMode));
+
+function appCard(n, isOutput) {
+  const card = document.createElement("div");
+  card.className = "app-card" + (isOutput ? " out" : "");
+  const h = document.createElement("h4");
+  const tt = document.createElement("span");
+  tt.textContent = n.title;
+  const cat = document.createElement("span");
+  cat.className = "acat";
+  cat.textContent = n.type;
+  h.appendChild(tt); h.appendChild(cat);
+  card.appendChild(h);
+  if (n.wdefs.length) {
+    const ws = document.createElement("div");
+    ws.className = "widgets";
+    for (const wd of n.wdefs) ws.appendChild(buildWidget(n, wd));
+    card.appendChild(ws);
+  }
+  const def = NODE_DEFS[n.type];
+  if (def && def.showInputThumb && n.widgets.image && ROOT) {
+    const pv = document.createElement("div");
+    pv.className = "npreview";
+    const img = document.createElement("img");
+    img.src = fused.rawUrl(ROOT + "/input/" + n.widgets.image) + "&_s=" + (uploadSalt.get(n.widgets.image) || 0);
+    img.addEventListener("click", () => openLightbox(img.src, n.widgets.image));
+    pv.appendChild(img);
+    card.appendChild(pv);
+  }
+  if (isOutput) appendUiPreviews(card, results.get(n.id));
+  if (n._error) {
+    const err = document.createElement("div");
+    err.className = "nerror";
+    err.textContent = n._error;
+    card.appendChild(err);
+  }
+  return card;
+}
+
+function renderApp() {
+  const col = $("app-col");
+  col.innerHTML = "";
+  const nodes = [...graph.nodes.values()].sort((a, b) => a.pos[1] - b.pos[1] || a.pos[0] - b.pos[0]);
+  const isOut = n => { const d = NODE_DEFS[n.type]; return !!(d && d.output_node); };
+  const marked = nodes.filter(n => n.properties && n.properties.fused_app);
+  let inputCards = marked.filter(n => !isOut(n));
+  if (!marked.length) {
+    // default: source nodes (nothing wired into them) that have widgets
+    inputCards = nodes.filter(n => n.type !== "Note" && !isOut(n) && n.wdefs.length && n.inputs.every(i => i.link == null));
+  }
+  let outputCards = marked.filter(isOut);
+  if (!outputCards.length) outputCards = nodes.filter(isOut);
+  if (!nodes.length) {
+    col.innerHTML = `<div class="app-empty">empty workflow — switch to Graph and build one,<br>or load a demo from the Workflow menu</div>`;
+    return;
+  }
+  for (const n of inputCards) col.appendChild(appCard(n, false));
+  const rr = document.createElement("div");
+  rr.className = "app-runrow";
+  const rb = document.createElement("button");
+  rb.textContent = running ? "running…" : "▶ Run";
+  rb.disabled = running;
+  rb.addEventListener("click", runGraph);
+  rr.appendChild(rb);
+  col.appendChild(rr);
+  for (const n of outputCards) col.appendChild(appCard(n, true));
+  if (!inputCards.length && !outputCards.length) {
+    col.innerHTML = `<div class="app-empty">nothing to show — right-click nodes in Graph view and<br>pick “Show in App mode” to compose this panel</div>`;
+  }
+}
+
+// ------------------------------------------------------------- assets gallery
+const assetsPanel = $("assets");
+function setAssetsOpen(on) {
+  assetsPanel.style.display = on ? "flex" : "none";
+  try { localStorage.setItem("fusedComfyAssets", on ? "1" : "0"); } catch (e) {}
+  if (on) refreshAssets();
+}
+$("btn-assets").addEventListener("click", () => setAssetsOpen(assetsPanel.style.display !== "flex"));
+$("a-close").addEventListener("click", () => setAssetsOpen(false));
+$("a-refresh").addEventListener("click", refreshAssets);
+
+function recordAssets(n, r, workflowJson) {
+  if (!r.ui || r.cached) return;
+  const entries = [];
+  (r.ui.images || []).forEach(ref => entries.push([ref.__image__, "image"]));
+  (r.ui.videos || []).forEach(p => entries.push([p, "video"]));
+  for (const [p, kind] of entries) {
+    fused.runPython("./api.py", { op: "record_asset", path: p, kind, node_type: n.type, workflow: workflowJson }).catch(() => {});
+  }
+}
+
+async function refreshAssets() {
+  const grid = $("assets-grid");
+  let assets;
+  try {
+    assets = (await fused.runPython("./api.py", { op: "list_assets", limit: "120" })).assets;
+  } catch (e) { return toast("assets load failed: " + e.message, true); }
+  grid.innerHTML = "";
+  if (!assets.length) {
+    grid.innerHTML = "<div style='grid-column:1/-1;color:#888;text-align:center;padding:26px 6px;font-size:12px'>no generated assets yet — run a workflow</div>";
+    return;
+  }
+  for (const a of assets) {
+    const el = document.createElement("div");
+    el.className = "asset";
+    if (!a.exists) {
+      const t = document.createElement("div");
+      t.className = "athumb missing";
+      t.textContent = "file gone";
+      el.appendChild(t);
+    } else if (a.kind === "video") {
+      const v = document.createElement("video");
+      v.className = "athumb";
+      v.src = fused.rawUrl(a.path);
+      v.muted = true; v.loop = true; v.controls = false;
+      v.addEventListener("pointerenter", () => v.play().catch(() => {}));
+      v.addEventListener("pointerleave", () => v.pause());
+      v.addEventListener("click", () => window.open(fused.rawUrl(a.path), "_blank"));
+      el.appendChild(v);
+    } else {
+      const img = document.createElement("img");
+      img.className = "athumb";
+      img.loading = "lazy";
+      img.src = fused.rawUrl(a.path);
+      img.addEventListener("click", () => openLightbox(img.src, `${a.node_type} — ${a.time}`));
+      el.appendChild(img);
+    }
+    const meta = document.createElement("div");
+    meta.className = "ameta";
+    meta.title = a.path;
+    meta.textContent = `${a.node_type} · ${a.time}` + (a.in_output ? " · saved" : "");
+    el.appendChild(meta);
+    const btns = document.createElement("div");
+    btns.className = "abtns";
+    if (a.exists && !a.in_output) {
+      const save = document.createElement("button");
+      save.textContent = "⤓ save";
+      save.title = "copy into output/";
+      save.addEventListener("click", async () => {
+        try {
+          const r = await fused.runPython("./api.py", { op: "save_asset", asset_id: String(a.id) });
+          toast("saved " + r.path.split("/").pop());
+          refreshAssets();
+        } catch (e) { toast(e.message, true); }
+      });
+      btns.appendChild(save);
+    }
+    const load = document.createElement("button");
+    load.textContent = "↺ load";
+    load.title = "restore the workflow that generated this";
+    load.addEventListener("click", async () => {
+      try {
+        const r = await fused.runPython("./api.py", { op: "get_asset_workflow", asset_id: String(a.id) });
+        importJsonText(r.workflow, `asset #${a.id}`);
+        if (appMode) renderApp();
+      } catch (e) { toast(e.message, true); }
+    });
+    btns.appendChild(load);
+    const del = document.createElement("button");
+    del.textContent = "✕";
+    del.title = "remove from gallery (file stays on disk)";
+    del.addEventListener("click", async () => {
+      await fused.runPython("./api.py", { op: "delete_asset", asset_id: String(a.id) });
+      refreshAssets();
+    });
+    btns.appendChild(del);
+    el.appendChild(btns);
+    grid.appendChild(el);
+  }
+}
+
+// ------------------------------------------------------------- lightbox
+const lightbox = $("lightbox"), lbImg = lightbox.querySelector("img"), lbInfo = lightbox.querySelector(".lb-info");
+let lb = { x: 0, y: 0, s: 1 };
+function openLightbox(src, caption) {
+  lightbox.style.display = "block";
+  lbImg.src = src;
+  lbInfo.textContent = (caption || "") + " — wheel to zoom, drag to pan, Esc/click to close";
+  lbImg.onload = () => {
+    const s = Math.min((innerWidth - 80) / lbImg.naturalWidth, (innerHeight - 80) / lbImg.naturalHeight, 1);
+    lb = { s, x: (innerWidth - lbImg.naturalWidth * s) / 2, y: (innerHeight - lbImg.naturalHeight * s) / 2 };
+    applyLb();
+  };
+}
+function applyLb() { lbImg.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.s})`; }
+lightbox.addEventListener("wheel", e => {
+  e.preventDefault();
+  const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const ns = Math.max(0.05, Math.min(30, lb.s * k));
+  lb.x = e.clientX - (e.clientX - lb.x) * (ns / lb.s);
+  lb.y = e.clientY - (e.clientY - lb.y) * (ns / lb.s);
+  lb.s = ns;
+  applyLb();
+}, { passive: false });
+lightbox.addEventListener("pointerdown", e => {
+  const x0 = e.clientX, y0 = e.clientY, sx = lb.x, sy = lb.y;
+  let moved = false;
+  const mv = ev => { const dx = ev.clientX - x0, dy = ev.clientY - y0; if (Math.abs(dx) + Math.abs(dy) > 4) moved = true; lb.x = sx + dx; lb.y = sy + dy; applyLb(); };
+  const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); if (!moved) lightbox.style.display = "none"; };
+  window.addEventListener("pointermove", mv);
+  window.addEventListener("pointerup", up);
+});
+
+// ------------------------------------------------------------- keyboard
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, textarea")) return;
+  if (e.code === "Space") { spaceHeld = true; }
+  const mod = e.ctrlKey || e.metaKey;
+  if (appMode) { // graph-editing keys are meaningless while the graph is hidden
+    if (mod && e.key === "Enter") { e.preventDefault(); runGraph(); }
+    else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); saveWorkflow(false); }
+    else if (e.key === "Escape") { closeMenus(); lightbox.style.display = "none"; viewer3d.style.display = "none"; keysDlg.style.display = "none"; }
+    return;
+  }
+  if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteSelection(); }
+  else if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
+  else if (mod && e.key.toLowerCase() === "c") { e.preventDefault(); copySelection(); }
+  else if (mod && e.key.toLowerCase() === "v") { e.preventDefault(); pasteClipboard(); }
+  else if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); duplicateSelection(); }
+  else if (mod && e.key.toLowerCase() === "a") { e.preventDefault(); sel.clear(); for (const id of graph.nodes.keys()) sel.add(id); refreshSelection(); }
+  else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); saveWorkflow(false); }
+  else if (mod && e.key.toLowerCase() === "m") { e.preventDefault(); if (sel.size) setMode([...sel], 2); }
+  else if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); if (sel.size) setMode([...sel], 4); }
+  else if (mod && e.key === "Enter") { e.preventDefault(); runGraph(); }
+  else if (e.key.toLowerCase() === "f" && !mod) { fitView(); }
+  else if (e.key === "Escape") { closeMenus(); closePalette(); lightbox.style.display = "none"; viewer3d.style.display = "none"; keysDlg.style.display = "none"; }
+});
+document.addEventListener("keyup", e => { if (e.code === "Space") spaceHeld = false; });
+
+// ------------------------------------------------------------- zoom controls
+function fitView() {
+  if (!graph.nodes.size) return;
+  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+  for (const n of graph.nodes.values()) {
+    const el = domNodes.get(n.id);
+    x1 = Math.min(x1, n.pos[0]); y1 = Math.min(y1, n.pos[1]);
+    x2 = Math.max(x2, n.pos[0] + (el ? el.offsetWidth : n.size[0]));
+    y2 = Math.max(y2, n.pos[1] + (el ? el.offsetHeight : 100));
+  }
+  const r = viewport.getBoundingClientRect();
+  const pad = 60;
+  view.s = Math.max(0.1, Math.min(1.5, Math.min((r.width - pad * 2) / (x2 - x1), (r.height - pad * 2) / (y2 - y1))));
+  view.x = (r.width - (x2 - x1) * view.s) / 2 - x1 * view.s;
+  view.y = (r.height - (y2 - y1) * view.s) / 2 - y1 * view.s;
+  applyView();
+  saveViewSoon();
+}
+$("z-in").addEventListener("click", () => { view.s = Math.min(3, view.s * 1.2); applyView(); saveViewSoon(); });
+$("z-out").addEventListener("click", () => { view.s = Math.max(0.1, view.s / 1.2); applyView(); saveViewSoon(); });
+$("z-pct").addEventListener("click", () => { view.s = 1; applyView(); saveViewSoon(); });
+$("z-fit").addEventListener("click", fitView);
+
+// ------------------------------------------------------------- demo graph
+function buildDemo() {
+  graph.clear();
+  const load = graph.addNode("LoadImage", [60, 120]);
+  const grad = graph.addNode("GradientImage", [60, 560]);
+  const pix = graph.addNode("Pixelate", [400, 120]);
+  pix.widgets.factor = 6;
+  const blend = graph.addNode("ImageBlend", [700, 300]);
+  blend.widgets.mode = "overlay"; blend.widgets.blend_factor = 0.6;
+  const txt = graph.addNode("TextOverlay", [1010, 280]);
+  txt.widgets.text = "fused comfy"; txt.widgets.y = 430; txt.widgets.x = 110; txt.widgets.size = 56;
+  const prev = graph.addNode("PreviewImage", [1330, 160]);
+  const save = graph.addNode("SaveImage", [1330, 560]);
+  const note = graph.addNode("Note", [400, 620]);
+  note.widgets.text = "Demo: image → pixelate → blend with gradient → caption.\nCtrl+Enter runs the graph. Try dragging a ComfyUI\nworkflow JSON or an exported PNG onto the canvas.";
+  graph.connect(load.id, 0, pix.id, 0);
+  graph.connect(pix.id, 0, blend.id, 0);
+  graph.connect(grad.id, 0, blend.id, 1);
+  graph.connect(blend.id, 0, txt.id, 0);
+  graph.connect(txt.id, 0, prev.id, 0);
+  graph.connect(txt.id, 0, save.id, 0);
+  currentWfPath = null; dirty = true;
+  sel.clear(); results.clear();
+  renderAll();
+  fitView();
+  refreshWfName();
+  scheduleAutosave();
+  if (appMode) renderApp();
+}
+
+function buildDemo3D() {
+  graph.clear();
+  const load = graph.addNode("LoadImage", [60, 140]);
+  const depth = graph.addNode("DepthEstimation", [420, 140]);
+  const prevD = graph.addNode("PreviewImage", [420, 460]);
+  const pc = graph.addNode("ImageToPointCloud", [760, 200]);
+  const view3 = graph.addNode("Preview3D", [1090, 160]);
+  const note = graph.addNode("Note", [760, 460]);
+  note.widgets.text = "Depth-Anything-V2-small runs locally on your CPU\n(~27 MB ONNX, auto-downloaded on first run, ~1s).\nThe point cloud renders in WebGL — drag it, dbl-click\nto go fullscreen. Try your own photo via LoadImage.";
+  graph.connect(load.id, 0, depth.id, 0);
+  graph.connect(depth.id, 0, prevD.id, 0);
+  graph.connect(load.id, 0, pc.id, 0);
+  graph.connect(depth.id, 0, pc.id, 1);
+  graph.connect(pc.id, 0, view3.id, 0);
+  currentWfPath = null; dirty = true;
+  sel.clear(); results.clear();
+  renderAll(); fitView(); refreshWfName(); scheduleAutosave();
+  if (appMode) renderApp();
+}
+
+function buildDemoApi() {
+  graph.clear();
+  const gen = graph.addNode("HFTextToImage", [60, 120]);
+  const cap = graph.addNode("HFImageCaption", [440, 480]);
+  const txt = graph.addNode("TextOverlay", [760, 160]);
+  txt.widgets.text = ""; txt.widgets.y = 700; txt.widgets.size = 36;
+  const prev = graph.addNode("PreviewImage", [1090, 140]);
+  const note = graph.addNode("Note", [60, 560]);
+  note.widgets.text = "Hosted models via API key — either paste it into the\nnode's api_key field, or set it once in the 🔑 Keys dialog (HF_TOKEN):\nFLUX.1-schnell generates the image, BLIP captions it,\nand the caption is drawn back onto the image.\nSeedance video works the same way with ARK_API_KEY.";
+  graph.connect(gen.id, 0, cap.id, 0);
+  graph.connect(gen.id, 0, txt.id, 0);
+  graph.connect(cap.id, 0, txt.id, 1);
+  graph.connect(txt.id, 0, prev.id, 0);
+  currentWfPath = null; dirty = true;
+  sel.clear(); results.clear();
+  renderAll(); fitView(); refreshWfName(); scheduleAutosave();
+  if (appMode) renderApp();
+}
+
+// ------------------------------------------------------------- boot
+(async function boot() {
+  applyView();
+  tabs = [newTabObj()]; activeTab = 0;   // start with a single tab
+  try {
+    const setup = await fused.runPython("./api.py", { op: "setup" });
+    ROOT = setup.root;
+    INPUT_FILES = setup.inputs;
+    WORKFLOW_FILES = setup.workflows || [];
+  } catch (e) {
+    toast("setup failed: " + e.message, true);
+  }
+  try { if (localStorage.getItem("fusedComfyAssets") === "1") setAssetsOpen(true); } catch (e) {}
+  if (fused.params.get("mode") === "app") setAppMode(true);
+
+  // 1) restore the full multi-tab session from autosave (resume where you left off)
+  if (ROOT) {
+    try {
+      const txt = await fused.readFile(ROOT + "/autosave.json");
+      const j = JSON.parse(txt);
+      if (j && Array.isArray(j.__fused_tabs) && j.__fused_tabs.length) {
+        tabs = j.__fused_tabs.map(td => newTabObj({
+          snapshot: td.snapshot || null,
+          currentWfPath: td.currentWfPath || null,
+          view: (td.view && typeof td.view.x === "number") ? td.view : DEFAULT_VIEW(),
+          dirty: !!td.dirty,
+        }));
+        activeTab = Math.min(Math.max(0, j.__active | 0), tabs.length - 1);
+        loadTabIntoLive(tabs[activeTab]);
+        renderTabs();
+        toast(tabs.length > 1 ? `restored ${tabs.length} tabs` : "restored autosave");
+        return;
+      }
+      const info = graph.load(j);   // legacy single-workflow autosave
+      currentWfPath = (j.extra && j.extra.fused_wf) || null;
+      afterLoad(null, "autosave");
+      renderTabs();
+      if (info.nodes) { toast("restored autosave"); return; }
+    } catch (e) { /* no autosave yet */ }
+  }
+
+  // 2) explicit deep link (?wf=…) — used on a fresh environment with no autosave
+  const wf = fused.params.get("wf");
+  if (wf) {
+    try {
+      const txt = await fused.readFile(wf);
+      loadJsonIntoCurrentTab(JSON.parse(txt), { path: wf, dirty: false, label: wf.split("/").pop() });
+      logEvent("open", { path: wf });
+    } catch (e) { toast("open failed: " + e.message, true); }
+    renderTabs();
+    if (appMode) renderApp();
+    return;
+  }
+
+  // 3) nothing to restore — show the demo
+  buildDemo();
+  renderTabs();
+})();
+
+})();
+</script>
+</body>
+</html>
