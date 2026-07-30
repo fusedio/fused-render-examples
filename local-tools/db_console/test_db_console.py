@@ -100,6 +100,9 @@ def test_template_guards_stateful_ui_regressions():
     assert "if (fetchingMore || !lastResult" in template
     assert "if (running) return;" in template
     assert "isUrl ? { url: state.conn } : { file: state.conn }" in template
+    for control_id in ("open-connect", "run", "cancel", "rail-toggle", "theme-toggle",
+                       "tab-results", "tab-columns", "tab-history", "prev-page", "next-page"):
+        assert f'id="{control_id}"' in template
 
 
 def test_resolve_file_synthesizes_urls(tmp_path):
@@ -309,6 +312,31 @@ def test_query_error_is_typed_not_traceback(sqlite_conn):
     data = daemon.post(f"/query?c={cid}", {"sql": "SELECT * FROM nope"})
     assert "error" in data and data.get("query_id")
     assert "columns" not in data or not data.get("columns")
+
+
+@requires_sqlalchemy
+def test_table_browse_and_cell_expansion(sqlite_conn):
+    daemon, cid, _ = sqlite_conn
+    data = daemon.get(f"/table?c={cid}&name=artists&offset=0&limit=2&sort=null&filters=[]")
+    assert data["rows"][0][1] == "artist1"
+    cell = daemon.get(f"/cell?c={cid}&query_id={data['query_id']}&row=0&col=1")
+    assert cell["value"] == "artist1"
+
+
+@requires_sqlalchemy
+def test_returning_write_is_committed(daemon, tmp_path):
+    path = str(tmp_path / "write.sqlite")
+    _make_sqlite(path)
+    conn = daemon.post("/connect", {"file": path, "allow_write": True})
+    cid = conn["conn_id"]
+    returned = daemon.post(f"/query?c={cid}", {
+        "sql": "INSERT INTO artists VALUES (99, 'committed', 'US') RETURNING id",
+    })
+    assert returned["rows"] == [[99]]
+    check = daemon.post(f"/query?c={cid}", {
+        "sql": "SELECT name FROM artists WHERE id = 99",
+    })
+    assert check["rows"] == [["committed"]]
 
 
 @requires_sqlalchemy
