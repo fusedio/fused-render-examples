@@ -436,7 +436,7 @@ def _serve():
         # is explicit; the pool is deliberately one connection per engine.
         if url_obj.get_backend_name() == "sqlite":
             connect_args.setdefault("check_same_thread", False)
-        return sa.create_engine(url_obj, pool_size=1, max_overflow=1,
+        return sa.create_engine(url_obj, pool_size=max(2, CURSORS_PER_CONN), max_overflow=1,
                                 pool_pre_ping=True, connect_args=connect_args)
 
     def _get_engine(conn_id):
@@ -495,11 +495,17 @@ def _serve():
 
         display = u.render_as_string(hide_password=True)
         with eng_lock:
+            previous = engines.get(conn_id)
             engines[conn_id] = {
                 "url_obj": u, "connect_args": options, "display_url": display,
                 "dialect": backend, "readonly": readonly, "file": file_path,
                 "name": name or (u.database or backend), "engine": engine,
                 "server_version": server_version, "last_used": time.time()}
+        if previous and previous.get("engine") is not engine:
+            try:
+                previous["engine"].dispose()
+            except Exception:
+                pass
         with schema_lock:
             for key in [key for key in schema_cache if key[0] == conn_id]:
                 schema_cache.pop(key, None)
@@ -689,7 +695,12 @@ def _serve():
         page = cur.fetchmany(limit)
         more = len(page) == limit
         types = _infer_types(columns, page)
+        try:
+            raw.commit()
+        except Exception:
+            pass
         _stash_cursor(conn_id, query_id, {"raw": raw, "cur": cur, "columns": columns,
+                                          "lock": threading.Lock(),
                                           "last": time.time(), "rows": {
                                               i: row for i, row in enumerate(page)},
                                           "next_row": len(page)})
@@ -713,12 +724,14 @@ def _serve():
             rec = cursors.get((conn_id, query_id))
         if rec is None:
             return {"error": "cursor expired", "type": "no_cursor"}
-        page = rec["cur"].fetchmany(max(1, min(int(n or 100), PAGE_CAP)))
-        start = rec["next_row"]
-        rec["rows"].update({start + i: row for i, row in enumerate(page)})
-        rec["next_row"] = start + len(page)
-        rec["last"] = time.time()
-        more = len(page) == max(1, min(int(n or 100), PAGE_CAP))
+        count = max(1, min(int(n or 100), PAGE_CAP))
+        with rec["lock"]:
+            page = rec["cur"].fetchmany(count)
+            start = rec["next_row"]
+            rec["rows"].update({start + i: row for i, row in enumerate(page)})
+            rec["next_row"] = start + len(page)
+            rec["last"] = time.time()
+        more = len(page) == count
         return {"query_id": query_id, "columns": rec["columns"],
                 "rows": [[_cell(v) for v in row] for row in page], "more": more,
                 "rowcount": len(page)}
@@ -728,7 +741,8 @@ def _serve():
             rec = cursors.get((conn_id, query_id))
         if rec is None:
             return {"error": "cursor expired", "type": "no_cursor"}
-        values = (rec.get("rows") or {}).get(row)
+        with rec["lock"]:
+            values = (rec.get("rows") or {}).get(row)
         if values is None or col < 0 or col >= len(values):
             return {"error": "out of range", "type": "bad_request"}
         return {"value": _jsonify(values[col])}
