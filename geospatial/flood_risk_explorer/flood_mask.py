@@ -152,17 +152,27 @@ def _overture_water(xmin, ymin, xmax, ymax):
 
 def _rasterize_water(polys, xmin, ymin, xmax, ymax, gh, gw, managed=None):
     """Rasterize water polygons; `managed` filters on the "m" flag
-    (None = all water, False = seedable only, True = managed only)."""
+    (None = all water, False = seedable only, True = managed only).
+
+    Supersampled: a cell only counts as water if ≥45% of it actually is.
+    PIL's polygon fill paints even a 3 m ditch as a 1 px line, so at 66 m
+    cells the Dutch polder drainage grid ("sloten", subtype water) painted
+    all of Rotterdam's farmland as existing water. Coverage keeps bays,
+    rivers and Venice-scale canals (Venice loses 1.3% of water cells at
+    0.45, Rotterdam loses the ditch speckle); sub-cell ditches vanish.
+    """
     import numpy as np
     from PIL import Image, ImageDraw
 
+    K = 3
+    W, H = gw * K, gh * K
     my0, my1 = _merc_y(ymax), _merc_y(ymin)
 
     def to_px(coords):
-        return [(((lon - xmin) / (xmax - xmin)) * (gw - 1),
-                 ((my0 - _merc_y(lat)) / (my0 - my1)) * (gh - 1)) for lon, lat in coords]
+        return [(((lon - xmin) / (xmax - xmin)) * (W - 1),
+                 ((my0 - _merc_y(lat)) / (my0 - my1)) * (H - 1)) for lon, lat in coords]
 
-    img = Image.new("1", (gw, gh), 0)
+    img = Image.new("1", (W, H), 0)
     draw = ImageDraw.Draw(img)
     for w in polys:
         if managed is not None and bool(w["m"]) != managed:
@@ -170,7 +180,8 @@ def _rasterize_water(polys, xmin, ymin, xmax, ymax, gh, gw, managed=None):
         for i, ring in enumerate(w["p"]):
             if len(ring) >= 3:
                 draw.polygon(to_px(ring), fill=0 if i else 1)
-    return np.asarray(img, dtype=bool)
+    cover = np.asarray(img, dtype=np.float32).reshape(gh, K, gw, K).mean(axis=(1, 3))
+    return cover >= 0.45
 
 
 # ---------------------------------------------------------------- tiles
@@ -347,7 +358,7 @@ def compute_grids(xmin, ymin, xmax, ymax, barriers="", seed_side="",
     if bank_min:
         bkey += f"_bk{bank_min:g}"
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}_{bkey}_{seed_side or 'any'}"
-    npz = os.path.join(_CACHE, f"grids_v9_{key}.npz")
+    npz = os.path.join(_CACHE, f"grids_v10_{key}.npz")
     if os.path.exists(npz):
         d = np.load(npz)
         return d["elev"], d["flood"], json.loads(str(d["meta"]))
@@ -507,9 +518,9 @@ def _terrain_assets(xmin, ymin, xmax, ymax):
     from PIL import Image
 
     key = f"{xmin:.4f}_{ymin:.4f}_{xmax:.4f}_{ymax:.4f}"
-    ppath = os.path.join(_CACHE, f"terrain3_{key}.png")
-    jpath = os.path.join(_CACHE, f"texture3_{key}.jpg")
-    mpath = os.path.join(_CACHE, f"assets3_{key}.json")
+    ppath = os.path.join(_CACHE, f"terrain4_{key}.png")
+    jpath = os.path.join(_CACHE, f"texture4_{key}.jpg")
+    mpath = os.path.join(_CACHE, f"assets4_{key}.json")
     if all(os.path.exists(p) for p in (ppath, jpath, mpath)):
         with open(ppath, "rb") as f1, open(jpath, "rb") as f2, open(mpath) as f3:
             return f1.read(), f2.read(), json.load(f3)
