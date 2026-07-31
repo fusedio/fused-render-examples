@@ -744,8 +744,12 @@ $("settingsBtn").addEventListener("click", () => act(openSettings));
 // ---------- editor ----------
 async function openEditor(client, id) {
   const token = ++navToken;
+  const pendingSnapshot = state.pending;
   await flushSave();
-  if (token !== navToken) { state.pending = null; return; }
+  if (token !== navToken) {
+    if (state.pending === pendingSnapshot) state.pending = null;
+    return;
+  }
   showView("editor");
   state.client = client; state.routeId = id; state.doc = null;
   let doc;
@@ -1022,23 +1026,27 @@ function renderFxLine() {
   const doc = state.doc;
   el.textContent = doc?.fx?.rate ? fxText(doc) : "";
 }
+let fxToken = 0;
 async function refreshFx() {
   const doc = state.doc;
+  const token = ++fxToken;
   const on = $("form").querySelector("#fxOn").checked;
   const quote = $("form").querySelector("#fxQuote").value;
   if (!on || quote === doc.currency) {
     doc.fx = null;
+    $("form").querySelector("#fxOn").checked = false;
     renderFxLine();
     onDocChange();
     return;
   }
   try {
     const r = await py({ action: "fx_rate", base: doc.currency, quote });
-    if (state.doc !== doc || doc.status === "final") return;
+    if (state.doc !== doc || doc.status === "final" || token !== fxToken) return;
     doc.fx = { quote, rate: r.rate, date: r.date };
   } catch (err) {
-    if (state.doc !== doc || doc.status === "final") return;
+    if (state.doc !== doc || doc.status === "final" || token !== fxToken) return;
     doc.fx = null;
+    $("form").querySelector("#fxOn").checked = false;
     toast(err?.message || "Exchange rate lookup failed", true);
   }
   renderFxLine();
