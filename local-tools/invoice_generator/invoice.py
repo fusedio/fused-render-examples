@@ -128,7 +128,7 @@ def _write_json(path, obj):
 
 
 def _slug(name):
-    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    s = re.sub(r"[^\w]+", "-", (name or "").strip().lower()).strip("-_")
     if not s:
         raise ValueError("client name needs at least one letter or number")
     return s
@@ -308,23 +308,29 @@ def _load_invoice(client, inv_id):
 def _save_invoice(client, doc):
     d = _fill_doc(json.loads(doc))
     _safe_segment(d["id"], "invoice id")
+    path = os.path.join(_client_dir(client), "invoices", d["id"] + ".json")
+    if os.path.isfile(path) and _read_json(path).get("status") == "final" and d["status"] == "final":
+        raise ValueError("invoice is final and locked; mark it draft to edit")
     for other in _invoices(client):
         if other["id"] != d["id"] and other["number"] == d["number"]:
             raise ValueError(f'invoice number "{d["number"]}" is already used')
     d["modified"] = _now()
-    _write_json(os.path.join(_client_dir(client), "invoices", d["id"] + ".json"), d)
+    _write_json(path, d)
     return {"ok": True, "id": d["id"], "modified": d["modified"]}
 
 
 def _delete_invoice(client, inv_id):
-    os.remove(_invoice_path(client, inv_id))
+    path = _invoice_path(client, inv_id)
+    if _read_json(path).get("status") == "final":
+        raise ValueError("invoice is final and locked; mark it draft to delete")
+    os.remove(path)
     return {"ok": True}
 
 
 def _fx_rate(base, quote):
     base, quote = (base or "").upper(), (quote or "").upper()
-    if not base or not quote:
-        raise ValueError("fx_rate needs base and quote currencies")
+    if not re.fullmatch(r"[A-Z]{3}", base) or not re.fullmatch(r"[A-Z]{3}", quote):
+        raise ValueError("fx_rate needs 3-letter base and quote currency codes")
     today_path = os.path.join(FX_DIR, f"{date.today().isoformat()}-{base}-{quote}.json")
     if os.path.isfile(today_path):
         cached = _read_json(today_path)

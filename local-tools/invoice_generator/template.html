@@ -320,7 +320,7 @@ function fmtMoney(n, cur) {
   try {
     return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "USD" }).format(n || 0);
   } catch {
-    return `${cur || "USD"} ${(n || 0).toFixed(2)}`;
+    return `${esc(cur || "USD")} ${(n || 0).toFixed(2)}`;
   }
 }
 const curOpts = (sel) => {
@@ -518,7 +518,14 @@ function showView(name) {
 let navToken = 0;
 async function route() {
   const m = (location.hash || "#/").match(/^#\/edit\/([^/]+)\/([^/]+)$/);
-  if (m) return openEditor(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  if (m) {
+    try {
+      return await openEditor(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+    } catch (err) {
+      toast(err?.message || String(err), true);
+      return openLibrary();
+    }
+  }
   return openLibrary();
 }
 window.addEventListener("hashchange", () => act(route));
@@ -529,6 +536,7 @@ async function openLibrary() {
   await flushSave();
   if (token !== navToken) return;
   state.doc = null; state.client = ""; state.routeId = "";
+  if (location.hash !== "#/") history.replaceState(null, "", "#/");
   showView("library");
   const r = await py({ action: "list_clients" });
   if (token !== navToken) return;
@@ -560,7 +568,9 @@ function renderClients() {
   }
 }
 
+let libToken = 0;
 async function renderLibMain() {
+  const token = ++libToken;
   const main = $("libMain");
   if (!state.clients.length) {
     main.innerHTML = `<div class="empty"><p>Add your first client to start invoicing.</p>
@@ -612,6 +622,7 @@ async function renderLibMain() {
     location.hash = `#/edit/${encodeURIComponent(client.slug)}/new`;
   }));
   const r = await py({ action: "list_invoices", client: client.slug });
+  if (token !== libToken) return;
   renderInvTable(main.querySelector("#invHost"), client, r.invoices || []);
 }
 
@@ -734,17 +745,17 @@ $("settingsBtn").addEventListener("click", () => act(openSettings));
 async function openEditor(client, id) {
   const token = ++navToken;
   await flushSave();
-  if (token !== navToken) return;
+  if (token !== navToken) { state.pending = null; return; }
   showView("editor");
   state.client = client; state.routeId = id; state.doc = null;
   let doc;
   if (id === "new") {
     if (state.pending && state.pending.client === client) {
       doc = state.pending.doc;
-      state.pending = null;
     } else {
       doc = asObj((await py({ action: "new_invoice", client })).doc);
     }
+    state.pending = null;
   } else {
     doc = asObj((await py({ action: "load_invoice", client, id })).doc);
   }
@@ -760,7 +771,7 @@ async function openEditor(client, id) {
 // Refresh a carried-over fx rate on load; best-effort.
 function lazyFx(doc) {
   py({ action: "fx_rate", base: doc.currency, quote: doc.fx.quote }).then((r) => {
-    if (state.doc !== doc) return;
+    if (state.doc !== doc || doc.status === "final") return;
     doc.fx = { quote: doc.fx.quote, rate: r.rate, date: r.date };
     renderFxLine();
     schedulePreview();
@@ -788,9 +799,12 @@ $("numInput").addEventListener("input", () => {
   onDocChange();
 });
 $("regenBtn").addEventListener("click", () => act(async () => {
-  const r = await py({ action: "new_invoice", client: state.client });
-  state.doc.number = asObj(r.doc).number;
-  $("numInput").value = state.doc.number;
+  const doc = state.doc, client = state.client;
+  if (!doc) return;
+  const r = await py({ action: "new_invoice", client });
+  if (state.doc !== doc || doc.status === "final") return;
+  doc.number = asObj(r.doc).number;
+  $("numInput").value = doc.number;
   onDocChange();
 }));
 $("statusBtn").addEventListener("click", () => {
@@ -1020,10 +1034,10 @@ async function refreshFx() {
   }
   try {
     const r = await py({ action: "fx_rate", base: doc.currency, quote });
-    if (state.doc !== doc) return;
+    if (state.doc !== doc || doc.status === "final") return;
     doc.fx = { quote, rate: r.rate, date: r.date };
   } catch (err) {
-    if (state.doc !== doc) return;
+    if (state.doc !== doc || doc.status === "final") return;
     doc.fx = null;
     toast(err?.message || "Exchange rate lookup failed", true);
   }
