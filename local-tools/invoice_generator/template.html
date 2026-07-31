@@ -809,15 +809,15 @@ function updateTopbar() {
 
 $("backBtn").addEventListener("click", () => { location.hash = "#/"; });
 $("numInput").addEventListener("input", () => {
-  if (!state.doc) return;
+  if (!state.doc || state.doc.status === "final" || statusSaveDoc === state.doc) return;
   state.doc.number = $("numInput").value;
   onDocChange();
 });
 $("regenBtn").addEventListener("click", () => act(async () => {
   const doc = state.doc, client = state.client;
-  if (!doc) return;
+  if (!doc || doc.status === "final" || statusSaveDoc === doc) return;
   const r = await py({ action: "new_invoice", client });
-  if (state.doc !== doc || doc.status === "final") return;
+  if (state.doc !== doc || doc.status === "final" || statusSaveDoc === doc) return;
   doc.number = asObj(r.doc).number;
   $("numInput").value = doc.number;
   onDocChange();
@@ -975,7 +975,7 @@ $("form").addEventListener("keydown", (e) => {
 });
 
 function addItem() {
-  if (!state.doc || state.doc.status === "final") return;
+  if (!state.doc || state.doc.status === "final" || statusSaveDoc === state.doc) return;
   state.doc.items.push({ desc: "", qty: 1, rate: 0, hsn: "", unit: "" });
   renderItems();
   const rows = $("itemsTable").querySelectorAll("tbody tr");
@@ -1017,17 +1017,19 @@ function renderItems() {
     tr.querySelector("[data-o=up]").addEventListener("click", () => moveItem(i, -1));
     tr.querySelector("[data-o=down]").addEventListener("click", () => moveItem(i, 1));
     tr.querySelector("[data-o=del]").addEventListener("click", () => {
+      if (doc.status === "final" || statusSaveDoc === doc) return;
       doc.items.splice(i, 1);
       renderItems();
       onDocChange();
     });
     tbody.appendChild(tr);
   });
-  if (doc.status === "final")
+  if (doc.status === "final" || statusSaveDoc === doc)
     table.querySelectorAll("input, button").forEach((el) => { el.disabled = true; });
 }
 
 function moveItem(i, d) {
+  if (state.doc.status === "final" || statusSaveDoc === state.doc) return;
   const items = state.doc.items, j = i + d;
   if (j < 0 || j >= items.length) return;
   [items[i], items[j]] = [items[j], items[i]];
