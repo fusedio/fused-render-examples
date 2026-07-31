@@ -77,6 +77,7 @@ Fused Render pointed at your **own machine** instead of the cloud.
 | [notion_db](local-tools/notion_db/) | Notion-style task tracker on a local Parquet lake |
 | [comfy](local-tools/comfy/) | A ComfyUI-style node editor with a local image-processing engine |
 | [vps_manager](local-tools/vps_manager/) | Manage remote SSH machines — auto-discovered from `~/.ssh/config` and `known_hosts` — with a file browser and terminal |
+| [invoice_generator](local-tools/invoice_generator/) | Local invoice manager: clients, line items, numbering, and exchange-rate lookups, stored as plain JSON |
 
 ---
 
