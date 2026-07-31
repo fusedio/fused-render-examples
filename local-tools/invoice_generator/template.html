@@ -317,7 +317,11 @@ const escML = (s) => esc(s).replace(/\n/g, "<br>");
 const asObj = (d) => typeof d === "string" ? JSON.parse(d) : d;
 
 function fmtMoney(n, cur) {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "USD" }).format(n || 0);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "USD" }).format(n || 0);
+  } catch {
+    return `${cur || "USD"} ${(n || 0).toFixed(2)}`;
+  }
 }
 const curOpts = (sel) => {
   const known = CURRENCIES.some(([c]) => c === sel);
@@ -724,6 +728,7 @@ $("settingsBtn").addEventListener("click", () => act(openSettings));
 
 // ---------- editor ----------
 async function openEditor(client, id) {
+  await flushSave();
   showView("editor");
   state.client = client; state.routeId = id;
   let doc;
@@ -1007,6 +1012,7 @@ async function refreshFx() {
     return;
   }
   const r = await py({ action: "fx_rate", base: doc.currency, quote });
+  if (state.doc !== doc) return;
   doc.fx = { quote, rate: r.rate, date: r.date };
   renderFxLine();
   onDocChange();
@@ -1056,8 +1062,8 @@ function renderPreview() {
   </tr>`).join("");
 
   const totalRows = [`<div class="pv-trow"><span>Subtotal</span><span>${money(t.subtotal)}</span></div>`];
-  if (t.discount) totalRows.push(`<div class="pv-trow"><span>Discount${doc.discount.mode === "pct" ? ` (${doc.discount.value}%)` : ""}</span><span>−${money(t.discount)}</span></div>`);
-  if (t.tax) totalRows.push(`<div class="pv-trow"><span>Tax (${doc.tax_pct}%)</span><span>${money(t.tax)}</span></div>`);
+  if (t.discount) totalRows.push(`<div class="pv-trow"><span>Discount${doc.discount.mode === "pct" ? ` (${esc(doc.discount.value)}%)` : ""}</span><span>−${money(t.discount)}</span></div>`);
+  if (t.tax) totalRows.push(`<div class="pv-trow"><span>Tax (${esc(doc.tax_pct)}%)</span><span>${money(t.tax)}</span></div>`);
   if (+doc.shipping) totalRows.push(`<div class="pv-trow"><span>Shipping</span><span>${money(+doc.shipping)}</span></div>`);
   totalRows.push(`<div class="pv-trow total"><span>Total</span><span>${money(t.total)}</span></div>`);
 

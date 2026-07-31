@@ -177,15 +177,21 @@ def _next_number(client_name, docs):
     return f"{prefix}-{date.today().year}-{seq + 1:03d}"
 
 
+def _num(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _total(doc):
-    subtotal = sum(float(it.get("qty") or 0) * float(it.get("rate") or 0)
-                   for it in doc["items"])
+    subtotal = sum(_num(it.get("qty")) * _num(it.get("rate")) for it in doc["items"])
     disc = doc["discount"]
-    value = float(disc.get("value") or 0)
+    value = _num(disc.get("value"))
     discount = subtotal * value / 100 if disc.get("mode") == "pct" else value
     taxable = subtotal - discount
-    tax = taxable * float(doc.get("tax_pct") or 0) / 100
-    return taxable + tax + float(doc.get("shipping") or 0)
+    tax = taxable * _num(doc.get("tax_pct")) / 100
+    return taxable + tax + _num(doc.get("shipping"))
 
 
 # --------------------------------------------------------------------- actions
