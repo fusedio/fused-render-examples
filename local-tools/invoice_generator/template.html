@@ -515,6 +515,7 @@ function showView(name) {
   $("library").classList.toggle("hidden", name !== "library");
   $("editor").classList.toggle("hidden", name !== "editor");
 }
+let navToken = 0;
 async function route() {
   const m = (location.hash || "#/").match(/^#\/edit\/([^/]+)\/([^/]+)$/);
   if (m) return openEditor(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
@@ -524,10 +525,13 @@ window.addEventListener("hashchange", () => act(route));
 
 // ---------- library ----------
 async function openLibrary() {
+  const token = ++navToken;
   await flushSave();
+  if (token !== navToken) return;
   state.doc = null; state.client = ""; state.routeId = "";
   showView("library");
   const r = await py({ action: "list_clients" });
+  if (token !== navToken) return;
   state.clients = r.clients || [];
   if (!state.clients.some((c) => c.slug === state.selClient))
     state.selClient = state.clients[0]?.slug || "";
@@ -728,9 +732,11 @@ $("settingsBtn").addEventListener("click", () => act(openSettings));
 
 // ---------- editor ----------
 async function openEditor(client, id) {
+  const token = ++navToken;
   await flushSave();
+  if (token !== navToken) return;
   showView("editor");
-  state.client = client; state.routeId = id;
+  state.client = client; state.routeId = id; state.doc = null;
   let doc;
   if (id === "new") {
     if (state.pending && state.pending.client === client) {
@@ -742,6 +748,7 @@ async function openEditor(client, id) {
   } else {
     doc = asObj((await py({ action: "load_invoice", client, id })).doc);
   }
+  if (token !== navToken) return;
   state.doc = doc;
   setSaveState(id === "new" ? "" : "Saved");
   buildForm();
