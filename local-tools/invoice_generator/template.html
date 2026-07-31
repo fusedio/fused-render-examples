@@ -747,7 +747,7 @@ async function openEditor(client, id) {
   buildForm();
   updateTopbar();
   schedulePreview();
-  if (doc.fx && doc.fx.quote) lazyFx(doc);
+  if (doc.fx && doc.fx.quote && doc.status !== "final") lazyFx(doc);
 }
 
 // Refresh a carried-over fx rate on load; best-effort.
@@ -1011,9 +1011,15 @@ async function refreshFx() {
     onDocChange();
     return;
   }
-  const r = await py({ action: "fx_rate", base: doc.currency, quote });
-  if (state.doc !== doc) return;
-  doc.fx = { quote, rate: r.rate, date: r.date };
+  try {
+    const r = await py({ action: "fx_rate", base: doc.currency, quote });
+    if (state.doc !== doc) return;
+    doc.fx = { quote, rate: r.rate, date: r.date };
+  } catch (err) {
+    if (state.doc !== doc) return;
+    doc.fx = null;
+    toast(err?.message || "Exchange rate lookup failed", true);
+  }
   renderFxLine();
   onDocChange();
 }
