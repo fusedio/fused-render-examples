@@ -461,7 +461,7 @@ function imageChip(host, obj, key, label, onChange) {
 }
 
 // ---------- autosave ----------
-let saveTimer = 0, saving = false, savePending = false;
+let saveTimer = 0, saving = false, savePending = false, savePromise = null;
 const setSaveState = (txt) => { $("saveState").textContent = txt; };
 function scheduleSave() {
   clearTimeout(saveTimer);
@@ -469,29 +469,36 @@ function scheduleSave() {
 }
 function flushSave() {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = 0; doSave(); }
+  return savePromise || Promise.resolve();
 }
-async function doSave() {
+function doSave() {
   const doc = state.doc, client = state.client;
-  if (!doc) return;
-  if (saving) { savePending = true; return; }
+  if (!doc) return Promise.resolve();
+  if (saving) { savePending = true; return savePromise; }
   saving = true;
   setSaveState("Saving…");
-  try {
-    const res = await py({ action: "save_invoice", client, doc: JSON.stringify(doc) });
-    if (state.doc === doc) {
-      doc.modified = res.modified;
-      setSaveState("Saved");
-      if (state.routeId === "new") {
-        state.routeId = doc.id;
-        history.replaceState(null, "", `#/edit/${encodeURIComponent(client)}/${doc.id}`);
+  savePromise = (async () => {
+    try {
+      const res = await py({ action: "save_invoice", client, doc: JSON.stringify(doc) });
+      if (state.doc === doc) {
+        doc.modified = res.modified;
+        setSaveState("Saved");
+        if (state.routeId === "new") {
+          state.routeId = doc.id;
+          history.replaceState(null, "", `#/edit/${encodeURIComponent(client)}/${doc.id}`);
+        }
+      }
+    } catch (err) {
+      if (state.doc === doc) {
+        const dup = /number/i.test(err?.message || "");
+        setSaveState(dup ? "Number already used" : "Save failed — retrying");
+        if (!dup) scheduleSave();
       }
     }
-  } catch (err) {
-    if (state.doc === doc)
-      setSaveState(/number/i.test(err?.message || "") ? "Number already used" : "Save failed — retrying");
-  }
-  saving = false;
-  if (savePending) { savePending = false; doSave(); }
+    saving = false;
+    if (savePending) { savePending = false; return doSave(); }
+  })();
+  return savePromise;
 }
 function onDocChange() {
   scheduleSave();
@@ -513,7 +520,7 @@ window.addEventListener("hashchange", () => act(route));
 
 // ---------- library ----------
 async function openLibrary() {
-  flushSave();
+  await flushSave();
   state.doc = null; state.client = ""; state.routeId = "";
   showView("library");
   const r = await py({ action: "list_clients" });

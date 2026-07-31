@@ -255,6 +255,7 @@ def _new_invoice(client):
         doc = max(docs, key=lambda d: d["modified"])
         doc["items"] = [copy.deepcopy(ITEM)]
         doc["shipping"] = 0
+        doc["billed_to"]["name"] = info["name"]
     else:
         doc = _fill_doc({})
         s = _get_settings()["settings"]
