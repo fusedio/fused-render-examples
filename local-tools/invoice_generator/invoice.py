@@ -134,15 +134,21 @@ def _slug(name):
     return s
 
 
+def _safe_segment(value, kind):
+    if not value or os.path.basename(value) != value or value in (".", ".."):
+        raise ValueError(f"invalid {kind}: {value!r}")
+    return value
+
+
 def _client_dir(client):
-    d = os.path.join(CLIENTS, client)
+    d = os.path.join(CLIENTS, _safe_segment(client, "client"))
     if not os.path.isfile(os.path.join(d, "client.json")):
         raise ValueError(f"no such client: {client}")
     return d
 
 
 def _invoice_path(client, inv_id):
-    p = os.path.join(_client_dir(client), "invoices", inv_id + ".json")
+    p = os.path.join(_client_dir(client), "invoices", _safe_segment(inv_id, "invoice id") + ".json")
     if not os.path.isfile(p):
         raise ValueError(f"no such invoice: {inv_id}")
     return p
@@ -295,8 +301,7 @@ def _load_invoice(client, inv_id):
 
 def _save_invoice(client, doc):
     d = _fill_doc(json.loads(doc))
-    if not d["id"]:
-        raise ValueError("invoice has no id")
+    _safe_segment(d["id"], "invoice id")
     for other in _invoices(client):
         if other["id"] != d["id"] and other["number"] == d["number"]:
             raise ValueError(f'invoice number "{d["number"]}" is already used')
@@ -318,6 +323,7 @@ def _fx_rate(base, quote):
     if os.path.isfile(today_path):
         cached = _read_json(today_path)
         return {"rate": cached["rate"], "date": cached["date"], "cached": True}
+    import urllib.error
     import urllib.request
     url = f"https://api.frankfurter.dev/v1/latest?base={base}&symbols={quote}"
     # frankfurter 403s the default Python-urllib agent
@@ -325,6 +331,8 @@ def _fx_rate(base, quote):
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        raise ValueError(f"no exchange rate for {base} to {quote} (HTTP {e.code})")
     except OSError:
         suffix = f"-{base}-{quote}.json"
         old = sorted(n for n in (os.listdir(FX_DIR) if os.path.isdir(FX_DIR) else [])
