@@ -477,13 +477,16 @@ function flushSave() {
 }
 function doSave() {
   const doc = state.doc, client = state.client;
-  if (!doc) return Promise.resolve();
+  if (!doc) return Promise.resolve(false);
   if (saving) { savePending = true; return savePromise; }
   saving = true;
   setSaveState("Saving…");
   savePromise = (async () => {
+    let saved = false;
     try {
-      const res = await py({ action: "save_invoice", client, doc: JSON.stringify(doc) });
+      const docToSave = statusSaveDoc === doc ? { ...doc, status: statusSaveValue } : doc;
+      const res = await py({ action: "save_invoice", client, doc: JSON.stringify(docToSave) });
+      saved = true;
       if (state.doc === doc) {
         doc.modified = res.modified;
         setSaveState("Saved");
@@ -496,11 +499,12 @@ function doSave() {
       if (state.doc === doc) {
         const dup = /number/i.test(err?.message || "");
         setSaveState(dup ? "Number already used" : "Save failed — retrying");
-        if (!dup) scheduleSave();
+        if (!dup && !savePending) scheduleSave();
       }
     }
     saving = false;
     if (savePending) { savePending = false; return doSave(); }
+    return saved;
   })();
   return savePromise;
 }
@@ -794,6 +798,7 @@ function updateTopbar() {
   pill.className = "pill " + (fin ? "final" : "draft");
   pill.textContent = fin ? "Final" : "Draft";
   $("statusBtn").textContent = fin ? "Mark as draft" : "Mark as final";
+  $("statusBtn").disabled = statusSaveDoc === d;
 }
 
 $("backBtn").addEventListener("click", () => { location.hash = "#/"; });
@@ -811,14 +816,27 @@ $("regenBtn").addEventListener("click", () => act(async () => {
   $("numInput").value = doc.number;
   onDocChange();
 }));
-$("statusBtn").addEventListener("click", () => {
+let statusSaveDoc = null, statusSaveValue = null;
+$("statusBtn").addEventListener("click", () => act(async () => {
   const d = state.doc;
-  if (!d) return;
-  d.status = d.status === "final" ? "draft" : "final";
-  buildForm();
+  if (!d || statusSaveDoc === d) return;
+  const previousStatus = d.status;
+  const nextStatus = previousStatus === "final" ? "draft" : "final";
+  statusSaveDoc = d;
+  statusSaveValue = nextStatus;
   updateTopbar();
   onDocChange();
-});
+  const saved = await flushSave();
+  if (statusSaveDoc === d) {
+    statusSaveDoc = null;
+    statusSaveValue = null;
+  }
+  if (state.doc !== d) return;
+  if (saved) d.status = nextStatus;
+  buildForm();
+  updateTopbar();
+  schedulePreview();
+}));
 $("pdfBtn").addEventListener("click", () => {
   const prev = document.title;
   document.title = state.doc?.number || "invoice";
