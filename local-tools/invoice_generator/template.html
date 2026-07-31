@@ -473,7 +473,7 @@ function scheduleSave() {
 }
 function flushSave() {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = 0; doSave(); }
-  return savePromise || Promise.resolve();
+  return savePromise || Promise.resolve(true);
 }
 function doSave() {
   const doc = state.doc, client = state.client;
@@ -484,8 +484,7 @@ function doSave() {
   savePromise = (async () => {
     let saved = false;
     try {
-      const docToSave = statusSaveDoc === doc ? { ...doc, status: statusSaveValue } : doc;
-      const res = await py({ action: "save_invoice", client, doc: JSON.stringify(docToSave) });
+      const res = await py({ action: "save_invoice", client, doc: JSON.stringify(doc) });
       saved = true;
       if (state.doc === doc) {
         doc.modified = res.modified;
@@ -497,9 +496,11 @@ function doSave() {
       }
     } catch (err) {
       if (state.doc === doc) {
-        const dup = /number/i.test(err?.message || "");
-        setSaveState(dup ? "Number already used" : "Save failed — retrying");
-        if (!dup && !savePending) scheduleSave();
+        const message = err?.message || "";
+        const dup = /number/i.test(message);
+        const locked = /final and locked/i.test(message);
+        setSaveState(dup ? "Number already used" : locked ? "Invoice is final" : "Save failed — retrying");
+        if (!dup && !locked && !savePending) scheduleSave();
       }
     }
     saving = false;
@@ -778,9 +779,13 @@ async function openEditor(client, id) {
 
 // Refresh a carried-over fx rate on load; best-effort.
 function lazyFx(doc) {
-  py({ action: "fx_rate", base: doc.currency, quote: doc.fx.quote }).then((r) => {
-    if (state.doc !== doc || doc.status === "final") return;
-    doc.fx = { quote: doc.fx.quote, rate: r.rate, date: r.date };
+  const token = ++fxToken;
+  const base = doc.currency, quote = doc.fx?.quote;
+  if (!quote) return;
+  py({ action: "fx_rate", base, quote }).then((r) => {
+    if (state.doc !== doc || doc.status === "final" || statusSaveDoc === doc ||
+        token !== fxToken || doc.currency !== base || doc.fx?.quote !== quote) return;
+    doc.fx = { quote, rate: r.rate, date: r.date };
     renderFxLine();
     schedulePreview();
     if (state.routeId !== "new") scheduleSave();
@@ -791,14 +796,15 @@ function updateTopbar() {
   const d = state.doc;
   if (!d) return;
   const fin = d.status === "final";
+  const statusSaving = statusSaveDoc === d;
   $("numInput").value = d.number || "";
-  $("numInput").disabled = fin;
-  $("regenBtn").disabled = fin;
+  $("numInput").disabled = fin || statusSaving;
+  $("regenBtn").disabled = fin || statusSaving;
   const pill = $("statusPill");
   pill.className = "pill " + (fin ? "final" : "draft");
   pill.textContent = fin ? "Final" : "Draft";
   $("statusBtn").textContent = fin ? "Mark as draft" : "Mark as final";
-  $("statusBtn").disabled = statusSaveDoc === d;
+  $("statusBtn").disabled = statusSaving;
 }
 
 $("backBtn").addEventListener("click", () => { location.hash = "#/"; });
@@ -816,23 +822,36 @@ $("regenBtn").addEventListener("click", () => act(async () => {
   $("numInput").value = doc.number;
   onDocChange();
 }));
-let statusSaveDoc = null, statusSaveValue = null;
+let statusSaveDoc = null;
 $("statusBtn").addEventListener("click", () => act(async () => {
   const d = state.doc;
   if (!d || statusSaveDoc === d) return;
   const previousStatus = d.status;
   const nextStatus = previousStatus === "final" ? "draft" : "final";
   statusSaveDoc = d;
-  statusSaveValue = nextStatus;
   updateTopbar();
-  onDocChange();
+  setFormLocked(true);
+  if (state.routeId === "new" && !saveTimer && !saving) scheduleSave();
   const saved = await flushSave();
-  if (statusSaveDoc === d) {
-    statusSaveDoc = null;
-    statusSaveValue = null;
+  if (state.doc !== d) {
+    if (statusSaveDoc === d) statusSaveDoc = null;
+    return;
   }
+  if (saved) {
+    try {
+      const res = await py({ action: "set_invoice_status", client: state.client, id: d.id, status: nextStatus });
+      if (state.doc === d) {
+        d.status = nextStatus;
+        d.modified = res.modified;
+        setSaveState("Saved");
+      }
+    } catch (err) {
+      setSaveState(err?.message || "Could not update status");
+      toast(err?.message || "Could not update status", true);
+    }
+  }
+  if (statusSaveDoc === d) statusSaveDoc = null;
   if (state.doc !== d) return;
-  if (saved) d.status = nextStatus;
   buildForm();
   updateTopbar();
   schedulePreview();
@@ -931,8 +950,11 @@ function buildForm() {
   renderItems();
   renderTotals();
   renderFxLine();
-  if (doc.status === "final")
-    form.querySelectorAll("input, select, textarea, button").forEach((el) => { el.disabled = true; });
+  if (doc.status === "final" || statusSaveDoc === doc) setFormLocked(true);
+}
+
+function setFormLocked(locked) {
+  $("form").querySelectorAll("input, select, textarea, button").forEach((el) => { el.disabled = locked; });
 }
 
 $("form").addEventListener("input", (e) => {
@@ -1059,10 +1081,10 @@ async function refreshFx() {
   }
   try {
     const r = await py({ action: "fx_rate", base: doc.currency, quote });
-    if (state.doc !== doc || doc.status === "final" || token !== fxToken) return;
+    if (state.doc !== doc || doc.status === "final" || statusSaveDoc === doc || token !== fxToken) return;
     doc.fx = { quote, rate: r.rate, date: r.date };
   } catch (err) {
-    if (state.doc !== doc || doc.status === "final" || token !== fxToken) return;
+    if (state.doc !== doc || doc.status === "final" || statusSaveDoc === doc || token !== fxToken) return;
     doc.fx = null;
     $("form").querySelector("#fxOn").checked = false;
     toast(err?.message || "Exchange rate lookup failed", true);

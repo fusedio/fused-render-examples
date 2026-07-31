@@ -24,6 +24,7 @@ Actions
   duplicate_invoice(client,id) -> {doc}  (fresh id/number/date, not saved)
   load_invoice(client, id)     -> {doc}
   save_invoice(client, doc)    -> {ok, id, modified}
+  set_invoice_status(client,id,status) -> {ok, id, status, modified}
   delete_invoice(client, id)   -> {ok: true}
   fx_rate(base, quote)         -> {rate, date, cached}
 """
@@ -310,7 +311,7 @@ def _save_invoice(client, doc):
     d = _fill_doc(json.loads(doc))
     _safe_segment(d["id"], "invoice id")
     path = os.path.join(_client_dir(client), "invoices", d["id"] + ".json")
-    if os.path.isfile(path) and _read_json(path).get("status") == "final" and d["status"] == "final":
+    if os.path.isfile(path) and _read_json(path).get("status") == "final":
         raise ValueError("invoice is final and locked; mark it draft to edit")
     for other in _invoices(client):
         if other["id"] != d["id"] and other["number"] == d["number"]:
@@ -318,6 +319,19 @@ def _save_invoice(client, doc):
     d["modified"] = _now()
     _write_json(path, d)
     return {"ok": True, "id": d["id"], "modified": d["modified"]}
+
+
+def _set_invoice_status(client, inv_id, status):
+    if status not in ("draft", "final"):
+        raise ValueError(f"invalid invoice status: {status!r}")
+    path = _invoice_path(client, inv_id)
+    d = _fill_doc(_read_json(path))
+    if d["status"] == status:
+        return {"ok": True, "id": d["id"], "status": status, "modified": d["modified"]}
+    d["status"] = status
+    d["modified"] = _now()
+    _write_json(path, d)
+    return {"ok": True, "id": d["id"], "status": status, "modified": d["modified"]}
 
 
 def _delete_invoice(client, inv_id):
@@ -371,6 +385,7 @@ def main(
     settings: str = "",
     base: str = "",
     quote: str = "",
+    status: str = "",
 ):
     if action == "health":
         return {"ok": True}
@@ -396,6 +411,8 @@ def main(
         return _load_invoice(client, id)
     if action == "save_invoice":
         return _save_invoice(client, doc)
+    if action == "set_invoice_status":
+        return _set_invoice_status(client, id, status)
     if action == "delete_invoice":
         return _delete_invoice(client, id)
     if action == "fx_rate":
