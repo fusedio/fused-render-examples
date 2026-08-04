@@ -4,10 +4,9 @@ def main(mode: str = "route", from_g: str = "", to_g: str = ""):
     from heapq import heappush, heappop
     from collections import defaultdict
 
-    base = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(base, "data", "stations.json"), encoding="utf-8") as f:
+    with open(os.path.join("data", "stations.json"), encoding="utf-8") as f:
         stations = json.load(f)
-    with open(os.path.join(base, "data", "graph.json"), encoding="utf-8") as f:
+    with open(os.path.join("data", "graph.json"), encoding="utf-8") as f:
         graph = json.load(f)
 
     adj = defaultdict(list)

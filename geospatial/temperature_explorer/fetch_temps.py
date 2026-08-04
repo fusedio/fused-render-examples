@@ -51,7 +51,12 @@ ZARR_MAX_YEARS = 5
 ZARR_RES_DEG = 5.625
 ZARR_MIN_YEAR, ZARR_MAX_YEAR = 1959, 2023  # the store's actual coverage
 
-CACHE = Path(__file__).resolve().parent / "data" / "zarr_cache"
+# the fused-render runner exec()s this script without setting __file__, but puts
+# the script's own directory first on sys.path; run as a worker subprocess it's a
+# normal script and __file__ is set
+_HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path(sys.path[0]).resolve()
+_SCRIPT = _HERE / "fetch_temps.py"
+CACHE = _HERE / "data" / "zarr_cache"
 LOCK_STALE_S = 180
 
 
@@ -172,7 +177,7 @@ def _spawn_worker(key, lat, lon, start_year, end_year, note):
     )
     env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
     subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), "__worker__",
+        [sys.executable, str(_SCRIPT), "__worker__",
          key, str(lat), str(lon), str(start_year), str(end_year), note],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         env=env, cwd=str(CACHE.parent.parent), **detach,
