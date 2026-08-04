@@ -8,30 +8,6 @@
 <script src="/template-shared/ro-badge.js"></script>
 <style>
   :root {
-    color-scheme: dark;
-    --bg: #101318;
-    --panel: #151920;
-    --panel-2: #1a1f27;
-    --rail: #12161c;
-    --input: #11151a;
-    --hover: #151a21;
-    --detail: #12171e;
-    --line: #2a303a;
-    --line-soft: #202630;
-    --text: #dce2ea;
-    --strong: #f2f5f8;
-    --muted: #8993a3;
-    --faint: #5d6877;
-    --accent: #55b8d2;
-    --accent-dim: rgba(85, 184, 210, 0.13);
-    --danger: #f06464;
-    --warn: #e6b450;
-    --ok: #63c088;
-    --null: #6d7787;
-    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  }
-
-  :root[data-theme="light"] {
     color-scheme: light;
     --bg: #f7f8fa;
     --panel: #ffffff;
@@ -48,7 +24,31 @@
     --faint: #7b8795;
     --accent: #147d99;
     --accent-dim: rgba(20, 125, 153, 0.11);
+    --danger: #f06464;
+    --warn: #e6b450;
+    --ok: #63c088;
     --null: #9aa4b2;
+    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #101318;
+    --panel: #151920;
+    --panel-2: #1a1f27;
+    --rail: #12161c;
+    --input: #11151a;
+    --hover: #151a21;
+    --detail: #12171e;
+    --line: #2a303a;
+    --line-soft: #202630;
+    --text: #dce2ea;
+    --strong: #f2f5f8;
+    --muted: #8993a3;
+    --faint: #5d6877;
+    --accent: #55b8d2;
+    --accent-dim: rgba(85, 184, 210, 0.13);
+    --null: #6d7787;
   }
 
   * { box-sizing: border-box; }
@@ -171,7 +171,7 @@
   #editor { min-height: 92px; max-height: 320px; overflow: auto; }
   #editor .cm-editor { height: 100%; }
   #editor .cm-editor .cm-scroller { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
-  :root[data-theme="light"] #editor .cm-editor { background: #fff; }
+  :root:not([data-theme="dark"]) #editor .cm-editor { background: #fff; }
   .ai-sql { border-top: 1px solid var(--line-soft); background: var(--panel); }
   .ai-sql summary { padding: 7px 12px; color: var(--muted); cursor: pointer; font-size: 11px; user-select: none; }
   .ai-sql[open] summary { color: var(--strong); }
@@ -398,6 +398,7 @@
   let pendingConnection = null;
   let sessionSql = null;
   let fetchingMore = false;
+  let editorThemeApplied = null;
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -703,9 +704,10 @@
       CM.EditorView.updateListener.of((u) => { if (u.docChanged) scheduleSqlSync(); })];
   }
   function buildEditor(initial) {
+    editorThemeApplied = currentState().theme;
     editor = new CM.EditorView({
       doc: initial || "",
-      extensions: editorExtensions(currentState().theme),
+      extensions: editorExtensions(editorThemeApplied),
       parent: editorHost
     });
     editor.dom.addEventListener("keydown", (e) => {
@@ -916,9 +918,15 @@
   // ---------------- main render ----------------
   function renderChrome(state) {
     document.documentElement.dataset.theme = state.theme;
-    if (editor) editor.setState(CM.EditorState.create({
-      doc: editor.state.doc, selection: editor.state.selection, extensions: editorExtensions(state.theme),
-    }));
+    // only rebuild on an actual theme change — renderChrome runs on every param
+    // update (incl. the debounced SQL sync while typing), and a rebuild would
+    // otherwise clear the editor's undo history mid-edit
+    if (editor && editorThemeApplied !== state.theme) {
+      editor.setState(CM.EditorState.create({
+        doc: editor.state.doc, selection: editor.state.selection, extensions: editorExtensions(state.theme),
+      }));
+      editorThemeApplied = state.theme;
+    }
     app.classList.toggle("rail-collapsed", !state.rail);
     app.classList.toggle("focus-mode", state.focus);
     railToggle.setAttribute("aria-pressed", String(!state.rail));
