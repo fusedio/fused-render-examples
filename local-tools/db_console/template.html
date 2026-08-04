@@ -398,7 +398,6 @@
   let pendingConnection = null;
   let sessionSql = null;
   let fetchingMore = false;
-  const editorTheme = new CM.Compartment();
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -699,11 +698,14 @@
       }
     });
   }
+  function editorExtensions(theme) {
+    return [CM.basicSetup, theme === "dark" ? CM.oneDark : [], sqlMode(),
+      CM.EditorView.updateListener.of((u) => { if (u.docChanged) scheduleSqlSync(); })];
+  }
   function buildEditor(initial) {
     editor = new CM.EditorView({
       doc: initial || "",
-      extensions: [CM.basicSetup, editorTheme.of(currentState().theme === "dark" ? CM.oneDark : []), sqlMode(),
-        CM.EditorView.updateListener.of((u) => { if (u.docChanged) scheduleSqlSync(); })],
+      extensions: editorExtensions(currentState().theme),
       parent: editorHost
     });
     editor.dom.addEventListener("keydown", (e) => {
@@ -914,7 +916,9 @@
   // ---------------- main render ----------------
   function renderChrome(state) {
     document.documentElement.dataset.theme = state.theme;
-    if (editor) editor.dispatch({ effects: editorTheme.reconfigure(state.theme === "dark" ? CM.oneDark : []) });
+    if (editor) editor.setState(CM.EditorState.create({
+      doc: editor.state.doc, selection: editor.state.selection, extensions: editorExtensions(state.theme),
+    }));
     app.classList.toggle("rail-collapsed", !state.rail);
     app.classList.toggle("focus-mode", state.focus);
     railToggle.setAttribute("aria-pressed", String(!state.rail));
