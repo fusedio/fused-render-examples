@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html data-fused-theme="shell">
+<head>
+<meta charset="utf-8" />
+<title>Download Manager</title>
+<style>
+  /* Palette mirrors fused-render's own shell tokens (static/shell-dist), so the
+     app reads as part of the explorer rather than clashing with it. Note the
+     accent is a bright chartreuse in dark and a dark olive in light — anything
+     sitting ON it must use --on-accent, never white. */
+  :root {
+    color-scheme: dark;
+    --bg: #131417; --panel: #202329; --card: #1b1d21; --card-hi: #26282c;
+    --text: #e8eaed; --muted: #9aa0a6; --line: #2a2d33;
+    --accent: #e5ff44; --accent-rgb: 229, 255, 68;
+    --accent-hover: #d8f238; --chart-accent: #5fd166;
+    --on-accent: #10131a; --row-active: #353a25;
+    --ok: #3fb950; --warn: #d29922; --bad: #ff6b6b;
+    --track: #2a2d33; --scrim: rgba(0, 0, 0, .55);
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #ffffff; --panel: #ffffff; --card: #f4f5f7; --card-hi: #e5e6e8;
+    --text: #1f2023; --muted: #61656c; --line: #d8dade;
+    --accent: #5f7300; --accent-rgb: 95, 115, 0;
+    --accent-hover: #4e5f00; --chart-accent: #2f8f3a;
+    --on-accent: #ffffff; --row-active: #e1e4d7;
+    --ok: #1a7f37; --warn: #8f6a10; --bad: #c62828;
+    --track: #d8dade; --scrim: rgba(0, 0, 0, .4);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; height: 100vh; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px; color: var(--text); background: var(--bg);
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  /* ---------- sidebar ---------- */
+  aside {
+    width: 224px; flex: none; background: var(--panel);
+    border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  }
+  /* One 16px text column down the whole sidebar: brand, nav labels, settings. */
+  .brand { padding: 16px 16px 12px; font-size: 14px; font-weight: 600; letter-spacing: .2px; }
+  .brand span { color: var(--accent); }
+  nav { padding: 0 8px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 7px 8px; margin-bottom: 2px; border: 0; border-radius: 6px;
+    background: transparent; text-align: left;
+  }
+  .nav-item:hover { background: var(--card-hi); }
+  /* Selected row follows the shell's own pattern: tinted background plus an
+     accent edge, rather than a solid accent fill needing inverted text. */
+  .nav-item[aria-current="true"] {
+    background: var(--row-active); color: var(--text);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .nav-item .count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .nav-item[aria-current="true"] .count { color: var(--text); opacity: .7; }
+  /* ---------- sidebar settings ----------
+     One field pattern throughout: a label row with the current value on the
+     right, and the control beneath it at full width. */
+  .settings {
+    margin-top: auto; padding: 16px; border-top: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .settings .sec {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .8px; color: var(--muted);
+  }
+  .field { display: flex; flex-direction: column; gap: 8px; }
+  .field .head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    white-space: nowrap;                 /* labels must never wrap mid-phrase */
+  }
+  .field label { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+  /* Plain right-aligned value — pills at four different widths were the noise. */
+  .field .val {
+    font-size: 11.5px; font-weight: 500; color: var(--text);
+    font-variant-numeric: tabular-nums; flex: none;
+  }
+
+  /* sliders: flat 4px track, filled up to --pct (set from JS) */
+  .settings input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 12px; margin: 0; background: transparent; cursor: pointer;
+  }
+  .settings input[type=range]::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, var(--accent) var(--pct, 0%), var(--track) var(--pct, 0%));
+  }
+  .settings input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px;
+    border: 0; border-radius: 50%; background: var(--accent);
+  }
+  .settings input[type=range]::-moz-range-track {
+    height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, var(--accent) var(--pct, 0%), var(--track) var(--pct, 0%));
+  }
+  .settings input[type=range]::-moz-range-thumb {
+    width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--accent);
+  }
+  .settings input[type=range]:focus { outline: none; }
+  .settings input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .35); }
+  .settings input[type=range]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .35); }
+
+  /* number + unit as one bordered box, so the unit reads as part of the field */
+  .inputgroup {
+    display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  }
+  .inputgroup:focus-within { border-color: var(--accent); }
+  .inputgroup input {
+    flex: 1; min-width: 0; padding: 0; border: 0; outline: none;
+    background: transparent; color: var(--text);
+    font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+    -moz-appearance: textfield;
+  }
+  .inputgroup input::-webkit-inner-spin-button,
+  .inputgroup input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .inputgroup .suffix { color: var(--muted); font-size: 10.5px; flex: none; }
+  /* Empty field reads "Unlimited" on its own — a trailing KB/s would contradict it. */
+  .inputgroup input:placeholder-shown ~ .suffix { display: none; }
+
+  .settings .note { color: var(--muted); font-size: 10.5px; line-height: 1.55; margin: 0; }
+  .dim { color: var(--muted); font-weight: 400; }
+  .opt { text-transform: none; letter-spacing: 0; }
+
+  /* ---------- main ---------- */
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .grow { flex: 1; }
+  .toast { color: var(--bad); font-size: 11.5px; max-width: 42ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meter { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .meter b { color: var(--text); }
+  .btn {
+    border: 1px solid var(--line); background: var(--card-hi);
+    border-radius: 6px; padding: 6px 11px;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn:disabled:hover { border-color: var(--line); }
+  /* icon buttons: square, quiet until hovered */
+  .btn.icon {
+    padding: 0; width: 26px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--muted);
+  }
+  .btn.icon:hover { background: var(--card-hi); color: var(--text); }
+  .btn.icon.danger:hover { color: var(--bad); border-color: var(--bad); }
+  .btn.primary { display: inline-flex; align-items: center; gap: 6px; }
+  .btn svg { display: block; }
+  .btn.fab {
+    position: fixed; right: 24px; bottom: 24px; z-index: 20;
+    padding: 12px 18px; border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.28);
+  }
+  .btn.fab:hover { box-shadow: 0 8px 22px rgba(0,0,0,.34); }
+
+  #list { flex: 1; overflow-y: auto; padding: 12px 16px 32px; }
+  .empty { color: var(--muted); text-align: center; padding: 64px 16px; line-height: 1.7; }
+
+  .task {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 11px 13px; margin-bottom: 9px;
+  }
+  .task[data-sel="1"] { border-color: var(--accent); }
+  .task .top { display: flex; align-items: baseline; gap: 8px; }
+  .task .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task .pct { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .task .url { color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* speed-over-time area chart, sitting directly on the progress bar */
+  .graph { position: relative; margin: 9px 0 0; }
+  .graph[hidden] { display: none; }
+  .graph canvas { display: block; width: 100%; }
+
+  /* slim overall progress */
+  /* 9px normally; tightened only when the graph is actually present above it,
+     since a hidden graph contributes no spacing of its own. */
+  .bar { height: 4px; background: var(--track); border-radius: 3px; overflow: hidden; margin: 9px 0 8px; }
+  .graph:not([hidden]) + .bar { margin-top: 4px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s linear; }
+  .task[data-status="done"]   .bar > i { background: var(--ok); }
+  .task[data-status="paused"] .bar > i { background: var(--muted); }
+  .task[data-status="error"]  .bar > i { background: var(--bad); }
+
+  /* chunk map: one square per block of the file, filled as bytes land */
+  canvas.map { display: block; width: 100%; margin: 0 0 9px; }
+  canvas.map[hidden] { display: none; }
+
+  .task .bottom { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 11.5px; }
+  .task .bottom .stat { font-variant-numeric: tabular-nums; }
+  .task .actions { margin-left: auto; display: flex; gap: 6px; }
+  .badge { padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; }
+  .badge[data-s="active"] { color: var(--accent); border-color: var(--accent); }
+  .badge[data-s="done"]   { color: var(--ok);     border-color: var(--ok); }
+  .badge[data-s="error"]  { color: var(--bad);    border-color: var(--bad); }
+  .badge[data-s="waiting"]{ color: var(--warn);   border-color: var(--warn); }
+  .err { color: var(--bad); font-size: 11.5px; margin-top: 6px; word-break: break-word; }
+  a { color: var(--accent); }
+
+  /* ---------- add dialog ---------- */
+  .scrim {
+    position: fixed; inset: 0; background: var(--scrim);
+    display: none; align-items: center; justify-content: center; z-index: 10;
+  }
+  .scrim[data-open="1"] { display: flex; }
+  .dialog {
+    width: 520px; max-width: calc(100vw - 32px); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 18px;
+  }
+  .dialog h2 { margin: 0 0 4px; font-size: 14px; }
+  .dialog p.hint { margin: 0 0 12px; color: var(--muted); font-size: 11.5px; }
+  .dialog label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin: 12px 0 5px; }
+  .dialog textarea, .dialog input[type=text] {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 9px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+  }
+  .dialog textarea { height: 84px; resize: vertical; }
+  .dialog textarea:focus, .dialog input:focus { outline: none; border-color: var(--accent); }
+  .dialog .probe { margin: 7px 0 0; font-size: 11.5px; color: var(--muted); min-height: 15px; }
+  .dialog .probe[data-bad="1"] { color: var(--bad); }
+  .dialog .foot { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+  .dialog .msg { color: var(--bad); font-size: 11.5px; flex: 1; }
+</style>
+</head>
+<body>
+  <aside>
+    <div class="brand">Download <span>Manager</span></div>
+    <nav id="nav"></nav>
+    <div class="settings">
+      <div class="sec">Settings</div>
+
+      <div class="field">
+        <div class="head"><label for="threads">Threads per task</label><span class="val" id="threadsVal">4</span></div>
+        <input id="threads" type="range" min="1" max="16" />
+      </div>
+
+      <div class="field">
+        <div class="head"><label for="jobs">Concurrent tasks</label><span class="val" id="jobsVal">2</span></div>
+        <input id="jobs" type="range" min="1" max="6" />
+      </div>
+
+      <div class="field">
+        <div class="head">
+          <label for="limit" title="Shared by every active download">Speed limit</label>
+        </div>
+        <div class="inputgroup">
+          <input id="limit" type="number" min="0" step="64" placeholder="Unlimited" />
+          <span class="suffix">KB/s</span>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <h1 id="title">All downloads</h1>
+      <span class="toast" id="toast"></span>
+      <div class="grow"></div>
+      <div class="meter" id="meter" hidden>↓ <b id="totalSpeed">0 B/s</b> <span class="dim" id="peakSpeed"></span><span class="dim" id="limitBadge"></span></div>
+      <button class="btn icon" id="clearDone" title="Clear completed downloads from the list"
+              aria-label="Clear completed downloads from the list"></button>
+    </header>
+    <button class="btn primary fab" id="openAdd" title="New download (n)"><span></span>New download</button>
+    <div id="list"><div class="empty">Loading…</div></div>
+  </main>
+
+  <div class="scrim" id="scrim">
+    <div class="dialog">
+      <h2>New download</h2>
+      <p class="hint">One URL per line — each becomes its own task.</p>
+      <label for="urls">URLs</label>
+      <textarea id="urls" placeholder="https://example.com/file.zip" spellcheck="false"></textarea>
+      <label for="dest">Save to folder</label>
+      <input id="dest" type="text" placeholder="~/Downloads" spellcheck="false" />
+      <label for="fname">File name <span class="opt" id="nameSrc"></span></label>
+      <input id="fname" type="text" placeholder="filled in from the URL" spellcheck="false" />
+      <p class="probe" id="probeInfo"></p>
+      <div class="foot">
+        <span class="msg" id="addMsg"></span>
+        <button class="btn" id="cancelAdd">Cancel</button>
+        <button class="btn primary" id="doAdd">Download</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const PY = "./downloads.py";
+const POLL_MS = 800;      // how often we refresh the task list
+const PUMP_SECONDS = "10"; // per-call download window, well under the 60 s cap
+
+const FILTERS = [
+  { key: "all",     label: "All",       match: () => true },
+  { key: "active",  label: "Active",    match: (t) => t.status === "active" },
+  { key: "waiting", label: "Waiting",   match: (t) => t.status === "waiting" || t.status === "paused" },
+  { key: "done",    label: "Completed", match: (t) => t.status === "done" },
+  { key: "error",   label: "Failed",    match: (t) => t.status === "error" },
+];
+
+let tasks = [];                  // last snapshot from Python
+const inflight = new Set();      // task ids with a start/pump call in flight
+const rows = new Map();          // id -> row element, so bars animate instead of flicker
+
+// ------------------------------------------------------------ formatting
+const KB = 1024;
+function fmtBytes(n) {
+  if (n === null || n === undefined) return "—";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= KB && i < u.length - 1) { n /= KB; i++; }
+  return (i === 0 ? n : n.toFixed(n < 10 ? 2 : 1)) + " " + u[i];
+}
+function fmtSpeed(bps) { return (bps > 0 ? fmtBytes(bps) : "0 B") + "/s"; }
+function fmtEta(secs) {
+  if (!isFinite(secs) || secs <= 0) return "—";
+  if (secs < 60) return Math.ceil(secs) + "s";
+  if (secs < 3600) return Math.floor(secs / 60) + "m " + Math.round(secs % 60) + "s";
+  return Math.floor(secs / 3600) + "h " + Math.round((secs % 3600) / 60) + "m";
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// ------------------------------------------------------------ params (state)
+const param = (k, d) => fused.params.get(k) || d;
+const filterKey = () => (FILTERS.some((f) => f.key === param("filter")) ? param("filter") : "all");
+const threadCount = () => Math.max(1, Math.min(16, parseInt(param("threads", "4"), 10) || 4));
+const maxJobs = () => Math.max(1, Math.min(6, parseInt(param("jobs", "2"), 10) || 2));
+
+// The folder new downloads go to. Held in params like the rest of the view
+// state, so it survives a refresh and travels with a bookmarked URL.
+let resolvedDest = "";                       // absolute form, from Python
+const destOf = () => param("dir", resolvedDest || "~/Downloads");
+
+// Speed cap in KB/s, 0 = unlimited. Mirrored in params for bookmarking, but the
+// engine's bucket file is the real source of truth — that's what the daemons read.
+const limitKB = () => Math.max(0, parseInt(param("limit", "0"), 10) || 0);
+
+// ------------------------------------------------------------ engine calls
+// `pump` needs its own concurrency: several tasks download at once, and a
+// finished pump must not be cancelled by the next one. `list` gets a separate
+// channel where superseding a stale poll is exactly what we want.
+function call(params, opts) {
+  return fused.runPython(PY, params, opts);
+}
+
+// Hand the task to a detached daemon; it downloads to completion on its own and
+// keeps going after this page (or the whole app) is gone. Only if the hand-off
+// fails do we fall back to downloading inside a bounded call.
+function launch(id) {
+  inflight.add(id);
+  call({ action: "start", id: id }, { key: null })
+    .then((res) => {
+      if (res && res.spawned === false) {
+        flash("Background worker unavailable — downloading in-page. " + (res.spawn_error || ""));
+        return call({ action: "pump", id: id, seconds: PUMP_SECONDS }, { key: null });
+      }
+    })
+    .catch((err) => { flash((err && err.message) || "Download failed"); })
+    .then(() => { inflight.delete(id); });
+}
+
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
+    const res = await call({ action: "list" }, { key: "list" });
+    tasks = res.tasks || [];
+    render();
+    schedule();
+  } catch (err) {
+    flash((err && err.message) || "Engine unavailable");
+  } finally {
+    polling = false;
+  }
+}
+
+// Keep `maxJobs` downloads running. A task counts as running when a daemon holds
+// its heartbeat (`busy`) — daemons outlive this page, so on reopen we adopt the
+// ones already working instead of starting duplicates. `active` without `busy`
+// means the previous worker died, and the task is ours to restart.
+function schedule() {
+  let room = maxJobs() - tasks.filter((t) => t.busy || inflight.has(t.id)).length;
+  for (const t of tasks) {
+    if (room <= 0) break;
+    const runnable = t.status === "waiting" || (t.status === "active" && !t.busy);
+    if (runnable && !t.busy && !inflight.has(t.id)) { launch(t.id); room--; }
+  }
+}
+
+// ------------------------------------------------------------ rendering
+// ------------------------------------------------------------ chunk map
+// A grid of squares, one per fixed-size block of the file, shaded by how much
+// of that block has arrived — so the download's shape is visible: N fill fronts
+// advancing in parallel, one per thread, with the gaps between them still open.
+const CELL = 9, GAP = 2, MAP_MAX_ROWS = 6, BYTES_PER_CELL = 256 * 1024;
+
+// Colours handed to canvas can't come from var() — read the tokens at draw time
+// and redraw when the theme attribute flips.
+const token = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const STATUS_TOKEN = { active: "--chart-accent", done: "--ok", paused: "--muted", error: "--bad" };
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+  else ctx.rect(x, y, w, h);  // older engines: square corners, same layout
+  ctx.fill();
+}
+
+// Steam-style speed graph: the rate over time as a gradient-filled area, drawn
+// straight above the progress bar so the two read as one instrument.
+const GRAPH_H = 44;
+
+function drawGraph(box, t) {
+  const hist = t.history || [];
+  const cv = box.querySelector("canvas");
+  if (hist.length < 2) { box.hidden = true; return; }  // nothing to plot yet
+  box.hidden = false;
+
+  const width = Math.max(60, Math.floor(cv.clientWidth));
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(width * dpr) || cv.height !== Math.round(GRAPH_H * dpr)) {
+    cv.width = Math.round(width * dpr);
+    cv.height = Math.round(GRAPH_H * dpr);
+  }
+  cv.style.height = GRAPH_H + "px";
+
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, GRAPH_H);
+
+  const color = token(STATUS_TOKEN[t.status] || "--accent");
+  // Scale to this task's own peak with headroom, so the shape is always legible
+  // whether it's downloading at 50 KB/s or 50 MB/s.
+  const top = Math.max.apply(null, hist) * 1.15 || 1;
+  const pad = 1.5;                                   // keep the stroke inside the box
+  const usable = GRAPH_H - pad * 2;
+  const xAt = (i) => (i / (hist.length - 1)) * width;
+  const yAt = (v) => pad + usable - Math.min(1, v / top) * usable;
+
+  ctx.beginPath();
+  ctx.moveTo(0, GRAPH_H);
+  for (let i = 0; i < hist.length; i++) ctx.lineTo(xAt(i), yAt(hist[i]));
+  ctx.lineTo(width, GRAPH_H);
+  ctx.closePath();
+  ctx.globalAlpha = 0.16;                            // flat wash under the curve…
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  // …plus a second, brighter pass that fades downward, which is what gives the
+  // Steam look. Clipping to the same area keeps the gradient inside the curve.
+  ctx.save();
+  ctx.clip();
+  const g2 = ctx.createLinearGradient(0, yAt(top / 1.15), 0, GRAPH_H);
+  g2.addColorStop(0, color);
+  g2.addColorStop(1, "transparent");
+  ctx.globalAlpha = 0.4;
+  ctx.fillStyle = g2;
+  ctx.fillRect(0, 0, width, GRAPH_H);
+  ctx.restore();
+
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  for (let i = 0; i < hist.length; i++) {
+    const x = xAt(i), y = yAt(hist[i]);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+}
+
+function drawMap(cv, t) {
+  if (!t.size) { cv.hidden = true; return; }   // unknown length: nothing to map
+  cv.hidden = false;
+
+  const width = Math.max(60, Math.floor(cv.clientWidth));
+  const cols = Math.max(8, Math.floor((width + GAP) / (CELL + GAP)));
+  const rows = Math.max(1, Math.min(MAP_MAX_ROWS, Math.ceil(Math.ceil(t.size / BYTES_PER_CELL) / cols)));
+  const cells = cols * rows;                   // a full rectangle, GitHub-style
+  const perCell = t.size / cells;
+  const height = rows * CELL + (rows - 1) * GAP;
+
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(width * dpr) || cv.height !== Math.round(height * dpr)) {
+    cv.width = Math.round(width * dpr);
+    cv.height = Math.round(height * dpr);
+  }
+  cv.style.height = height + "px";
+  cv.title = "each block ≈ " + fmtBytes(perCell) + " · " + cells + " blocks";
+
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const trackColor = token("--track");
+  const fillColor = token(STATUS_TOKEN[t.status] || "--accent");
+
+  // Each segment owns [start, start+done) — the bytes actually on disk.
+  const spans = t.segments.map((s) => {
+    const len = s.end === null ? s.done : s.end - s.start + 1;
+    return [s.start, s.start + (s.complete ? len : Math.min(s.done, len))];
+  });
+
+  for (let i = 0; i < cells; i++) {
+    const lo = i * perCell, hi = lo + perCell;
+    let have = 0;
+    for (const [a, b] of spans) have += Math.max(0, Math.min(hi, b) - Math.max(lo, a));
+    const frac = Math.min(1, have / perCell);
+    const x = (i % cols) * (CELL + GAP);
+    const y = Math.floor(i / cols) * (CELL + GAP);
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = trackColor;
+    roundRect(ctx, x, y, CELL, CELL, 2);
+    if (frac > 0) {
+      // Four intensity steps, so a partly-filled block reads as "in progress"
+      // rather than as noise.
+      ctx.globalAlpha = 0.3 + 0.7 * (Math.ceil(frac * 4) / 4);
+      ctx.fillStyle = fillColor;
+      roundRect(ctx, x, y, CELL, CELL, 2);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function makeRow(t) {
+  const el = document.createElement("div");
+  el.className = "task";
+  el.innerHTML =
+    '<div class="top"><span class="name"></span><span class="badge"></span><span class="pct"></span></div>' +
+    '<div class="url"></div>' +
+    '<div class="graph"><canvas></canvas></div>' +
+    '<div class="bar"><i></i></div>' +
+    '<canvas class="map"></canvas>' +
+    '<div class="bottom">' +
+      '<span class="stat size"></span><span class="stat speed"></span>' +
+      '<span class="stat peak"></span><span class="stat eta"></span>' +
+      '<span class="stat thr"></span><span class="stat where"></span>' +
+      '<span class="actions"></span>' +
+    "</div>" +
+    '<div class="err" hidden></div>';
+  el.refs = {
+    name: el.querySelector(".name"), badge: el.querySelector(".badge"), pct: el.querySelector(".pct"),
+    url: el.querySelector(".url"), fill: el.querySelector(".bar > i"), map: el.querySelector("canvas.map"),
+    graph: el.querySelector(".graph"),
+    size: el.querySelector(".size"), speed: el.querySelector(".speed"),
+    peak: el.querySelector(".peak"), eta: el.querySelector(".eta"),
+    thr: el.querySelector(".thr"), where: el.querySelector(".where"),
+    actions: el.querySelector(".actions"), err: el.querySelector(".err"),
+  };
+  el.addEventListener("click", (ev) => {
+    if (ev.target.closest("button") || ev.target.closest("a")) return;
+    fused.params.set("sel", fused.params.get("sel") === t.id ? "" : t.id);
+  });
+  return el;
+}
+
+// Inline SVG only — the page has no network, so an icon font or CDN is out.
+// Everything is stroked in currentColor so it follows the theme and the
+// button's own hover/disabled colour without extra rules.
+const ICONS = {
+  play: '<polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" fill="currentColor" stroke="none"/>' +
+         '<rect x="14" y="4" width="4" height="16" fill="currentColor" stroke="none"/>',
+  x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  retry: '<polyline points="23 4 23 10 17 10"/>' +
+         '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+  trash: '<polyline points="3 6 5 6 21 6"/>' +
+         '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+         '<line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>' +
+         '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2z"/>',
+  open: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
+        '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  sweep: '<polyline points="3 6 5 6 21 6"/>' +
+         '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+         '<polyline points="9 13 12 16 15 10"/>',
+};
+
+function icon(name, size) {
+  return '<svg viewBox="0 0 24 24" width="' + (size || 15) + '" height="' + (size || 15) + '" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true" focusable="false">' + ICONS[name] + "</svg>";
+}
+
+// Icon-only, so every button carries its label as a tooltip and an accessible name.
+function actionsFor(t) {
+  if (t.status === "done") {
+    return [
+      ["folder", "Show in folder", "reveal"],
+      ["open", "Open file", "launch"],
+      ["x", "Remove from list (keeps the file)", "remove"],
+      ["trash", "Delete file from disk", "delete"],
+    ];
+  }
+  if (t.status === "paused") return [["play", "Resume", "resume"], ["x", "Cancel", "remove"]];
+  if (t.status === "error")  return [["retry", "Retry", "resume"], ["x", "Cancel", "remove"]];
+  return [["pause", "Pause", "pause"], ["x", "Cancel", "remove"]];
+}
+
+function paint(el, t) {
+  const r = el.refs;
+  el.dataset.status = t.status;
+  el.dataset.sel = fused.params.get("sel") === t.id ? "1" : "0";
+
+  r.name.textContent = t.name;
+  r.badge.textContent = t.status;
+  r.badge.dataset.s = t.status;
+  r.url.textContent = t.url;
+  r.url.title = t.url;
+
+  const frac = t.size ? Math.min(1, t.downloaded / t.size) : 0;
+  r.pct.textContent = t.size ? (frac * 100).toFixed(1) + "%" : fmtBytes(t.downloaded);
+
+  drawGraph(r.graph, t);
+  r.fill.style.width = (t.size ? frac * 100 : t.status === "done" ? 100 : 0) + "%";
+  drawMap(r.map, t);
+
+  // Speed/peak come from the daemon, so they're right after a refresh too.
+  const avg = t.active_seconds > 0.5 ? t.downloaded / t.active_seconds : 0;
+  r.size.textContent = fmtBytes(t.downloaded) + (t.size ? " / " + fmtBytes(t.size) : "");
+  r.speed.innerHTML = t.status === "active"
+    ? "↓ <b>" + esc(fmtSpeed(t.speed)) + "</b>"
+    : (avg ? "avg " + fmtSpeed(avg) : "");
+  r.peak.textContent = t.peak > 0 ? "peak " + fmtSpeed(t.peak) : "";
+  r.eta.textContent = t.status === "active" && t.size && t.speed > 1024
+    ? "ETA " + fmtEta((t.size - t.downloaded) / t.speed) : "";
+  r.thr.textContent = t.threads + (t.threads > 1 ? " threads" : " thread") +
+    (t.resumable ? "" : " · no resume");
+  r.where.textContent = t.dest || "";
+  r.where.title = t.path || "";
+
+  const wanted = actionsFor(t).map((a) => a.join(":")).join("|");
+  if (r.actions.dataset.k !== wanted) {
+    r.actions.dataset.k = wanted;
+    r.actions.innerHTML = "";
+    for (const [ico, label, act] of actionsFor(t)) {
+      const b = document.createElement("button");
+      b.className = "btn icon";
+      b.innerHTML = icon(ico);
+      b.title = label;
+      b.setAttribute("aria-label", label);
+      if (act === "delete") b.classList.add("danger");
+      b.addEventListener("click", () => act1(act, t));
+      r.actions.appendChild(b);
+    }
+  }
+
+  r.err.hidden = !t.error;
+  r.err.textContent = t.error || "";
+}
+
+function render() {
+  const f = FILTERS.find((x) => x.key === filterKey());
+  const shown = tasks.filter(f.match);
+  document.getElementById("title").textContent = f.label === "All" ? "All downloads" : f.label + " downloads";
+
+  document.getElementById("nav").innerHTML = FILTERS.map((x) =>
+    '<button class="nav-item" data-f="' + x.key + '" aria-current="' + (x.key === filterKey()) + '">' +
+    esc(x.label) + '<span class="count">' + tasks.filter(x.match).length + "</span></button>"
+  ).join("");
+
+  const total = tasks.reduce((sum, t) => sum + (t.speed || 0), 0);
+  const peak = tasks.reduce((max, t) => Math.max(max, t.peak || 0), 0);
+  document.getElementById("meter").hidden = total <= 0;
+  document.getElementById("totalSpeed").textContent = fmtSpeed(total);
+  document.getElementById("peakSpeed").textContent = peak > 0 ? "peak " + fmtSpeed(peak) : "";
+  document.getElementById("limitBadge").textContent =
+    limitKB() ? " · capped at " + fmtSpeed(limitKB() * 1024) : "";
+  document.getElementById("clearDone").disabled = !tasks.some((t) => t.status === "done");
+
+  const list = document.getElementById("list");
+  if (!shown.length) {
+    rows.clear();
+    list.innerHTML = '<div class="empty">' + (tasks.length
+      ? "Nothing here.<br />Try another filter in the sidebar."
+      : "No downloads yet.<br />Hit <b>+ New download</b> to add a URL.") + "</div>";
+    return;
+  }
+  if (list.firstElementChild && list.firstElementChild.className === "empty") list.innerHTML = "";
+
+  for (const id of Array.from(rows.keys())) {
+    if (!shown.some((t) => t.id === id)) { rows.get(id).remove(); rows.delete(id); }
+  }
+  shown.forEach((t, i) => {
+    let el = rows.get(t.id);
+    if (!el) { el = makeRow(t); rows.set(t.id, el); }
+    // Insert before painting: the chunk map sizes itself from clientWidth, which
+    // is 0 until the row is actually in the document.
+    if (list.children[i] !== el) list.insertBefore(el, list.children[i] || null);
+    paint(el, t);
+  });
+}
+
+// ------------------------------------------------------------ actions
+async function act1(action, t) {
+  const params = { action: action === "delete" ? "remove" : action, id: t.id };
+  if (action === "delete") params.delete_file = "true";
+  try {
+    await call(params, { key: null });
+  } catch (err) {
+    flash((err && err.message) || "Action failed");
+  }
+  // reveal/launch only talk to the desktop — no task state changed.
+  if (action !== "reveal" && action !== "launch") poll();
+}
+
+// Errors surface in the dialog when it's open and in the header when it isn't,
+// so a failing engine is never silent.
+let flashTimer = 0;
+function flash(msg) {
+  const open = document.getElementById("scrim").dataset.open === "1";
+  const el = document.getElementById(open ? "addMsg" : "toast");
+  el.textContent = msg;
+  el.title = msg;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { el.textContent = ""; el.title = ""; }, 8000);
+}
+
+async function addUrls() {
+  const urls = urlList();
+  const dest = document.getElementById("dest").value.trim() || destOf();
+  if (!urls.length) { flash("Paste at least one URL"); return; }
+
+  const btn = document.getElementById("doAdd");
+  btn.disabled = true;
+  btn.textContent = "Adding…";
+  // Let an in-flight probe land first, so a server-supplied name beats the guess.
+  if (urls.length === 1) await flushProbe();
+  const name = document.getElementById("fname").value.trim();
+  const failed = [];
+  let saved = "";
+  for (const url of urls) {
+    try {
+      const t = await call({
+        action: "add", url: url, threads: String(threadCount()), dest: dest,
+        name: urls.length === 1 ? name : "",   // a shared name would collide
+      }, { key: null });
+      saved = t.dest || saved;
+    } catch (err) {
+      failed.push((err && err.message) || url);
+    }
+  }
+  // Remember the folder in its absolute form, so next time it's prefilled.
+  if (saved && saved !== fused.params.get("dir")) fused.params.set("dir", saved);
+  btn.disabled = false;
+  btn.textContent = "Download";
+  if (failed.length) {
+    flash(failed.length + " of " + urls.length + " failed — " + failed[0]);
+  } else {
+    closeAdd();
+  }
+  poll();
+}
+
+function openAdd() {
+  document.getElementById("scrim").dataset.open = "1";
+  document.getElementById("addMsg").textContent = "";
+  document.getElementById("dest").value = destOf();
+  document.getElementById("urls").focus();
+}
+function closeAdd() {
+  document.getElementById("scrim").dataset.open = "0";
+  document.getElementById("urls").value = "";
+  document.getElementById("fname").value = "";
+  // Forget the edit state, so the next download infers from scratch.
+  clearTimeout(probeTimer);
+  probeTimer = 0;
+  probeSeq++;
+  probePromise = null;
+  nameSource = "";
+  document.getElementById("nameSrc").textContent = "";
+  probeHint("");
+}
+
+// ---------------------------------------------------------- name inference
+// Two stages, because they have different costs. The guess is pure string work
+// on the URL and lands the instant you paste; the probe is a real request that
+// can see Content-Disposition and redirects, so it may know better. Neither is
+// allowed to overwrite something you typed.
+let nameSource = "";        // "guess" | "probe" | "user"
+let probeTimer = 0, probeSeq = 0, probePromise = null, probeUrl = "";
+
+const urlList = () =>
+  document.getElementById("urls").value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+
+// Same shape as the engine's _safe_name/_name_from, minus the network.
+function guessName(url) {
+  let last = "";
+  try {
+    last = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() || "");
+  } catch (err) {
+    return "";                                 // not a URL yet — say nothing
+  }
+  return last.replace(/[\x00-\x1f<>:"|?*\\/]/g, "_").trim().slice(0, 180);
+}
+
+function setInferredName(name, source) {
+  if (nameSource === "user") return;            // never clobber a real edit
+  const f = document.getElementById("fname");
+  f.value = name;
+  nameSource = name ? source : "";
+  document.getElementById("nameSrc").textContent =
+    !name ? "" : source === "probe" ? "— from the server" : "— from the URL";
+}
+
+function probeHint(text, bad) {
+  const el = document.getElementById("probeInfo");
+  el.textContent = text;
+  el.dataset.bad = bad ? "1" : "0";
+}
+
+function describeProbe(info) {
+  const bits = [info.size ? fmtBytes(info.size) : "size unknown"];
+  bits.push(info.resumable ? "resumable" : "no resume — single stream");
+  if (info.resumable && info.size) bits.push(threadCount() + " threads");
+  if (info.content_type) bits.push(info.content_type);
+  return bits.join(" · ");
+}
+
+// A single name can't be shared by several URLs, so it only applies to one.
+function syncNameField() {
+  const urls = urlList();
+  const f = document.getElementById("fname");
+  f.disabled = urls.length > 1;
+  f.placeholder = urls.length > 1 ? "one name per URL — inferred for each"
+                                  : "filled in from the URL";
+  if (urls.length !== 1) {
+    clearTimeout(probeTimer); probeTimer = 0; probeSeq++;
+    if (nameSource !== "user") setInferredName("", "");
+    probeHint(urls.length > 1 ? urls.length + " URLs — names inferred for each" : "");
+    return;
+  }
+  setInferredName(guessName(urls[0]), "guess");   // instant, no network
+  scheduleProbe(urls[0]);                          // then let the server correct it
+}
+
+function scheduleProbe(url) {
+  clearTimeout(probeTimer);
+  probeTimer = 0;
+  if (!/^https?:\/\//i.test(url)) { probeHint(""); return; }
+  probeUrl = url;
+  probeHint("Checking…");
+  probeTimer = setTimeout(() => {
+    probeTimer = 0;
+    probePromise = runProbe(url);
+  }, 350);                                         // don't probe every keystroke
+}
+
+async function runProbe(url) {
+  const seq = ++probeSeq;
+  try {
+    // key:"probe" gives this its own stale-cancel channel — a newer probe
+    // supersedes an older one instead of racing it.
+    const info = await call({ action: "probe", url: url }, { key: "probe" });
+    if (seq !== probeSeq) return;                  // superseded
+    if (info.name) setInferredName(info.name, "probe");
+    probeHint(describeProbe(info));
+  } catch (err) {
+    if (seq !== probeSeq) return;
+    probeHint((err && err.message) || "Could not reach the URL", true);
+  }
+}
+
+// Called before adding: if a probe is pending or in flight, let it land first so
+// the server's name wins over the guess when it disagrees.
+async function flushProbe() {
+  if (probeTimer) {
+    clearTimeout(probeTimer);
+    probeTimer = 0;
+    probePromise = runProbe(probeUrl);
+  }
+  if (probePromise) {
+    try { await probePromise; } catch (err) { /* surfaced by runProbe */ }
+    probePromise = null;
+  }
+}
+
+async function clearDone() {
+  for (const t of tasks.filter((x) => x.status === "done")) {
+    await call({ action: "remove", id: t.id }, { key: null });
+  }
+  poll();
+}
+
+// ------------------------------------------------------------ wiring
+document.getElementById("nav").addEventListener("click", (ev) => {
+  const b = ev.target.closest(".nav-item");
+  if (b) fused.params.set("filter", b.dataset.f);
+});
+document.getElementById("clearDone").innerHTML = icon("sweep", 16);
+document.querySelector("#openAdd span").innerHTML = icon("plus", 15);
+document.getElementById("urls").addEventListener("input", syncNameField);
+// Typing in the name field claims it; emptying it hands control back to inference.
+document.getElementById("fname").addEventListener("input", (ev) => {
+  nameSource = ev.target.value.trim() ? "user" : "";
+  document.getElementById("nameSrc").textContent =
+    nameSource === "user" ? "— yours" : "";
+  if (!nameSource) syncNameField();   // re-infer from the URL that's already there
+});
+document.getElementById("openAdd").addEventListener("click", openAdd);
+document.getElementById("cancelAdd").addEventListener("click", closeAdd);
+document.getElementById("doAdd").addEventListener("click", addUrls);
+document.getElementById("clearDone").addEventListener("click", clearDone);
+document.getElementById("scrim").addEventListener("click", (ev) => {
+  if (ev.target.id === "scrim") closeAdd();
+});
+document.addEventListener("keydown", (ev) => {
+  const open = document.getElementById("scrim").dataset.open === "1";
+  if (ev.key === "Escape" && open) closeAdd();
+  else if (open && ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) addUrls();
+  else if (!open && ev.key === "n" && !ev.metaKey && !ev.ctrlKey) { ev.preventDefault(); openAdd(); }
+});
+
+// Canvas colours don't follow var(), and the grid's column count depends on
+// width — so redraw on a theme flip and on resize.
+new MutationObserver(() => render())
+  .observe(document.documentElement, { attributeFilter: ["data-theme"] });
+if (window.ResizeObserver) {
+  new ResizeObserver(() => render()).observe(document.getElementById("list"));
+}
+
+const threadsEl = document.getElementById("threads");
+const jobsEl = document.getElementById("jobs");
+const limitEl = document.getElementById("limit");
+threadsEl.addEventListener("input", () => fused.params.set("threads", threadsEl.value));
+jobsEl.addEventListener("input", () => fused.params.set("jobs", jobsEl.value));
+
+// Debounced so holding the spinner doesn't fire a call per tick. Pushing to the
+// engine is what makes it bite — including on downloads already in flight.
+let limitTimer = 0;
+limitEl.addEventListener("input", () => {
+  const kb = Math.max(0, parseInt(limitEl.value, 10) || 0);
+  fused.params.set("limit", String(kb));
+  clearTimeout(limitTimer);
+  limitTimer = setTimeout(() => pushLimit(kb), 250);
+});
+
+async function pushLimit(kb) {
+  try {
+    await call({ action: "limit", rate: String(kb * 1024) }, { key: "limit" });
+  } catch (err) {
+    flash((err && err.message) || "Could not apply the speed limit");
+  }
+}
+
+// Params are the state: reflect them into the controls, then re-render.
+// Sliders paint their filled portion from --pct, since CSS alone can't know it.
+function setSlider(el, value, label) {
+  el.value = String(value);
+  const min = Number(el.min), max = Number(el.max);
+  el.style.setProperty("--pct", ((value - min) / (max - min)) * 100 + "%");
+  document.getElementById(el.id + "Val").textContent = label;
+}
+
+function draw() {
+  setSlider(threadsEl, threadCount(), String(threadCount()));
+  setSlider(jobsEl, maxJobs(), String(maxJobs()));
+  const kb = limitKB();
+  // Empty means unlimited — the placeholder says so, so there's no second readout.
+  if (document.activeElement !== limitEl) limitEl.value = kb ? String(kb) : "";
+  render();
+  schedule();
+}
+fused.params.onChange(draw);
+
+// Let Python expand "~" and tell us the real folder, so the sidebar and the
+// dialog show the same absolute path the engine will actually write to.
+async function resolveDest() {
+  try {
+    const d = await call({ action: "defaults", dest: param("dir", "") }, { key: "defaults" });
+    resolvedDest = d.dest;
+    // Reconcile the limit: an explicit ?limit= wins, since a bookmarked URL
+    // should reproduce its settings. Otherwise adopt what the engine already has
+    // — it may have been set in another window, or before this page existed.
+    const engineKB = Math.round((d.rate || 0) / 1024);
+    if (fused.params.get("limit") === undefined) {
+      if (engineKB) fused.params.set("limit", String(engineKB));
+    } else if (limitKB() !== engineKB) {
+      pushLimit(limitKB());
+    }
+    if (fused.params.get("dir") !== d.dest) fused.params.set("dir", d.dest);
+    else draw();
+  } catch (err) {
+    flash((err && err.message) || "Could not resolve the download folder");
+  }
+}
+
+// The engine has no daemon — this loop is what makes downloads progress.
+setInterval(poll, POLL_MS);
+draw();
+resolveDest();
+poll();
+</script>
+</body>
+</html>
