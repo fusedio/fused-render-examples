@@ -31,10 +31,6 @@ budget: if it can't finish in time it returns {"ready": False, done, total}
 and the page polls again — each poll continues where the last one stopped.
 """
 
-# /// script
-# dependencies = ["requests", "pandas"]
-# ///
-
 import hashlib
 import json
 import os

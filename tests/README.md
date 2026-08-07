@@ -5,7 +5,7 @@ and opens it in a fresh Fused Render install. It runs three layers per project:
 
 | Layer | Needs | What it proves |
 |---|---|---|
-| **Structure** | nothing | The folder ships clean: one top-level view `.html`, a `.py` with a module-level `main()`, valid PEP 723 header, no import-time `__file__` without a guard, no committed `.env` / `.cache` / `__pycache__`. |
+| **Structure** | nothing | The folder ships clean: one top-level view `.html`, a `.py` with a module-level `main()`, deps declared in the folder's `pyproject.toml` and no dead `# /// script` header, no import-time `__file__` without a guard, no committed `.env` / `.cache` / `__pycache__`. |
 | **Entrypoints** | the running app | Every `runPython(...)` target the view calls is invoked through the app's `/api/run` bridge and must load and run. |
 | **Visual** | the app + Chrome | The view is loaded in headless Chrome exactly as a user would open it, given time to render, then checked for real painted content and no Python error. A screenshot lands in `tests/artifacts/`. |
 

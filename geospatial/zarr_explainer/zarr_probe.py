@@ -28,9 +28,6 @@ Endpoints (GET, CORS *):
 Caps: a /slice may span at most 64 chunk objects and 4M cells — the error
 message says so honestly (that's part of the lesson).
 """
-# /// script
-# dependencies = ["numpy", "zarr>=3.0.8", "s3fs", "crc32c"]
-# ///
 
 import hashlib
 import json

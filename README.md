@@ -88,6 +88,7 @@ Fused Render pointed at your **own machine** instead of the cloud.
 ```
 example_name/
   README.md            what it is + how to run
+  pyproject.toml       the folder's pip dependencies (+ committed uv.lock)
   <udf>.py             Python UDF(s) — the data backend
   <view>.html          the browser view (calls the UDFs via fused.runPython)
   .env.example         only if it needs an API key
@@ -96,8 +97,11 @@ example_name/
 Each Python file just defines a module-level `main(...)` function — that's the
 entry point Fused Render calls, with the view's parameters passed as keyword
 arguments. Imports live inside the function body, and any pip dependencies are
-declared in a [PEP 723](https://peps.python.org/pep-0723/) header. Data that
-takes a while to fetch is cached to disk on first run.
+declared **once per folder** in `pyproject.toml`: every `.py` in the folder
+shares one venv containing exactly what that file lists. (Per-file
+[PEP 723](https://peps.python.org/pep-0723/) `# /// script` headers are no
+longer read — a leftover one is silently ignored.) Data that takes a while to
+fetch is cached to disk on first run.
 
 ## Notes
 

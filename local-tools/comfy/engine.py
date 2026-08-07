@@ -6,13 +6,6 @@ as {"__image__": "<abs png path>", "w": int, "h": int} refs pointing into
 .cache/; results are memoized on disk by the caller-computed signature.
 """
 
-# /// script
-# dependencies = [
-#   "onnxruntime",
-#   "imageio[ffmpeg]",
-# ]
-# ///
-
 import json
 import os
 import random
