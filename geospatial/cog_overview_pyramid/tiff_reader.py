@@ -9,9 +9,6 @@ Decode engine is shared with v1 via _tiff_core (pure-Python TIFF decoder
 with overview-pyramid reads; rasterio system-python fallback for LZW/JPEG/
 BigTIFF).
 """
-# /// script
-# dependencies = ["numpy", "pyproj", "imagecodecs"]
-# ///
 
 import os
 import sys

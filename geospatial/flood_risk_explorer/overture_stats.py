@@ -12,9 +12,6 @@ per step; when the budget runs out main() returns {"ready": False, ...} and
 the page polls.
 """
 
-# /// script
-# dependencies = ["numpy", "pillow", "scipy", "shapely", "duckdb"]
-# ///
 import hashlib
 import json
 import math

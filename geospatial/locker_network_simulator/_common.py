@@ -11,10 +11,6 @@ under ./.cache so a fresh subprocess per call stays fast:
 - OSRM /route geometries                   -> cached per ordered point list
 """
 
-# /// script
-# dependencies = ["duckdb", "requests"]
-# ///
-
 import functools
 import hashlib
 import json

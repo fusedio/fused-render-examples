@@ -23,9 +23,6 @@ supported=false otherwise and the page falls back to tiff_reader.py.
 Idle shutdown after 30 min. The state file embeds this file's mtime, so
 editing the module auto-respawns a fresh daemon on the next ensure().
 """
-# /// script
-# dependencies = ["numpy", "pyproj", "imagecodecs"]
-# ///
 
 import json
 import math

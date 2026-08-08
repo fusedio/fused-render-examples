@@ -164,12 +164,20 @@ def lint(path):
         if uses_dunder_file and '"__file__" in globals()' not in src:
             warns.append(f"{stem}: uses __file__ unguarded (works — runner sets it — "
                          "but a `\"__file__\" in globals()` guard is more portable)")
+        # Fused Render no longer reads per-file PEP 723 inline metadata; deps come
+        # from the folder's pyproject.toml. A leftover header is an inert comment
+        # that is SILENTLY ignored, so the packages it "declares" never install —
+        # the failure shows up as a runtime ImportError. Hard-fail on it.
         if "/// script" in src:
-            block = re.search(r"# /// script\n(.*?)# ///", src, re.S)
-            if block and "dependencies" not in block.group(1):
-                errs.append(f"{stem}: PEP 723 header without a dependencies list")
+            errs.append(f"{stem}: dead PEP 723 `# /// script` header — deps now "
+                        "live in the folder's pyproject.toml and this is ignored")
     if pys and not entry_has_main:
         errs.append("no .py defines a module-level main()")
+    # The venv is defined by the TOPMOST pyproject.toml at or above the folder,
+    # and contains exactly what it lists. No manifest -> no third-party packages.
+    if pys and "pyproject.toml" not in tracked:
+        warns.append("no pyproject.toml — the folder gets a bare venv; add one if "
+                     "any .py imports a third-party package")
     return errs, warns
 
 

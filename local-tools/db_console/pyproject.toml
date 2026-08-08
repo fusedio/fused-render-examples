@@ -1,0 +1,21 @@
+[project]
+name = "db-console"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "sqlalchemy>=2",
+    "pg8000",
+    "pymysql",
+    "python-tds",
+    "sqlalchemy-pytds",
+    "duckdb",
+    "duckdb_engine",
+    # test_db_console.py lives under this root and imports pytest, and the venv
+    # is exactly this list — nothing is unioned in.
+    "pytest",
+]
+
+# Not a distribution — this folder is a set of scripts, not something to build
+# and install. Without this uv would try to build the "project" itself and fail.
+[tool.uv]
+package = false

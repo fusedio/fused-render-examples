@@ -1,0 +1,16 @@
+[project]
+name = "flood-risk-explorer"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pillow",
+    "scipy",
+    "shapely",
+    "duckdb",
+]
+
+# Not a distribution — this folder is a set of scripts, not something to build
+# and install. Without this uv would try to build the "project" itself and fail.
+[tool.uv]
+package = false

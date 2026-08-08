@@ -16,9 +16,6 @@ normalized URL) and a password-hidden display URL. File-backed databases
 toggle first clears the RO-3 filesystem gate. Remote databases run SQL verbatim
 — that's the product — and are simply labelled.
 """
-# /// script
-# dependencies = ["sqlalchemy>=2", "pg8000", "pymysql", "python-tds", "sqlalchemy-pytds", "duckdb", "duckdb_engine"]
-# ///
 
 import hashlib
 import json
