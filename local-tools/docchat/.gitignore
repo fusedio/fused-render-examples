@@ -1,0 +1,9 @@
+# Generated vector indexes (rebuilt from the selected folder on demand)
+.indexes/
+index.duckdb
+index.duckdb.wal
+
+# Warm embedding server sidecar + bytecode
+.ragserver.json
+.ragserver.spawn
+__pycache__/
