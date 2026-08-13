@@ -15,6 +15,7 @@ bottom is a thin stdlib wrapper. Model id comes from $RAG_MODEL.
 import json
 import os
 import re
+import secrets
 import sys
 import threading
 import time
@@ -34,6 +35,11 @@ MODEL_NAME = os.environ.get("RAG_MODEL", DEFAULT_MODEL)
 # (e.g. from a page reload racing serve.py) fails to bind and simply exits — only
 # one process ever owns the DuckDB files. Override with $RAG_PORT if 8271 is taken.
 PORT = int(os.environ.get("RAG_PORT", "8271"))
+# Per-process secret gating every data route. Because the server binds a fixed
+# localhost port with CORS *, any web page could otherwise call /browse and /file
+# and read local files; the token travels only over the on-disk sidecar (read by
+# serve.py and handed to the page via runPython), never over the HTTP surface.
+TOKEN = secrets.token_urlsafe(32)
 SIDECAR = os.path.join(rc.HERE, ".ragserver.json")
 
 _MODEL = None
@@ -122,6 +128,14 @@ def _con(db_path):
         return c
 
 
+def _meta(con):
+    """read_meta under _DB_LOCK. The warm connection is shared across
+    ThreadingHTTPServer workers and DuckDB connections aren't thread-safe, so
+    every read has to serialize with builds/searches on the same handle."""
+    with _DB_LOCK:
+        return rc.read_meta(con)
+
+
 def _write_meta(con, meta):
     con.execute("CREATE TABLE IF NOT EXISTS docmeta (key VARCHAR, value VARCHAR);")
     con.execute("DELETE FROM docmeta;")
@@ -177,7 +191,7 @@ def build_index(folder, rebuild=False, progress=None, cache_dir=None):
     fingerprint = rc.docs_fingerprint(docs)
 
     con = _con(db_path)
-    meta = rc.read_meta(con)
+    meta = _meta(con)
     dim_ok = bool(meta and meta.get("dim") == str(dim))
     fresh = bool(dim_ok and meta.get("fingerprint") == fingerprint)
     if fresh and meta.get("status") == "ready" and not rebuild:
@@ -281,7 +295,7 @@ def search_index(folder, q, k=5, cache_dir=None):
     if not os.path.exists(db_path):
         return {"ok": False, "error": "not_indexed"}
     con = _con(db_path)
-    meta = rc.read_meta(con)
+    meta = _meta(con)
     if not meta:
         return {"ok": False, "error": "not_indexed"}
     dim = int(meta.get("dim", DIM))
@@ -323,7 +337,7 @@ def index_status(folder, cache_dir=None):
         return out
     try:
         con = _con(db_path)
-        meta = rc.read_meta(con)
+        meta = _meta(con)
         if meta:
             with _DB_LOCK:
                 total = con.execute("SELECT count(*) FROM chunks").fetchone()[0]
@@ -373,7 +387,7 @@ def index_files(folder, cache_dir=None, limit=4000):
     if not os.path.exists(db_path):
         return {"ok": False, "error": "not_indexed"}
     con = _con(db_path)
-    if not rc.read_meta(con):
+    if not _meta(con):
         return {"ok": False, "error": "not_indexed"}
     with _DB_LOCK:
         total = con.execute("SELECT count(DISTINCT source) FROM chunks").fetchone()[0]
@@ -389,7 +403,19 @@ def file_preview(folder, source, cache_dir=None, max_chars=200000):
     source); if the file is gone, reassembles the stored chunks so the pane still
     shows what was embedded."""
     folder = rc.normalize_path(folder) or rc.DEFAULT_DOCS
-    path = folder if os.path.isfile(folder) else os.path.join(folder, source)
+    if os.path.isfile(folder):
+        path = folder
+    else:
+        # `source` is a folder-relative path from the index; contain it so an
+        # absolute or ../ source can't be joined into an arbitrary file read.
+        root = os.path.normpath(folder)
+        path = os.path.normpath(os.path.join(root, source))
+        try:
+            contained = os.path.commonpath([root, path]) == root
+        except ValueError:
+            contained = False              # different drive (Windows) -> outside
+        if not contained:
+            return {"ok": False, "error": "invalid source"}
     text = rc._read_text(path, force=True) if os.path.isfile(path) else None
     chunks = None
     db_path = rc.db_path_for(folder, PROVIDER, cache_dir)
@@ -527,12 +553,19 @@ def run_server():
         def do_OPTIONS(self):
             self._send({"ok": True})
 
+        def _authed(self, qs):
+            return qs.get("t", [""])[0] == TOKEN
+
         def do_GET(self):
             u = urlparse(self.path)
             qs = parse_qs(u.query)
-            if u.path == "/health":
+            if u.path == "/health":            # bootstrap only — carries no token itself
                 self._send(_health())
-            elif u.path == "/status":
+                return
+            if not self._authed(qs):
+                self._send({"ok": False, "error": "forbidden"}, 403)
+                return
+            if u.path == "/status":
                 self._send(index_status(qs.get("folder", [""])[0], qs.get("cache_dir", [""])[0] or None))
             elif u.path == "/browse":
                 self._send(browse(qs.get("path", [""])[0]))
@@ -548,20 +581,24 @@ def run_server():
                 self._send({"ok": False, "error": "not found"}, 404)
 
         def do_POST(self):
+            u = urlparse(self.path)
+            if not self._authed(parse_qs(u.query)):
+                self._send({"ok": False, "error": "forbidden"}, 403)
+                return
             n = int(self.headers.get("Content-Length", 0) or 0)
             try:
                 body = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
                 body = {}
-            if self.path == "/movecache":     # filesystem-only; works even while the model loads
+            if u.path == "/movecache":     # filesystem-only; works even while the model loads
                 self._send(move_cache(body.get("old", ""), body.get("new", "")))
                 return
             if not READY:
                 self._send({"ok": False, "error": "loading", "ready": False}, 503)
                 return
-            if self.path == "/index":
+            if u.path == "/index":
                 self._send(start_build(body.get("folder", ""), bool(body.get("rebuild")), body.get("cache_dir") or None))
-            elif self.path == "/search":
+            elif u.path == "/search":
                 self._send(search_index(body.get("folder", ""), body.get("q", ""), int(body.get("k", 5)), body.get("cache_dir") or None))
             else:
                 self._send({"ok": False, "error": "not found"}, 404)
@@ -599,7 +636,7 @@ def run_server():
 
 
 def _write_sidecar(port, ready, error=""):
-    data = {"port": port, "pid": os.getpid(), "model": MODEL_NAME, "provider": PROVIDER,
+    data = {"port": port, "pid": os.getpid(), "token": TOKEN, "model": MODEL_NAME, "provider": PROVIDER,
             "device": DEVICE, "dim": DIM, "ready": ready, "error": error}
     try:
         with open(SIDECAR, "w", encoding="utf-8") as f:

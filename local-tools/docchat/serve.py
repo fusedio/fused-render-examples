@@ -60,6 +60,16 @@ def _sidecar_pid():
         return None
 
 
+def _sidecar_token():
+    """The running server's auth token, read off disk (not over HTTP) so the page
+    can gate its fetches without the token ever crossing the open HTTP surface."""
+    try:
+        with open(SIDECAR, "r", encoding="utf-8") as f:
+            return json.load(f).get("token", "")
+    except Exception:
+        return ""
+
+
 def _kill(pid):
     if not pid:
         return
@@ -109,7 +119,7 @@ def _spawn(model):
 
 
 def _status(started, h):
-    return {"ok": True, "started": started, "port": PORT,
+    return {"ok": True, "started": started, "port": PORT, "token": _sidecar_token(),
             "ready": bool(h.get("ready")), "stage": h.get("stage"), "model": h.get("model"),
             "device": h.get("device"), "dim": h.get("dim"), "models_dir": h.get("models_dir")}
 

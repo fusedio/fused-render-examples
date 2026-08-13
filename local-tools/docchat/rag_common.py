@@ -254,7 +254,7 @@ def docs_fingerprint(items):
 def db_path_for(folder, provider, cache_dir=None):
     """One DuckDB index file per (absolute folder, embedding provider/model),
     under `cache_dir` (defaults to the persistent Fused cache)."""
-    base = cache_dir or INDEX_DIR
+    base = normalize_path(cache_dir) or INDEX_DIR
     key = os.path.abspath(folder) + "|" + provider
     h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
     return os.path.join(base, h + ".duckdb")

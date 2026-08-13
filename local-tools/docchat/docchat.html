@@ -383,7 +383,7 @@ const EXAMPLES = [
 let state = { backend:"ai", folder:"", theme:"light", model:DEFAULT_MODEL, cacheDir:"", processedQ:null, busy:false,
               folderName:"docs", folderPath:"", home:"", isFile:false, idxState:"none", cachePathFull:"",
               idxDocs:0, idxChunks:0 };
-let srv = { port:SRV_PORT, ready:false, model:"", device:"", dim:0, modelsDir:"" };
+let srv = { port:SRV_PORT, ready:false, model:"", device:"", dim:0, modelsDir:"", token:"" };
 let indexSeq = 0;
 let serveSeq = 0;   // bumps on every model pick / serveEnsure, so a superseded load stops touching the UI
 let filesAll = [], filesTotal = 0, filesCapped = false, previewSrc = null;
@@ -401,8 +401,13 @@ const ICO = {
 };
 
 // ---- talk to the warm embedding server (direct fetch; it sets CORS) ----
+// Every data route requires the server's ?t=<token>; it comes from serve.py (which
+// reads it off the on-disk sidecar), so it never rides the open HTTP surface. Only
+// /health is unauthenticated, so appending the token there is harmless.
 async function sfetch(path, opts){
-  const r = await fetch("http://127.0.0.1:" + srv.port + path, opts);
+  const url = "http://127.0.0.1:" + srv.port + path
+    + (srv.token ? (path.indexOf("?") >= 0 ? "&" : "?") + "t=" + encodeURIComponent(srv.token) : "");
+  const r = await fetch(url, opts);
   return r.json();
 }
 async function sfetchSafe(path, opts){ try{ return await sfetch(path, opts); }catch(e){ return null; } }
@@ -454,42 +459,23 @@ async function onModelPick(){
 async function serveEnsure(){
   const seq = ++serveSeq;                     // a newer pick/call supersedes this one
   const stale = () => seq !== serveSeq;       // once superseded, stop touching the UI and bail
-  if(srv.ready && srv.model === state.model) return true;
+  if(srv.ready && srv.model === state.model && srv.token) return true;
   const short = shortModel(state.model);
   const waiting = (st) => { setSrv("wait", (st === "downloading" ? "downloading " : "loading ") + short + "…");
     setModelStatus("wait", (st === "downloading" ? "Downloading " : "Loading ") + short + (st === "downloading" ? " · first use" : "") + "…"); };
   const ready = () => { srv.ready = true; setSrv("ready", short + " · " + srv.device); setModelStatus("ready"); return true; };
-  // 1) A server for OUR model already exists — adopt it, and if it's still coming up
-  //    just wait it out (never relaunch, so tabs don't fight over the shared server).
-  const h0 = await sfetchSafe("/health");
-  if(stale()) return false;
-  if(h0 && h0.model === state.model){
-    srv.model = h0.model; srv.device = h0.device; srv.dim = h0.dim; srv.modelsDir = h0.models_dir;
-    if(h0.ready) return ready();
-    waiting(h0.stage);
-    for(let i=0; i<800; i++){
-      await sleep(1500);
-      if(stale()) return false;
-      const h = await sfetchSafe("/health");
-      if(stale()) return false;
-      if(!h || h.model !== state.model) break;            // model changed under us -> fall through to (re)launch
-      if(h.ready){ srv.device = h.device; srv.dim = h.dim; return ready(); }
-      waiting(h.stage);
-    }
-    if(stale()) return false;
-  }
-  // 2) No server, or a DIFFERENT model is running -> launch/switch via serve.py (which
-  //    stops the currently-running server and starts ours).
-  const switching = h0 && h0.model && h0.model !== state.model;
+  // Go through serve.py so we get the server's auth token (it reads it off the
+  // on-disk sidecar). serve.py is idempotent — it adopts a server already running
+  // for our model or switches to it — so this can't spawn a duplicate. The token
+  // never comes over HTTP, so /health-only adoption isn't an option any more.
   srv.ready = false;
-  setSrv("wait", switching ? "switching to " + short + "…" : "starting server…");
-  setModelStatus("wait", switching ? "Switching to " + short + "…" : "Starting model server…");
+  setSrv("wait", "starting server…"); setModelStatus("wait", "Starting model server…");
   let res;
   try{ res = await fused.runPython("./serve.py", { model: state.model || "" }, { key:null }); }
   catch(e){ if(stale()) return false; setSrv("err", "server launch failed"); setModelStatus("err", "Server launch failed"); return false; }
   if(stale()) return false;
   if(!res || !res.ok){ setSrv("err", (res && res.error) || "server error"); setModelStatus("err", (res && res.error) || "Server error"); return false; }
-  srv.port = res.port; srv.model = res.model; srv.device = res.device; srv.dim = res.dim; srv.modelsDir = res.models_dir; srv.ready = !!res.ready;
+  srv.port = res.port; srv.token = res.token || ""; srv.model = res.model; srv.device = res.device; srv.dim = res.dim; srv.modelsDir = res.models_dir; srv.ready = !!res.ready;
   if(!srv.ready){
     waiting(res.stage);
     for(let i=0; i<800; i++){                 // first run downloads the model into the fused-render cache; wait it out
@@ -543,7 +529,7 @@ async function changeCache(raw){
   cachePendingNote = res.same ? "Already saving here"
     : n ? ("Cache moved · "+n+" index"+(n===1?"":"es")+" kept")
     : "Now saving here";
-  fused.params.set("cache", next);
+  fused.params.set("cache", res.to || next);   // store the server's normalized path, not the raw input
 }
 function renderCacheRow(edit){
   const row = $("cacheRow");
@@ -962,7 +948,7 @@ function startPathEdit(){
 function pkSetInfo(n, capped){ $("pkInfo").textContent = n + (capped?"+":"") + " readable file" + (n===1?"":"s"); }
 async function pkRender(dir){
   const body = $("pkBody"); body.innerHTML = '<div class="pk-note">Loading…</div>';
-  if(!srv.port) await serveEnsure();
+  if(!srv.token) await serveEnsure();      // need the auth token before /browse will answer
   const res = await sfetchSafe("/browse?path=" + encodeURIComponent(dir || ""));
   if(!res){ body.innerHTML = '<div class="pk-note">Server not reachable yet — give it a moment.</div>'; return; }
   if(!res.ok){ body.innerHTML = '<div class="pk-note">'+esc(res.error)+'</div>'; return; }
