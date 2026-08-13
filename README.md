@@ -81,6 +81,7 @@ Fused Render pointed at your **own machine** instead of the cloud.
 | [disk_cleaner](local-tools/disk_cleaner/) | Reclaim disk space: sizes ~25 known developer caches (npm, cargo, gradle, Xcode…) and empties the ones you pick, to the Trash or permanently |
 | [download_manager](local-tools/download_manager/) | Multithreaded, resumable download manager with pause/resume, a shared speed limit, and detached workers |
 | [s3_browser](local-tools/s3_browser/) | A web S3 client: saved connections, preview (image/CSV/Parquet), multipart upload, versions, security scan, and policy/CORS/lifecycle editors |
+| [docchat](local-tools/docchat/) | Local RAG chat over a folder or file: sentence-transformers embeddings + DuckDB/HNSW, answered by the local Claude CLI (or extractive passages) |
 
 ---
 
