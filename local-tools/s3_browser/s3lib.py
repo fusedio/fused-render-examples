@@ -5,16 +5,23 @@ Both s3.py and preview.py build clients the same way, so the logic lives here.
 Credential rule: a request may carry a saved-account id (`account_id`) OR the
 non-secret connection fields directly (`profile`/`region`/`anonymous`/`endpoint`).
 Raw access keys are NEVER passed as call params — they would land in the call
-log. Instead they live in a git-ignored `accounts.json` next to this file, and
-the backend reads them by id here. So the page passes only an id; the secret
-never leaves the disk except into the botocore client.
+log. Instead they live in `accounts.json` in fused-render's per-app cache
+(`~/.fused-render/cache/s3_browser/`), so connections persist across worktrees
+and the example folder stays clean. The backend reads them by id here; the page
+passes only an id, and the secret never leaves the disk except into the client.
 """
 import json
 import os
 
-# Guard __file__ so the module also resolves when exec'd without it set.
-HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
-ACCOUNTS_PATH = os.path.join(HERE, "accounts.json")
+CACHE_DIR = os.path.join(os.path.expanduser("~"), ".fused-render", "cache", "s3_browser")
+ACCOUNTS_PATH = os.path.join(CACHE_DIR, "accounts.json")
+
+
+def accounts_location():
+    """The absolute accounts.json path (in fused-render's cache), dir created.
+    The page needs this for readFile/writeFile, which require absolute paths."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    return {"path": ACCOUNTS_PATH, "dir": CACHE_DIR}
 
 
 def load_account(account_id: str):

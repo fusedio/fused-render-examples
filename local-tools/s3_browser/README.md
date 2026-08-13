@@ -10,7 +10,7 @@ A full desktop-style app built as one Fused Render view over a botocore backend 
 
 - **Saved connections.** A sidebar of named connections (AWS profile / access keys / anonymous / S3-compatible endpoint), persisted to a git-ignored `accounts.json`. NOAA and Overture public buckets are seeded on first run, so it does something the moment you open it with no credentials. Credentials resolve server-side by account id, so raw keys never travel as `runPython` params (and never enter the call log).
 - **Browse & transfer.** Folder navigation, breadcrumbs, multi-select of files *and* folders, continuation-token pagination; recursive local download (chunked) and multipart upload, both with progress; batch/recursive delete, rename, new folder.
-- **Inspect.** A per-object dock: properties, preview (image / CSV / Parquet / text via ranged reads — a 500 MB Parquet previews by pulling a few MB), presigned share URLs (SigV4), tag editor, versions (download + restore), storage-class change.
+- **Inspect.** A per-object dock: properties, preview (the object is fetched to a content-addressed local cache and rendered by fused-render's native viewer for its type — PNG, TIFF, PDF, CSV, Parquet, GeoJSON, text), presigned share URLs (SigV4), tag editor, versions (download + restore), storage-class change.
 - **Administer.** A bucket panel: region, versioning toggle, default encryption, public-access-block, a security scan, and policy / CORS / lifecycle JSON editors.
 
 ## Run it
@@ -24,7 +24,7 @@ Open `s3_browser.html` in Fused Render. It seeds two public buckets you can brow
 | `s3_browser.html` | The view — connections sidebar, file table, tabbed object dock, bucket panel. |
 | `s3.py` | Action dispatcher (`main(action=…)`) for list / head / presign / tags / versions / delete / rename / bucket config. |
 | `s3lib.py` | Shared credential resolution, botocore client construction, error envelope. |
-| `preview.py` | Object preview reader (image / CSV / Parquet / text) using ranged reads. |
+| `preview.py` | Localizes an object to a content-addressed cache so fused-render's native viewer can render it. |
 | `download.py` | Chunked recursive local download (`plan` / `step`). |
 | `upload.py` | S3 multipart upload (`start` / `part` / `complete` / `abort`). |
 | `tests/` | Pytest suite — read ops against public buckets, write ops gated on `S3_TEST_BUCKET`. |

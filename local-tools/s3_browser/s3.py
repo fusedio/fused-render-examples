@@ -11,9 +11,10 @@ Every S3 operation the UI needs flows through one dispatcher, `main(action=...)`
   render a friendly state. Only genuine bugs raise and hit the red overlay.
 - **Pagination from day one.** `list_objects` speaks continuation tokens.
 
-botocore drives every call (pandas/pyarrow back the Parquet preview) — declared
-in this folder's pyproject.toml. Anonymous mode is what lets it all be exercised
-against public AWS Open Data buckets with no account.
+botocore drives every call; pandas/pyarrow back the Parquet preview — all in
+fused-render's bundled interpreter, so this folder has no pyproject.toml.
+Anonymous mode is what lets it all be exercised against public AWS Open Data
+buckets with no account.
 """
 import base64
 import json
@@ -480,6 +481,9 @@ def main(
     expires: int = 3600,
     disposition: str = "",
 ):
+    if action == "accounts_path":            # no client/network needed
+        return s3lib.accounts_location()
+
     fn = _ACTIONS.get(action)
     if fn is None:
         return {"error": {"code": "UnknownAction", "message": f"unknown action: {action}"}}
