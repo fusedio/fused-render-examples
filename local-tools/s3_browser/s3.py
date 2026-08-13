@@ -11,14 +11,10 @@ Every S3 operation the UI needs flows through one dispatcher, `main(action=...)`
   render a friendly state. Only genuine bugs raise and hit the red overlay.
 - **Pagination from day one.** `list_objects` speaks continuation tokens.
 
-botocore is the only dependency — it ships in fused-render's bundled set, so this
-folder has no pyproject.toml. Anonymous mode is what lets it all be exercised
+botocore drives every call (pandas/pyarrow back the Parquet preview) — declared
+in this folder's pyproject.toml. Anonymous mode is what lets it all be exercised
 against public AWS Open Data buckets with no account.
 """
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["botocore"]
-# ///
 import base64
 import json
 
@@ -339,10 +335,14 @@ def _presign(client, conn, bucket, key, method, expires, disposition, version_id
     if conn["anonymous"] and method == "get":
         from urllib.parse import quote
 
-        region = conn["region"]
-        host = f"{bucket}.s3.{region}.amazonaws.com" if region else f"{bucket}.s3.amazonaws.com"
+        if conn["endpoint_url"]:                       # S3-compatible (MinIO/Wasabi/R2): path-style
+            base = f"{conn['endpoint_url'].rstrip('/')}/{bucket}/{quote(key)}"
+        else:
+            region = conn["region"]
+            host = f"{bucket}.s3.{region}.amazonaws.com" if region else f"{bucket}.s3.amazonaws.com"
+            base = f"https://{host}/{quote(key)}"
         vq = f"?versionId={quote(version_id)}" if version_id else ""
-        return {"url": f"https://{host}/{quote(key)}{vq}", "expires": None, "signed": False}
+        return {"url": base + vq, "expires": None, "signed": False}
     params = {"Bucket": bucket, "Key": key}
     if disposition:
         params["ResponseContentDisposition"] = disposition

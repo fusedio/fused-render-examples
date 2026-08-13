@@ -1,8 +1,6 @@
 """runPython target for the task tracker: dispatches actions to lake.py."""
-# /// script
-# dependencies = ["duckdb"]
-# ///
-# lake.py (imported below) uses duckdb; it must be in this entry's venv.
+# lake.py (imported below) uses duckdb and pyarrow; both are declared in this
+# folder's pyproject.toml, which defines the venv shared by every .py here.
 import json
 
 import lake

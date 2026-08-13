@@ -14,10 +14,6 @@ Returns one of:
   {"kind": "unsupported", "reason": str, "size": int}
 Errors use the same envelope as s3.py: {"error": {code, message, http_status}}.
 """
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["botocore", "pandas", "pyarrow"]
-# ///
 import base64
 import io
 

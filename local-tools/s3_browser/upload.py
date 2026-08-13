@@ -8,10 +8,6 @@ drives the S3 side: `start` opens the multipart upload, `part` uploads one part,
 ETags live in a job file between calls, since each runPython call is a fresh
 process.
 """
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["botocore"]
-# ///
 import base64
 import json
 import os

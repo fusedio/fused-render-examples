@@ -9,10 +9,6 @@ log. Instead they live in a git-ignored `accounts.json` next to this file, and
 the backend reads them by id here. So the page passes only an id; the secret
 never leaves the disk except into the botocore client.
 """
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["botocore"]
-# ///
 import json
 import os
 

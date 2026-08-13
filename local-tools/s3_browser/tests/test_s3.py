@@ -123,6 +123,28 @@ def test_presign_anonymous_url_is_fetchable(public):
     assert r.status_code in (200, 206)              # S3 decodes %XX back to the real key
 
 
+def test_presign_anonymous_uses_endpoint_url():
+    # S3-compatible public store: the link must use the endpoint (path-style),
+    # not a bucket.s3.<region>.amazonaws.com host.
+    res = s3.main(action="presign", bucket="b", key="a/b.txt", method="get",
+                  anonymous=True, endpoint_url="https://s3.us-west-1.wasabisys.com")
+    assert res["signed"] is False
+    assert res["url"].startswith("https://s3.us-west-1.wasabisys.com/b/a/b.txt")
+
+
+def test_expand_terminates_without_continuation_token():
+    # A non-conforming endpoint can report IsTruncated with no NextContinuationToken;
+    # _expand must stop instead of re-reading page 1 forever.
+    import download
+
+    class Stub:
+        def list_objects_v2(self, **kw):
+            return {"Contents": [{"Key": "x/1", "Size": 1}], "IsTruncated": True}
+
+    items = download._expand(Stub(), "b", [], ["x/"])
+    assert len(items) == 1
+
+
 def test_bucket_region(public):
     res = s3.main(action="bucket_region", **public)
     assert res["region"] == "us-west-2"

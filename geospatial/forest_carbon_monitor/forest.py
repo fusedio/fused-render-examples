@@ -13,9 +13,6 @@ Everything expensive is disk-cached under ./.cache (fused-render runs each
 bridge call in a fresh subprocess, so the cache must live on disk). A cold
 catalog is fetched by a detached warmer process the page polls.
 """
-# /// script
-# dependencies = ["requests"]
-# ///
 
 import functools
 import hashlib

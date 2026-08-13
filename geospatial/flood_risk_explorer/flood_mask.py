@@ -11,9 +11,6 @@ One call per AOI returns everything the 3D scene needs:
     Bay), real water polygons clamp it to 0
 """
 
-# /// script
-# dependencies = ["numpy", "pillow", "scipy", "shapely", "duckdb"]
-# ///
 import base64
 import concurrent.futures
 import heapq

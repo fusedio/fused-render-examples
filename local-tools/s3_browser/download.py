@@ -8,10 +8,6 @@ the page loops `step` until done. No OS subprocess is involved — each call is 
 ordinary bounded `runPython`, which is what makes it reliable inside the app's
 executor.
 """
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["botocore"]
-# ///
 import json
 import os
 import tempfile
@@ -64,9 +60,10 @@ def _expand(client, bucket, keys, prefixes):
             for o in resp.get("Contents", []):
                 if not o["Key"].endswith("/"):
                     items.append({"key": o["Key"], "size": o["Size"]})
-            if resp.get("IsTruncated"):
-                token = resp.get("NextContinuationToken")
-            else:
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
+            if not token:            # truncated but no cursor (non-conforming endpoint) — stop
                 break
     return items
 

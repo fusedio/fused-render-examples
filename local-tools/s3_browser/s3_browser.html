@@ -10,7 +10,7 @@
     --ink: #2b2822; --muted: #736d62; --faint: #a49d8f;
     --line: #e2ddd1; --line-soft: #ece8dd;
     --accent: #3d6187; --accent-ink: #2f4d6e; --tint: #eaf0f6; --sel: #edefe9;
-    --danger: #9c4128; --ok: #4a7c59;
+    --danger: #9c4128; --ok: #4a7c59; --warn: #b07514;
     --shadow: 0 1px 2px rgba(43,40,34,0.04), 0 6px 20px rgba(43,40,34,0.06);
     --serif: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", serif;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
@@ -22,7 +22,7 @@
     --ink: #e9e4d8; --muted: #a49c8c; --faint: #6f685a;
     --line: #332f27; --line-soft: #2a2721;
     --accent: #7ba3cf; --accent-ink: #9cbde0; --tint: #232f3e; --sel: #26241e;
-    --danger: #cf7a5f; --ok: #8fb996;
+    --danger: #cf7a5f; --ok: #8fb996; --warn: #d9a441;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 20px rgba(0,0,0,0.35);
   }
   * { box-sizing: border-box; }
@@ -492,8 +492,7 @@ function renderBuckets() {
 }
 function openBucket(name) {
   SEL.clear(); NEXT = null; ACTIVE_KEY = null;
-  const a = activeAccount();
-  fused.params.set("region", a && a.region ? a.region : "");  // reset so a differently-regioned bucket re-resolves
+  fused.params.set("region", "");   // clear so render() auto-detects THIS bucket's region (buckets may span regions)
   fused.params.set("bucket", name);
   fused.params.set("prefix", "");
 }
@@ -940,7 +939,7 @@ function openModal(a) {
   $("mEndpoint").value = a ? (a.endpoint_url || "") : "";
   $("mAccessKey").value = a && a.access_key ? a.access_key : "";
   $("mSecretKey").value = ""; $("mSecretKey").placeholder = a && a.secret_key ? "•••••• (unchanged)" : "";
-  $("mToken").value = "";
+  $("mToken").value = ""; $("mToken").placeholder = a && a.session_token ? "•••••• stored — re-enter the Secret to change or clear" : "";
   setAuth(a ? a.auth : "anonymous");
   $("mDelete").style.display = a ? "block" : "none";
   populateProfiles(a ? a.profile : "");
@@ -964,14 +963,18 @@ async function saveModal() {
   if (!name) { toast("Name is required", true); return; }
   const auth = currentAuth();
   const prev = editingId ? ACCOUNTS.find((a) => a.id === editingId) : null;
+  // Keep the stored credential set only when editing keys and NOT re-entering the
+  // secret. Re-entering the secret takes access/secret/token fresh from the form —
+  // so a blank token field then clears a stale STS token.
+  const keepCreds = auth === "keys" && !$("mSecretKey").value && prev;
   const a = {
     id: editingId || uid(), label: name, auth,
     region: $("mRegion").value.trim(), bucket: $("mBucket").value.trim().replace(/^s3:\/\//, ""),
     endpoint_url: $("mEndpoint").value.trim(),
     profile: auth === "profile" ? $("mProfile").value : "",
     access_key: auth === "keys" ? $("mAccessKey").value.trim() : "",
-    secret_key: auth === "keys" ? ($("mSecretKey").value || (prev && prev.secret_key) || "") : "",
-    session_token: auth === "keys" ? ($("mToken").value || (prev && prev.session_token) || "") : "",
+    secret_key: auth === "keys" ? (keepCreds ? prev.secret_key : $("mSecretKey").value) : "",
+    session_token: auth === "keys" ? (keepCreds ? (prev.session_token || "") : $("mToken").value.trim()) : "",
   };
   if (editingId) ACCOUNTS = ACCOUNTS.map((x) => x.id === editingId ? a : x);
   else ACCOUNTS.push(a);
