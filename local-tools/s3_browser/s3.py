@@ -389,11 +389,6 @@ def _upload(client, bucket, key, content_b64, content_type, **_):
     return {"key": key, "etag": (resp.get("ETag") or "").strip('"'), "size": len(body)}
 
 
-def _copy_object(client, bucket, key, src_bucket, src_key, **_):
-    client.copy_object(Bucket=bucket, Key=key, CopySource={"Bucket": src_bucket, "Key": src_key})
-    return {"copied": key, "from": f"{src_bucket}/{src_key}"}
-
-
 def _rename_object(client, bucket, key, src_key, **_):
     client.copy_object(Bucket=bucket, Key=key, CopySource={"Bucket": bucket, "Key": src_key})
     client.delete_object(Bucket=bucket, Key=src_key)
@@ -436,7 +431,6 @@ _ACTIONS = {
     "delete_objects": _delete_objects,
     "create_folder": _create_folder,
     "upload": _upload,
-    "copy_object": _copy_object,
     "rename_object": _rename_object,
     "change_storage_class": _change_storage_class,
     "restore_version": _restore_version,
@@ -464,7 +458,6 @@ def main(
     name: str = "",
     content_b64: str = "",
     content_type: str = "",
-    src_bucket: str = "",
     src_key: str = "",
     tags: str = "",
     storage_class: str = "",
@@ -497,7 +490,6 @@ def main(
             name=name,
             content_b64=content_b64,
             content_type=content_type,
-            src_bucket=src_bucket or bucket,
             src_key=src_key,
             tags=json.loads(tags) if tags else [],
             storage_class=storage_class,

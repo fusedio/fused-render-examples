@@ -127,9 +127,9 @@ def test_presign_anonymous_uses_endpoint_url():
     # S3-compatible public store: the link must use the endpoint (path-style),
     # not a bucket.s3.<region>.amazonaws.com host.
     res = s3.main(action="presign", bucket="b", key="a/b.txt", method="get",
-                  anonymous=True, endpoint_url="https://s3.us-west-1.wasabisys.com")
+                  anonymous=True, endpoint_url="https://s3.example.com")
     assert res["signed"] is False
-    assert res["url"].startswith("https://s3.us-west-1.wasabisys.com/b/a/b.txt")
+    assert res["url"].startswith("https://s3.example.com/b/a/b.txt")
 
 
 def test_expand_terminates_without_continuation_token():

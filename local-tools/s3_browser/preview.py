@@ -4,7 +4,7 @@ Peeks at an object without downloading the whole thing. Text/CSV read a bounded
 prefix via a ranged GET; Parquet reads only the footer (schema) plus a
 column-projected slice of the first row group through a seekable range reader —
 so a 500 MB file previews by pulling a few MB, not 500. All auth modes work
-because every byte comes through the botocore client (which s3.py builds), not
+because every byte comes through the botocore client (which s3lib builds), not
 through a filesystem layer with its own credential rules.
 
 Returns one of:

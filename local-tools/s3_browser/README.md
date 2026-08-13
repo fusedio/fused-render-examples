@@ -6,7 +6,7 @@ A web-based Amazon S3 client — browse buckets, preview objects, and move files
 
 ## What it demonstrates
 
-A full desktop-style app built as one Fused Render view over a botocore backend — no build step, no boto3, no `pyproject.toml` (botocore is in the bundled interpreter).
+A full desktop-style app built as one Fused Render view over a botocore backend — no build step, no boto3. Dependencies (botocore, pandas, pyarrow) are declared once in the folder's `pyproject.toml`.
 
 - **Saved connections.** A sidebar of named connections (AWS profile / access keys / anonymous / S3-compatible endpoint), persisted to a git-ignored `accounts.json`. NOAA and Overture public buckets are seeded on first run, so it does something the moment you open it with no credentials. Credentials resolve server-side by account id, so raw keys never travel as `runPython` params (and never enter the call log).
 - **Browse & transfer.** Folder navigation, breadcrumbs, multi-select of files *and* folders, continuation-token pagination; recursive local download (chunked) and multipart upload, both with progress; batch/recursive delete, rename, new folder.
@@ -22,7 +22,7 @@ Open `s3_browser.html` in Fused Render. It seeds two public buckets you can brow
 | File | Role |
 |---|---|
 | `s3_browser.html` | The view — connections sidebar, file table, tabbed object dock, bucket panel. |
-| `s3.py` | Action dispatcher (`main(action=…)`) for list / head / presign / tags / versions / delete / copy / bucket config. |
+| `s3.py` | Action dispatcher (`main(action=…)`) for list / head / presign / tags / versions / delete / rename / bucket config. |
 | `s3lib.py` | Shared credential resolution, botocore client construction, error envelope. |
 | `preview.py` | Object preview reader (image / CSV / Parquet / text) using ranged reads. |
 | `download.py` | Chunked recursive local download (`plan` / `step`). |
