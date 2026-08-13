@@ -132,6 +132,23 @@ def test_presign_anonymous_uses_endpoint_url():
     assert res["url"].startswith("https://s3.example.com/b/a/b.txt")
 
 
+def test_rename_refuses_existing_destination():
+    # If the destination key already exists, rename must refuse rather than let
+    # copy_object silently overwrite it.
+    class Stub:
+        def head_object(self, **kw):
+            return {}                         # destination exists
+
+        def copy_object(self, **kw):
+            raise AssertionError("must not copy over an existing key")
+
+        def delete_object(self, **kw):
+            raise AssertionError("must not delete the source")
+
+    res = s3._rename_object(Stub(), bucket="b", key="dest.txt", src_key="src.txt")
+    assert res["error"]["code"] == "DestinationExists"
+
+
 def test_expand_terminates_without_continuation_token():
     # A non-conforming endpoint can report IsTruncated with no NextContinuationToken;
     # _expand must stop instead of re-reading page 1 forever.

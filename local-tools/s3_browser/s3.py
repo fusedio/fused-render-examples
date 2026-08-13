@@ -390,6 +390,16 @@ def _upload(client, bucket, key, content_b64, content_type, **_):
 
 
 def _rename_object(client, bucket, key, src_key, **_):
+    from botocore.exceptions import ClientError
+
+    # Refuse to rename onto an existing object — copy_object would silently
+    # overwrite it. (HeadObject on a missing key raises a 404.)
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+        return {"error": {"code": "DestinationExists", "message": f"an object named '{key}' already exists"}}
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") != "404":
+            raise
     client.copy_object(Bucket=bucket, Key=key, CopySource={"Bucket": bucket, "Key": src_key})
     client.delete_object(Bucket=bucket, Key=src_key)
     return {"renamed": key, "from": src_key}
