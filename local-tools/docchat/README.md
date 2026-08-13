@@ -7,6 +7,8 @@ A conversational RAG app built as a **fused-render view**. Point it at a folder
 `claude` CLI (Fused AI) or shown as the raw retrieved passages. **No Ollama, no
 cloud, no API keys.**
 
+![DocChat](../../assets/docchat.png)
+
 - **Embeddings:** a sentence-transformers model, loaded **once** by a warm
   in-process server and kept in memory. Default `Qwen/Qwen3-Embedding-0.6B`;
   switchable to `BAAI/bge-base-en-v1.5`, `BAAI/bge-small-en-v1.5`, or
