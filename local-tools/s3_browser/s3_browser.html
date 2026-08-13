@@ -426,8 +426,8 @@ let ACTIVE_KEY = null;   // object shown in the dock
 // pages render instantly from cache; the refresh button forces a refetch.
 const LIST_CACHE = new Map();    // "acct|bucket|prefix" -> list_objects result
 const BUCKET_CACHE = new Map();  // acct id -> bucket names
-const REGION_CACHE = new Map();  // bucket -> region
-const DOCK_CACHE = new Map();    // "bucket|key|tab" -> fetched dock result
+const REGION_CACHE = new Map();  // "acct|bucket" -> region
+const DOCK_CACHE = new Map();    // "acct|bucket|key|tab" -> fetched dock result
 const STORAGE_CLASSES = ["STANDARD", "STANDARD_IA", "ONEZONE_IA", "INTELLIGENT_TIERING", "GLACIER_IR", "GLACIER", "DEEP_ARCHIVE", "REDUCED_REDUNDANCY"];
 
 // ---- helpers ----
@@ -456,7 +456,7 @@ function connParams() {
   if (region()) p.region = region();
   return p;
 }
-async function call(action, extra = {}) { return fused.runPython("./s3.py", { action, ...connParams(), ...extra }); }
+async function call(action, extra = {}, conn = connParams()) { return fused.runPython("./s3.py", { action, ...conn, ...extra }); }
 async function callPreview(extra = {}) { return fused.runPython("./preview.py", { ...connParams(), ...extra }); }
 function embedUrl(localPath) {
   return window.location.origin + "/explorer/embed/" +
@@ -621,8 +621,8 @@ function selectObject(key) {
   renderDock();
 }
 function currentTab() { return document.querySelector(".dtab.on")?.getAttribute("data-tab") || "props"; }
-function dockInvalidate(bkt, key) {
-  for (const k of [...DOCK_CACHE.keys()]) if (k.startsWith(bkt + "|" + key + "|")) DOCK_CACHE.delete(k);
+function dockInvalidate(acct, bkt, key) {
+  for (const k of [...DOCK_CACHE.keys()]) if (k.startsWith(acct + "|" + bkt + "|" + key + "|")) DOCK_CACHE.delete(k);
 }
 // While head_object runs, show what the listing already knows about the object.
 function quickProps(key) {
@@ -639,8 +639,8 @@ function quickProps(key) {
 async function renderDock(force = false) {
   const b = $("dockBody"), key = ACTIVE_KEY;
   if (!key) { b.innerHTML = `<div class="sidehint">Select an object to inspect it.</div>`; return; }
-  const tab = currentTab(), bkt = bucket();
-  const ck = bkt + "|" + key + "|" + tab;
+  const tab = currentTab(), bkt = bucket(), acct = acctId();
+  const ck = acct + "|" + bkt + "|" + key + "|" + tab;
   let res = force ? null : DOCK_CACHE.get(ck);
   if (!res) {
     if (!(tab === "props" && quickProps(key))) b.innerHTML = `<div class="sidehint"><span class="spin"></span> loading…</div>`;
@@ -705,7 +705,7 @@ async function changeStorageClass(key, storageClass) {
   const res = await call("change_storage_class", { bucket: bucket(), key, storage_class: storageClass });
   if (res.error) { toast(res.error.message, true); return; }
   toast(`Storage class → ${storageClass}`);
-  dockInvalidate(bucket(), key);
+  dockInvalidate(acctId(), bucket(), key);
   renderDock();
 }
 
@@ -740,9 +740,11 @@ function renderPreview(res, key) {
   if (res.too_large) {
     b.innerHTML = `<div class="sidehint">${esc(res.filename)} is ${fmtSize(res.size)} — <span class="vlink" id="pLoad">Load preview</span> · <span class="vlink" id="pOpen">Open in new tab</span></div>`;
     $("pLoad").onclick = async () => {
+      const acct = acctId(), bkt = bucket();
       b.innerHTML = `<div class="sidehint"><span class="spin"></span> Localizing…</div>`;
-      const full = await callPreview({ bucket: bucket(), key, max_bytes: "52428800", force: "true" });
-      if (!full.error) DOCK_CACHE.set(bucket() + "|" + key + "|preview", full);
+      const full = await callPreview({ bucket: bkt, key, max_bytes: "52428800", force: "true" });
+      if (!full.error) DOCK_CACHE.set(acct + "|" + bkt + "|" + key + "|preview", full);
+      if (ACTIVE_KEY !== key || currentTab() !== "preview") return;
       renderPreview(full, key);
     };
     $("pOpen").onclick = () => downloadKey(key);
@@ -780,7 +782,7 @@ async function saveTags(key) {
   const tags = [...document.querySelectorAll("#tagRows .tagrow")].map((r) => ({ key: r.querySelector(".k").value.trim(), value: r.querySelector(".v").value })).filter((t) => t.key);
   const res = await call("put_tags", { bucket: bucket(), key, tags: JSON.stringify(tags) });
   if (res.error) { toast(res.error.message, true); return; }
-  dockInvalidate(bucket(), key);
+  dockInvalidate(acctId(), bucket(), key);
   toast(`Saved ${res.count} tag(s)`);
 }
 function renderVersions(res, key) {
@@ -802,7 +804,7 @@ async function restoreVersion(key, versionId) {
   if (!await confirmModal({ title: "Restore version", message: "Make this version the current one? Older versions are kept.", okText: "Make current" })) return;
   const res = await call("restore_version", { bucket: bucket(), key, version_id: versionId });
   if (res.error) { toast(res.error.message, true); return; }
-  dockInvalidate(bucket(), key);
+  dockInvalidate(acctId(), bucket(), key);
   toast("Restored version as current"); renderDock();
 }
 
@@ -940,7 +942,7 @@ async function doRename(key) {
   const dest = key.slice(0, key.length - cur.length) + name;   // keep the same folder
   const res = await call("rename_object", { bucket: bucket(), key: dest, src_key: key });
   if (res.error) { toast(res.error.message, true); return; }
-  dockInvalidate(bucket(), key);
+  dockInvalidate(acctId(), bucket(), key);
   ACTIVE_KEY = null; toast("Renamed to " + name);
   const entry = LIST_CACHE.get(listKey());
   if (entry && !entry.error) {
@@ -951,23 +953,23 @@ async function doRename(key) {
 }
 const MULTIPART_THRESHOLD = 8 * 1024 * 1024;   // files larger than this upload in parts
 const PART_SIZE = 8 * 1024 * 1024;
-async function callUp(action, extra = {}) { return fused.runPython("./upload.py", { action, ...connParams(), ...extra }); }
+async function callUp(action, extra = {}, conn = connParams()) { return fused.runPython("./upload.py", { action, ...conn, ...extra }); }
 function blobToB64(blob) { return new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result.split(",")[1]); r.readAsDataURL(blob); }); }
 
 // Uploads run in the background (a few at a time) and never trigger a full
 // refetch: each finished file is inserted straight into the cached listing.
 async function doUpload(files) {
-  const bkt = bucket(), pfx = prefix();
+  const bkt = bucket(), pfx = prefix(), conn = connParams();
   toast(`Uploading ${files.length} file(s) in the background`);
   const queue = [...files];
   await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
-    while (queue.length) await uploadOne(queue.shift(), bkt, pfx);
+    while (queue.length) await uploadOne(queue.shift(), bkt, pfx, conn);
   }));
 }
-function noteUploaded(bkt, key, size) {
-  dockInvalidate(bkt, key);
+function noteUploaded(bkt, key, size, acct) {
+  dockInvalidate(acct, bkt, key);
   const pfx = key.slice(0, key.lastIndexOf("/") + 1);
-  const k = acctId() + "|" + bkt + "|" + pfx;
+  const k = acct + "|" + bkt + "|" + pfx;
   const entry = LIST_CACHE.get(k);
   if (!entry || entry.error) return;
   const row = { key, name: key.split("/").pop(), size, last_modified: new Date().toISOString(), storage_class: "STANDARD" };
@@ -977,40 +979,40 @@ function noteUploaded(bkt, key, size) {
   else { files.push(row); files.sort((a, b) => a.name.localeCompare(b.name)); }
   if (k === listKey()) renderList(entry);
 }
-async function uploadOne(file, bkt, pfx) {
+async function uploadOne(file, bkt, pfx, conn) {
   const key = pfx + file.name;
   const tid = addTransfer({ name: file.name, kind: "upload", total: file.size });
   if (file.size <= MULTIPART_THRESHOLD) {
-    const res = await call("upload", { bucket: bkt, key, content_b64: await blobToB64(file), content_type: file.type || "" });
+    const res = await call("upload", { bucket: bkt, key, content_b64: await blobToB64(file), content_type: file.type || "" }, conn);
     if (res.error) { finishTransfer(tid, "error", res.error.message); return; }
     finishTransfer(tid, "done");
-    noteUploaded(bkt, key, file.size);
+    noteUploaded(bkt, key, file.size, conn.account_id);
     return;
   }
   // multipart
   const partSize = Math.max(PART_SIZE, Math.ceil(file.size / 9000));   // keep under S3's 10000-part cap
   const totalParts = Math.ceil(file.size / partSize);
-  const start = await callUp("start", { bucket: bkt, key, content_type: file.type || "" });
+  const start = await callUp("start", { bucket: bkt, key, content_type: file.type || "" }, conn);
   if (start.error) { finishTransfer(tid, "error", start.error.message); return; }
   const job = start.job;
   const handle = fused.trackJob({ id: "s3up:" + job, title: "Upload " + file.name, kind: "task", unit: "bytes", cancellable: true });
   try {
     for (let p = 1; p <= totalParts; p++) {
       const b64 = await blobToB64(file.slice((p - 1) * partSize, p * partSize));
-      const res = await callUp("part", { job, part_number: String(p), content_b64: b64 });
+      const res = await callUp("part", { job, part_number: String(p), content_b64: b64 }, conn);
       if (res.error) throw new Error(res.error.message);
       const doneBytes = Math.min(p * partSize, file.size);
       updateTransfer(tid, { done: doneBytes, detail: `${p}/${totalParts} parts` });
       handle.update({ done: doneBytes, total: file.size });
-      if (handle.cancelRequested) { await callUp("abort", { job }); handle.cancelled(); finishTransfer(tid, "cancelled"); return; }
+      if (handle.cancelRequested) { await callUp("abort", { job }, conn); handle.cancelled(); finishTransfer(tid, "cancelled"); return; }
     }
-    const done = await callUp("complete", { job });
+    const done = await callUp("complete", { job }, conn);
     if (done.error) throw new Error(done.error.message);
     handle.finish("Uploaded");
     finishTransfer(tid, "done", `${totalParts} parts`);
-    noteUploaded(bkt, key, file.size);
+    noteUploaded(bkt, key, file.size, conn.account_id);
   } catch (e) {
-    await callUp("abort", { job });
+    await callUp("abort", { job }, conn);
     handle.fail(e.message);
     finishTransfer(tid, "error", e.message);
   }
@@ -1245,11 +1247,12 @@ async function render(force = false) {
   if (!a) { $("listwrap").innerHTML = `<div class="empty"><div class="big">Welcome</div>Pick a connection on the left, or add one.</div>`; $("status").textContent = ""; return; }
   if (!bkt) { $("listwrap").innerHTML = `<div class="empty"><div class="big">Choose a bucket</div>Select a bucket from the sidebar.</div>`; $("status").textContent = ""; return; }
   if (!region()) {
-    let r = REGION_CACHE.get(bkt);
+    const rk = acctId() + "|" + bkt;
+    let r = REGION_CACHE.get(rk);
     if (r === undefined) {
       const res = await call("bucket_region", { bucket: bkt });
       r = res.error ? "" : (res.region || "");
-      if (!res.error) REGION_CACHE.set(bkt, r);
+      if (!res.error) REGION_CACHE.set(rk, r);
     }
     if (r) { fused.params.set("region", r); return; }
   }
