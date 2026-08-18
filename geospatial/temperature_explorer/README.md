@@ -56,17 +56,10 @@ start_year, end_year})`. Both sources return the same normalized shape
 
 ## Dependencies
 
-The Open-Meteo path is stdlib-only. The Zarr path needs `xarray` and `gcsfs`
-in the fused-render Python (`xarray`, `fsspec`, `numpy`, `pandas` are
-otherwise assumed present):
-
-```
-uv pip install zarr gcsfs
-```
-
-If either is missing, the Zarr source fails fast with a message naming the
-missing packages rather than installing anything — use Open-Meteo instead,
-which needs nothing extra.
+The Zarr source needs `numpy`, `xarray`, `zarr`, and `gcsfs`. They're declared
+in this folder's `pyproject.toml`, so fused-render builds the environment up
+front on first render (a one-time `uv sync` you wait through) — no manual
+install step. The Open-Meteo source is stdlib-only.
 
 ## Run it
 
@@ -78,6 +71,7 @@ Copy this folder into your Fused Render install and open `index.html`.
 |---|---|
 | `index.html` | the whole UI — map, search, controls, D3 charts, provenance |
 | `fetch_temps.py` | `runPython` entrypoint: Open-Meteo (sync) + ERA5 Zarr (async worker + cache) |
+| `pyproject.toml` / `uv.lock` | the Zarr path's deps (`numpy`, `xarray`, `zarr`, `gcsfs`); installed on first render |
 | `vendor/` | `d3.min.js`, `maplibre-gl.{js,css}`, `nouislider.min.{js,css}`, Roboto woff2 + `roboto.css` |
 | `data/zarr_cache/` | regenerable per-point cache for the Zarr path (gitignored) |
 
