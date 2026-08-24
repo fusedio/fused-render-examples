@@ -268,7 +268,7 @@
     <button class="mbtn" id="panelBtn">Legend &amp; layers</button>
     <button class="mbtn" id="fitBtn">Fit city</button>
   </div>
-  <div id="rightPanel">
+  <div id="rightPanel" style="display:none">
     <h3>Layers</h3>
     <div id="layers"></div>
     <div class="note" id="layerNote">Turn on <b>Overture footprints</b> to draw that
@@ -353,6 +353,7 @@ let mode = "score";                     // "score" | "diff"
 let selected = 0, cmpA = 0, cmpB = 0;
 let hidden = new Set(), scopeStats = null, diffStats = null, boxBounds = null;
 let scopeStamp = 0;
+let statsSeq = 0;                        // guards against out-of-order stats.py replies
 let showPhilly = true, showOverture = false;
 
 const $ = id => document.getElementById(id);
@@ -366,7 +367,9 @@ async function boot() {
   const status = await fused.runPython("./prepare.py", { action: "status" });
   if (status.ready) { READY = status.summary; return start(); }
   renderPrepSteps(status.progress && status.progress.steps);
-  if (status.running) { $("prepGo").style.display = "none"; return pollPrepare(); }
+  /* Wire the build button before the early return below: a worker already
+     running hides it, but if that build later fails pollPrepare re-shows it as
+     "Retry", and it must have a handler then too. */
   $("prepGo").onclick = async () => {
     $("prepGo").disabled = true;
     $("prepMsg").textContent = "Starting…";
@@ -375,6 +378,7 @@ async function boot() {
     $("prepGo").style.display = "none";
     pollPrepare();
   };
+  if (status.running) { $("prepGo").style.display = "none"; return pollPrepare(); }
 }
 
 function renderPrepSteps(steps) {
@@ -446,11 +450,14 @@ function qualityCounts(i) {
 
 /* One refresh path for every state change. */
 async function refresh() {
+  const seq = ++statsSeq;
   if (mode === "diff") {
     diffStats = null;
     renderKpis(); renderLegend();
-    diffStats = await runPy("./stats.py",
+    const result = await runPy("./stats.py",
       { action: "compare", a: cmpA, b: cmpB, bbox: boxBounds || null });
+    if (seq !== statsSeq) return;       // a newer refresh has superseded this one
+    diffStats = result;
   }
   renderKpis();
   renderLegend();
@@ -556,11 +563,11 @@ function updateScopeNote() {
 
 /* -------------------------------- right -------------------------------- */
 
-/* The legend & layers panel starts closed so the map is unobstructed on open;
-   the chip toggles it. */
+/* The legend & layers panel starts closed (hidden in the markup, so it never
+   flashes over the map during load) so the map is unobstructed on open; the
+   chip toggles it. */
 function wirePanelButton() {
   const panel = $("rightPanel");
-  panel.style.display = "none";
   $("panelBtn").onclick = () => {
     const open = panel.style.display !== "none";
     panel.style.display = open ? "none" : "";
@@ -1132,11 +1139,13 @@ function setCityScope() {
 
 async function setBoxScope(bbox) {
   boxBounds = bbox;
+  const seq = ++statsSeq;
   const [w, s, e, n] = bbox;
   map.getSource("box").setData({ type: "Feature", geometry: { type: "Polygon",
     coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } });
   $("scopeNote").textContent = "Scoring the drawn area…";
   const stats = await runPy("./stats.py", { action: "area", bbox });
+  if (seq !== statsSeq) return;         // superseded (e.g. Escape, or a new box)
   if (!stats.total) {
     showHint("No buildings in that box.");
     return setCityScope();

@@ -385,10 +385,14 @@ def _score_release(release):
         WHERE rank = 1
     """)
     _step(step, 80)
+    # Round the stored IoU so the release summary below, stats.parquet and the
+    # map tiles all classify each building from the same value; otherwise a
+    # footprint sitting on a band edge can be coloured on one side of it and
+    # counted on the other.
     con.execute(f"""
         COPY (
             SELECT p.fid,
-                   coalesce(best.iou, 0.0) AS iou,
+                   round(coalesce(best.iou, 0.0), 4) AS iou,
                    coalesce(best.gers_id, '') AS gers_id
             FROM p LEFT JOIN best USING (fid)
             ORDER BY p.fid
