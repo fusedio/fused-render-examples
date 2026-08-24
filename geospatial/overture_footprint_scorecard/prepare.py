@@ -23,6 +23,17 @@ import time
 import urllib.parse
 import urllib.request
 
+# The detached worker below relaunches this file as `python prepare.py
+# --worker`. Fused Render's packaged interpreter is built from a Windows
+# embeddable distribution (a `._pth` file pins sys.path at start-up), and a
+# venv built from it inherits that: the script's own directory is never
+# auto-added, so the sibling import below would raise ModuleNotFoundError
+# for a plain `python prepare.py` invocation. Harmless when it's already
+# there (running through runPython's own sys.path setup).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 from common import (
     BANDS,
     CACHE,
