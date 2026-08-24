@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Overture vs Philadelphia — footprint scorecard</title>
+<script type="application/fused-bundle">
+{"include": ["vendor/*"]}
+</script>
+<style>
+  :root {
+    --page: #f9f9f7; --panel: #fcfcfb; --sunk: #f2f1ed;
+    --hair: #e1e0d9; --rule: #c3c2b7;
+    --ink: #0b0b0b; --sub: #52514e; --muted: #898781;
+    --accent: #2a78d6;
+    /* agreement: one blue hue, light = close, dark = poor; red = absent */
+    --q1: #6da7ec; --q2: #256abf; --q3: #0d366b; --q0: #d03b3b;
+    /* change between releases: diverging, neutral grey midpoint */
+    --up2: #0ca30c; --up1: #7fc47f; --mid: #dcdbd4; --dn1: #e78a8a; --dn2: #d03b3b;
+    --overture: #b5179e;
+  }
+  * { margin: 0; box-sizing: border-box;
+      font-family: Inter, 'Segoe UI', ui-sans-serif, system-ui, sans-serif; }
+  html, body { height: 100%; overflow: hidden; background: var(--page); color: var(--ink); }
+  #map { position: absolute; inset: 0 0 0 320px; background: #eef2f6; transition: left .28s ease; }
+  body.side-collapsed #map { left: 0; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  b { font-weight: 600; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ------------------------------ left ------------------------------ */
+  #side { position: absolute; inset: 0 auto 0 0; width: 320px; background: var(--panel);
+    border-right: 1px solid var(--hair); display: flex; flex-direction: column; z-index: 20;
+    transition: transform .28s ease; }
+  body.side-collapsed #side { transform: translateX(-100%); }
+  #side header { position: relative; padding: 17px 18px 13px; border-bottom: 1px solid var(--hair); }
+  #side h1 { padding-right: 26px; }
+
+  /* collapse / reopen the left panel */
+  #sideToggle { position: absolute; top: 14px; right: 12px; width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center; border-radius: 6px;
+    color: var(--muted); font-size: 17px; line-height: 1; }
+  #sideToggle:hover { background: var(--sunk); color: var(--ink); }
+  #sideOpen { position: absolute; top: 14px; left: 14px; z-index: 22; display: none;
+    align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--hair);
+    border-radius: 6px; padding: 6px 11px; font-size: 11.5px; color: var(--sub);
+    box-shadow: 0 1px 3px rgba(11,11,11,.09); }
+  #sideOpen:hover { color: var(--ink); }
+  #sideOpen .bars { font-size: 14px; line-height: 1; }
+  body.side-collapsed #sideOpen { display: flex; }
+  #side h1 { font-size: 14.5px; font-weight: 600; letter-spacing: -.01em; }
+  #side h1 span { color: var(--muted); font-weight: 400; }
+  #side .tagline { margin-top: 5px; font-size: 11px; color: var(--sub); line-height: 1.5; }
+  #scroll { flex: 1; overflow-y: auto; padding: 0 18px 14px; }
+  .sect { padding-top: 12px; }
+  .sect > h2 { font-size: 9.5px; font-weight: 600; letter-spacing: .1em; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 6px; }
+  .sect > h2 .hint { float: right; font-weight: 400; letter-spacing: 0;
+    text-transform: none; font-size: 10px; }
+
+  /* mode switch */
+  #mode { display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    border: 1px solid var(--hair); border-radius: 6px; overflow: hidden; }
+  #mode button { padding: 7px 4px; font-size: 11.5px; color: var(--sub); background: var(--sunk); }
+  #mode button.on { background: var(--panel); color: var(--ink); font-weight: 500;
+    box-shadow: inset 0 -2px 0 var(--accent); }
+  #modeHelp { margin-top: 7px; font-size: 10.5px; color: var(--muted); line-height: 1.5; }
+
+  /* KPIs */
+  /* composition of the change, in the same colours the map uses */
+  #chgbar { display: flex; height: 9px; border-radius: 2px; overflow: hidden;
+    background: var(--sunk); margin-bottom: 9px; }
+  #chgbar i { height: 100%; }
+  #chgbar i + i { box-shadow: -1px 0 0 var(--panel); }
+  #chgrows { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; }
+  .chg { display: grid; grid-template-columns: 9px auto 1fr; gap: 6px;
+    align-items: center; font-size: 11px; }
+  .chg .sw { width: 9px; height: 9px; border-radius: 2px; }
+  .chg .n { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chg .t { color: var(--sub); }
+
+  .chgnote { margin-top: 5px; font-size: 10px; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+
+  #kpis { display: flex; gap: 20px; align-items: flex-start; }
+  .kpi .v { font-size: 23px; font-weight: 600; letter-spacing: -.02em; line-height: 1;
+    font-variant-numeric: tabular-nums; }
+  .kpi .l { margin-top: 4px; font-size: 10px; color: var(--sub); line-height: 1.3;
+    max-width: 82px; }
+
+  /* compare pickers */
+  .pick { display: grid; grid-template-columns: 16px 1fr; gap: 8px; align-items: center;
+    margin-bottom: 7px; }
+  .pick .tag { font-size: 9.5px; color: var(--muted); text-transform: uppercase; }
+  select { font: inherit; font-size: 11.5px; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--hair); border-radius: 5px; padding: 5px 6px; width: 100%;
+    font-variant-numeric: tabular-nums; }
+
+  /* area */
+  #scope { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .sbtn { padding: 7px 5px; border-radius: 5px; background: var(--sunk);
+    border: 1px solid var(--hair); font-size: 11.5px; color: var(--sub); }
+  .sbtn:hover { color: var(--ink); border-color: var(--rule); }
+  .sbtn.on { background: var(--panel); color: var(--ink); border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent); font-weight: 500; }
+  #scopeNote { margin-top: 7px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+
+  /* trend */
+  #trend svg { display: block; overflow: visible; }
+  #trendKey { display: flex; gap: 13px; margin-top: 5px; font-size: 10px; color: var(--sub); }
+  #trendKey i { display: inline-block; width: 12px; border-top: 2px solid;
+    vertical-align: middle; margin-right: 4px; }
+
+  /* ------------------------------ right ------------------------------ */
+  #rightWrap { position: absolute; top: 14px; right: 14px; z-index: 16;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+  .mbtn { background: var(--panel); border: 1px solid var(--hair); border-radius: 6px;
+    padding: 6px 11px; font-size: 11.5px; color: var(--sub);
+    box-shadow: 0 1px 3px rgba(11,11,11,.07); white-space: nowrap; }
+  .mbtn:hover { color: var(--ink); }
+  .mbtn.on { color: var(--ink); border-color: var(--accent); }
+  #rightPanel { width: 244px; background: var(--panel); border: 1px solid var(--hair);
+    border-radius: 8px; box-shadow: 0 6px 20px rgba(11,11,11,.13); padding: 13px 14px;
+    max-height: calc(100vh - 72px); overflow-y: auto;
+    animation: panelIn .16s ease; }
+  @keyframes panelIn { from { opacity: 0; transform: translateY(-4px); } }
+  #rightPanel h3 { font-size: 9.5px; font-weight: 600; letter-spacing: .1em; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 8px; }
+  #rightPanel h3 + h3 { margin-top: 14px; }
+  #rightPanel .note { margin-top: 9px; font-size: 10px; color: var(--muted); line-height: 1.5; }
+
+  .lyr { display: grid; grid-template-columns: 14px 15px 1fr; gap: 8px; align-items: center;
+    width: 100%; text-align: left; padding: 5px 4px; border-radius: 5px; font-size: 11.5px; }
+  .lyr:hover { background: var(--sunk); }
+  .lyr .ck { font-size: 11px; color: var(--accent); }
+  .lyr.off .ck { color: var(--rule); }
+  .lyr.off { color: var(--muted); }
+  .lyr .key { height: 11px; border-radius: 2px; }
+
+  .lrow { display: grid; grid-template-columns: 11px 1fr auto; gap: 8px; align-items: center;
+    width: 100%; text-align: left; padding: 5px 4px; border-radius: 5px;
+    font-variant-numeric: tabular-nums; }
+  .lrow:hover { background: var(--sunk); }
+  .lrow .sw { width: 11px; height: 11px; border-radius: 2px; }
+  .lrow .nm { font-size: 11.5px; }
+  .lrow .nm em { font-style: normal; color: var(--muted); font-size: 10px; }
+  .lrow .ct { font-size: 11px; color: var(--sub); }
+  .lrow.off { opacity: .42; }
+  .lrow.off .nm { text-decoration: line-through; }
+
+  /* map chrome */
+  #hint { position: absolute; top: 14px; left: 334px; z-index: 17; display: none;
+    background: var(--ink); color: #fff; border-radius: 6px; padding: 6px 12px; font-size: 11.5px;
+    transition: left .28s ease; }
+  body.side-collapsed #hint { left: 60px; }
+  #marquee { position: absolute; display: none; z-index: 14; pointer-events: none;
+    border: 1px dashed var(--accent); background: rgba(42,120,214,.07); }
+  #tip { position: absolute; pointer-events: none; z-index: 30; display: none; max-width: 250px;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    padding: 7px 10px; font-size: 11.5px; box-shadow: 0 2px 10px rgba(11,11,11,.13); }
+  #tip .t { font-weight: 600; }
+  #tip .s { color: var(--sub); font-variant-numeric: tabular-nums; }
+  #tip .h { color: var(--muted); font-size: 10px; margin-top: 3px; }
+
+  /* detail */
+  #detail { position: absolute; right: 14px; bottom: 26px; width: 296px; z-index: 25;
+    display: none; background: var(--panel); border: 1px solid var(--hair);
+    border-radius: 8px; padding: 14px 16px; box-shadow: 0 3px 16px rgba(11,11,11,.12);
+    transition: width .2s ease; }
+  #detail.big { width: 470px; padding: 16px 18px; }
+  #detail h4 { font-size: 12px; font-weight: 600; padding-right: 40px; line-height: 1.4; }
+  #detail.big h4 { font-size: 15px; }
+  #detail .meta { font-size: 10px; color: var(--muted); margin-top: 3px; }
+  #detail.big .meta { font-size: 11.5px; margin-top: 5px; }
+  #detail .close { position: absolute; top: 8px; right: 10px; color: var(--muted); font-size: 14px; }
+  #detail .close:hover { color: var(--ink); }
+  #detail .expand { position: absolute; top: 8px; right: 30px; color: var(--muted); font-size: 13px;
+    line-height: 1; }
+  #detail .expand:hover { color: var(--ink); }
+  #detail.big .expand { transform: rotate(180deg); }
+  #detail .hd { margin: 11px 0 3px; font-size: 9px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); }
+  #detail.big .hd { font-size: 10px; margin-top: 15px; }
+  #detail svg { display: block; overflow: visible; }
+  #detail .gers { margin-top: 9px; font-size: 9px; color: var(--muted); word-break: break-all; }
+  #detail.big .gers { font-size: 10px; margin-top: 12px; }
+
+  /* prepare */
+  #prep { position: absolute; inset: 0; z-index: 100; background: var(--page);
+    display: flex; align-items: center; justify-content: center; }
+  #prepCard { width: min(540px, calc(100vw - 40px)); background: var(--panel);
+    border: 1px solid var(--hair); border-radius: 10px; padding: 28px 30px;
+    max-height: 88vh; overflow-y: auto; }
+  #prepCard h2 { font-size: 17px; font-weight: 600; }
+  #prepCard .lead { margin-top: 10px; font-size: 12.5px; color: var(--sub); line-height: 1.6; }
+  #prepSteps { margin-top: 16px; }
+  .pstep { display: grid; grid-template-columns: 178px 1fr 66px; gap: 10px;
+    align-items: center; padding: 3px 0; font-size: 11.5px; }
+  .pstep .lbl { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pstep.active .lbl, .pstep.done .lbl { color: var(--sub); }
+  .pstep .pb { height: 5px; border-radius: 3px; background: var(--sunk); overflow: hidden; }
+  .pstep .pb i { display: block; height: 100%; width: 0; background: var(--accent);
+    transition: width .5s; }
+  .pstep.done .pb i { background: var(--rule); }
+  .pstep .note { text-align: right; font-size: 10px; color: var(--muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+  #prepAction { margin-top: 20px; display: flex; align-items: center; gap: 13px; }
+  #prepGo { background: var(--accent); color: #fff; font-weight: 500; font-size: 12.5px;
+    padding: 9px 20px; border-radius: 6px; }
+  #prepMsg { font-size: 11px; color: var(--muted); }
+  #prepErr { margin-top: 13px; font-size: 11.5px; color: var(--q0); display: none;
+    line-height: 1.5; word-break: break-word; }
+
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: #d5d4cc; border-radius: 5px; border: 3px solid var(--panel); }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .maplibregl-ctrl-attrib { font-size: 9.5px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<aside id="side">
+  <header>
+    <button id="sideToggle" title="Collapse panel" aria-label="Collapse panel">&laquo;</button>
+    <h1>Overture <span>vs</span> Philadelphia</h1>
+    <div class="tagline">The map always shows Philadelphia's own footprints. Their
+      colour says how well Overture matches them.</div>
+  </header>
+  <div id="scroll">
+    <div class="sect">
+      <div id="mode">
+        <button id="modeScore" class="on">Score a release</button>
+        <button id="modeDiff">Compare two</button>
+      </div>
+      <div id="modeHelp"></div>
+    </div>
+
+    <div class="sect" id="scoreSect">
+      <h2>Release</h2>
+      <select id="pickOne"></select>
+    </div>
+
+    <div class="sect" id="diffSect" style="display:none">
+      <h2>Compare</h2>
+      <div class="pick"><span class="tag">From</span><select id="pickA"></select></div>
+      <div class="pick"><span class="tag">To</span><select id="pickB"></select></div>
+    </div>
+
+    <div class="sect"><div id="kpis"></div></div>
+
+    <div class="sect">
+      <h2>Agreement over time <span class="hint">click a point</span></h2>
+      <div id="trend">
+        <svg></svg>
+        <div id="trendKey">
+          <span><i style="border-color:#2a78d6"></i>matched</span>
+          <span><i style="border-color:#4a3aa7;border-top-style:dashed"></i>mean IoU</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>Area</h2>
+      <div id="scope">
+        <button class="sbtn on" id="scopeCity">Whole city</button>
+        <button class="sbtn" id="scopeBox">Draw an area</button>
+      </div>
+      <div id="scopeNote"></div>
+    </div>
+  </div>
+</aside>
+
+<button id="sideOpen" title="Show controls" aria-label="Show controls">
+  <span class="bars">&#9776;</span>Controls</button>
+
+<div id="rightWrap">
+  <div style="display:flex;gap:7px">
+    <button class="mbtn" id="panelBtn">Legend &amp; layers</button>
+    <button class="mbtn" id="fitBtn">Fit city</button>
+  </div>
+  <div id="rightPanel" style="display:none">
+    <h3>Layers</h3>
+    <div id="layers"></div>
+    <div class="note" id="layerNote">Turn on <b>Overture footprints</b> to draw that
+      release's own geometry in <b style="color:#b5179e">magenta</b> over the city's.
+      Where the magenta sits off the filled shape, the two disagree. Drawn from
+      zoom&nbsp;15.</div>
+    <h3 id="legendHead">Colour</h3>
+    <div id="legend"></div>
+    <button class="sbtn" id="onlyBad" style="width:100%;margin-top:9px"></button>
+    <div class="note" id="legendNote"></div>
+  </div>
+</div>
+
+<div id="hint"></div>
+<div id="marquee"></div>
+<div id="tip"></div>
+
+<div id="detail">
+  <button class="expand" id="detailExpand" title="Larger view" aria-label="Toggle larger view">&#10530;</button>
+  <button class="close" id="detailClose">&times;</button>
+  <h4 id="detailTitle"></h4>
+  <div class="meta" id="detailMeta"></div>
+  <div class="hd">IoU by release</div>
+  <svg id="detailChart"></svg>
+  <div class="gers" id="detailGers"></div>
+</div>
+
+<div id="prep">
+  <div id="prepCard">
+    <h2>Overture vs Philadelphia</h2>
+    <div class="lead">
+      Scores <b>seven Overture Maps releases</b> against all <b>546,070</b> of
+      Philadelphia's official building footprints. The first run downloads both
+      datasets and runs the conflation locally in DuckDB — about <b>1.7 GB of disk</b>
+      and <b>45–60 minutes</b>, once. After that the app is instant and offline.
+    </div>
+    <div id="prepSteps"></div>
+    <div id="prepAction">
+      <button id="prepGo">Build the dataset</button>
+      <div id="prepMsg"></div>
+    </div>
+    <div id="prepErr"></div>
+  </div>
+</div>
+
+<script>
+const loadScript = rel => new Promise((ok, err) => {
+  const s = document.createElement("script"); s.src = fused.rawUrl(rel);
+  s.onload = ok; s.onerror = () => err(new Error(rel)); document.head.appendChild(s);
+});
+const loadCss = rel => new Promise((ok, err) => {
+  const l = document.createElement("link"); l.rel = "stylesheet"; l.href = fused.rawUrl(rel);
+  l.onload = ok; l.onerror = () => err(new Error(rel)); document.head.appendChild(l);
+});
+
+/* Score mode: four ordered classes — three steps of one blue hue plus a
+   reserved red, because "Overture has nothing here" is a different kind of
+   fact from "present but misaligned". */
+const QUALITY = [
+  { id: "close",   label: "Close match",      range: "IoU ≥ 0.75",  color: "#6da7ec" },
+  { id: "partial", label: "Partial",          range: "0.50 – 0.75", color: "#256abf" },
+  { id: "poor",    label: "Poor",             range: "below 0.50",  color: "#0d366b" },
+  { id: "absent",  label: "Not in Overture",  range: "no overlap",  color: "#d03b3b" },
+];
+/* Compare mode: diverging, with a neutral grey midpoint. */
+const CHANGE = [
+  { id: "added",   label: "Newly found",   range: "absent → present", color: "#0ca30c" },
+  { id: "better",  label: "Improved",      range: "IoU up ≥ 0.05",    color: "#7fc47f" },
+  { id: "same",    label: "Unchanged",     range: "within ±0.05",     color: "#dcdbd4" },
+  { id: "worse",   label: "Worse",         range: "IoU down ≥ 0.05",  color: "#e78a8a" },
+  { id: "dropped", label: "Disappeared",   range: "present → absent", color: "#d03b3b" },
+];
+const MOVED = 0.05;
+
+const qualityOf = v =>
+  v >= 0.75 ? QUALITY[0] : v >= 0.5 ? QUALITY[1] : v > 0 ? QUALITY[2] : QUALITY[3];
+const changeOf = (a, b) =>
+  a === 0 && b > 0 ? CHANGE[0] : a > 0 && b === 0 ? CHANGE[4]
+  : b - a >= MOVED ? CHANGE[1] : a - b >= MOVED ? CHANGE[3] : CHANGE[2];
+
+let READY = null, RELEASES = [], map = null;
+let mode = "score";                     // "score" | "diff"
+let selected = 0, cmpA = 0, cmpB = 0;
+let hidden = new Set(), scopeStats = null, diffStats = null, boxBounds = null;
+let scopeStamp = 0;
+let statsSeq = 0;                        // guards against out-of-order stats.py replies
+let showPhilly = true, showOverture = false;
+let detailEntries = null;               // last building's per-release scores, for redraw on resize
+
+const $ = id => document.getElementById(id);
+const pct1 = v => (v * 100).toFixed(1) + "%";
+const runPy = (file, params) => fused.runPython(file, params, { key: null });
+const classes = () => (mode === "score" ? QUALITY : CHANGE);
+
+/* ------------------------------- prepare ------------------------------- */
+
+async function boot() {
+  const status = await fused.runPython("./prepare.py", { action: "status" });
+  if (status.ready) { READY = status.summary; return start(); }
+  renderPrepSteps(status.progress && status.progress.steps);
+  /* Wire the build button before the early return below: a worker already
+     running hides it, but if that build later fails pollPrepare re-shows it as
+     "Retry", and it must have a handler then too. */
+  $("prepGo").onclick = async () => {
+    $("prepGo").disabled = true;
+    $("prepMsg").textContent = "Starting…";
+    const started = await fused.runPython("./prepare.py", { action: "start" });
+    if (started.ready) { READY = started.summary; return start(); }
+    $("prepGo").style.display = "none";
+    pollPrepare();
+  };
+  if (status.running) { $("prepGo").style.display = "none"; return pollPrepare(); }
+}
+
+function renderPrepSteps(steps) {
+  const holder = $("prepSteps");
+  holder.innerHTML = "";
+  for (const step of steps || []) {
+    const row = document.createElement("div");
+    row.className = "pstep" + (step.pct >= 100 ? " done" : step.pct > 0 ? " active" : "");
+    row.innerHTML = `<div class="lbl">${step.label}</div>
+      <div class="pb"><i style="width:${step.pct}%"></i></div>
+      <div class="note">${step.note || (step.pct > 0 ? step.pct + "%" : "")}</div>`;
+    holder.appendChild(row);
+  }
+}
+
+async function pollPrepare() {
+  $("prepMsg").textContent = "This keeps running if you close the tab.";
+  for (;;) {
+    let status;
+    try { status = await fused.runPython("./prepare.py", { action: "status" }); }
+    catch (e) { await new Promise(r => setTimeout(r, 4000)); continue; }
+    if (status.ready) { READY = status.summary; return start(); }
+    const progress = status.progress || {};
+    renderPrepSteps(progress.steps);
+    if (progress.error) {
+      $("prepErr").style.display = "block";
+      $("prepErr").textContent = progress.error;
+      Object.assign($("prepGo"), { disabled: false, textContent: "Retry" });
+      $("prepGo").style.display = "";
+      $("prepMsg").textContent = "";
+      return;
+    }
+    await new Promise(r => setTimeout(r, 2500));
+  }
+}
+
+/* --------------------------------- app --------------------------------- */
+
+async function start() {
+  $("prep").style.display = "none";
+  RELEASES = READY.releases;
+  selected = RELEASES.length - 1;
+  cmpA = 0; cmpB = RELEASES.length - 1;
+  scopeStats = READY.summaries;
+  await loadCss("./vendor/maplibre-gl.css");
+  await Promise.all([loadScript("./vendor/maplibre-gl.js"),
+                     loadScript("./vendor/pmtiles.js"),
+                     loadScript("./vendor/d3.min.js")]);
+  buildPickers();
+  buildLayerToggles();
+  wireMode();
+  wireOnlyBad();
+  wirePanelButton();
+  wireSideToggle();
+  initMap();
+  await refresh();
+}
+
+function statsFor(i) {
+  return Array.isArray(scopeStats) ? scopeStats[i] : scopeStats.releases[i];
+}
+function total() {
+  return Array.isArray(scopeStats) ? scopeStats[0].philly_buildings : scopeStats.total;
+}
+function qualityCounts(i) {
+  const b = statsFor(i).bands;
+  return { close: b.excellent, partial: b.good, poor: b.fair + b.weak, absent: b.missing };
+}
+
+/* One refresh path for every state change. */
+async function refresh() {
+  if (mode === "diff") {
+    /* Only the async branches touch statsSeq: bumping it in score mode (which
+       does no stats query) would cancel an in-flight area query. */
+    const seq = ++statsSeq;
+    diffStats = null;
+    renderKpis(); renderLegend();
+    const result = await runPy("./stats.py",
+      { action: "compare", a: cmpA, b: cmpB, bbox: boxBounds || null });
+    if (seq !== statsSeq) return;       // a newer stats request has superseded this one
+    diffStats = result;
+  }
+  renderKpis();
+  renderLegend();
+  fillPickers();
+  drawTrend();
+  updateScopeNote();
+  applyMapStyle();
+  syncLayers();
+}
+
+/* Release picked from the chart: repaint without the async compare query. */
+function scrubTo(index) {
+  selected = index;
+  renderKpis();
+  renderLegend();
+  fillPickers();
+  drawTrend();
+  applyMapStyle();
+  syncLayers();
+}
+
+function wireMode() {
+  $("modeScore").onclick = () => setMode("score");
+  $("modeDiff").onclick = () => setMode("diff");
+}
+
+function setMode(next) {
+  if (mode === next) return;
+  mode = next;
+  hidden = new Set();
+  $("modeScore").classList.toggle("on", mode === "score");
+  $("modeDiff").classList.toggle("on", mode === "diff");
+  $("scoreSect").style.display = mode === "score" ? "" : "none";
+  $("diffSect").style.display = mode === "diff" ? "" : "none";
+  refresh();
+}
+
+/* --------------------------------- left -------------------------------- */
+
+function renderKpis() {
+  const help = $("modeHelp");
+  if (mode === "score") {
+    help.innerHTML = "Buildings are coloured by their overlap with this release.";
+    const s = statsFor(selected), counts = qualityCounts(selected);
+    $("kpis").innerHTML = `
+      <div class="kpi"><div class="v">${s.mean_iou.toFixed(2)}</div>
+        <div class="l">mean IoU</div></div>
+      <div class="kpi"><div class="v">${counts.absent.toLocaleString()}</div>
+        <div class="l">missing from Overture</div></div>`;
+    return;
+  }
+  help.innerHTML = "Buildings are coloured by how their overlap <em>changed</em>.";
+  if (!diffStats) {
+    $("kpis").innerHTML = `<div class="kpi"><div class="l">Comparing…</div></div>`;
+    return;
+  }
+  const c = diffStats.counts;
+  const all = Math.max(1, c.total);
+  const bar = CHANGE
+    .map(cls => `<i style="background:${cls.color};width:${c[cls.id] / all * 100}%"></i>`)
+    .join("");
+  const rows = CHANGE.filter(cls => cls.id !== "same").map(cls => `
+    <div class="chg"><span class="sw" style="background:${cls.color}"></span>
+      <span class="n">${c[cls.id].toLocaleString()}</span>
+      <span class="t">${cls.label.toLowerCase()}</span></div>`).join("");
+  $("kpis").innerHTML = `<div style="width:100%">
+    <div id="chgbar">${bar}</div><div id="chgrows">${rows}</div>
+    <div class="chgnote">${c.same.toLocaleString()} unchanged
+      (${(c.same / all * 100).toFixed(1)}%)</div></div>`;
+}
+
+function label(i) {
+  const s = statsFor(i);
+  return `${RELEASES[i]}   ${pct1(s.match_rate)} · IoU ${s.mean_iou.toFixed(2)}`;
+}
+
+function buildPickers() {
+  const one = $("pickOne");
+  one.onchange = () => { selected = +one.value; refresh(); };
+  for (const [id, set] of [["pickA", v => cmpA = v], ["pickB", v => cmpB = v]]) {
+    $(id).onchange = () => { set(+$(id).value); refresh(); };
+  }
+  fillPickers();
+}
+
+/* Option text carries the numbers, so the release list needs no table. */
+function fillPickers() {
+  const options = RELEASES
+    .map((_r, i) => `<option value="${i}">${label(i)}</option>`).join("");
+  for (const [id, value] of [["pickOne", selected], ["pickA", cmpA], ["pickB", cmpB]]) {
+    const select = $(id);
+    if (select.dataset.stamp !== String(scopeStamp)) select.innerHTML = options;
+    select.value = String(value);
+    select.dataset.stamp = String(scopeStamp);
+  }
+}
+
+function updateScopeNote() {
+  $("scopeNote").innerHTML = boxBounds
+    ? `<b>${total().toLocaleString()}</b> buildings inside the box.`
+    : `All <b>${total().toLocaleString()}</b> buildings in Philadelphia.`;
+}
+
+/* -------------------------------- right -------------------------------- */
+
+/* The legend & layers panel starts closed (hidden in the markup, so it never
+   flashes over the map during load) so the map is unobstructed on open; the
+   chip toggles it. */
+function wirePanelButton() {
+  const panel = $("rightPanel");
+  $("panelBtn").onclick = () => {
+    const open = panel.style.display !== "none";
+    panel.style.display = open ? "none" : "";
+    $("panelBtn").classList.toggle("on", !open);
+  };
+}
+
+/* Slide the left panel out of the way; the map fills the space. */
+function wireSideToggle() {
+  const setCollapsed = on => {
+    document.body.classList.toggle("side-collapsed", on);
+    /* MapLibre needs a nudge once the width has actually changed. */
+    if (map) { setTimeout(() => map.resize(), 40); setTimeout(() => map.resize(), 320); }
+  };
+  $("sideToggle").onclick = () => setCollapsed(true);
+  $("sideOpen").onclick = () => setCollapsed(false);
+}
+
+function buildLayerToggles() {
+  const holder = $("layers");
+  holder.innerHTML = "";
+  const rows = [
+    { id: "philly", label: "Philadelphia footprints",
+      key: "linear-gradient(90deg,#6da7ec,#0d366b)" },
+    { id: "overture", label: "Overture footprints", key: "transparent",
+      border: "2px solid #b5179e" },
+  ];
+  for (const row of rows) {
+    const button = document.createElement("button");
+    button.className = "lyr";
+    button.dataset.id = row.id;
+    button.innerHTML = `<span class="ck"></span>
+      <span class="key" style="background:${row.key};${row.border ? "border:" + row.border : ""}"></span>
+      <span class="nm">${row.label}</span>`;
+    button.onclick = () => toggleLayer(row.id);
+    holder.appendChild(button);
+  }
+  syncLayerToggles();
+}
+
+function syncLayerToggles() {
+  document.querySelectorAll(".lyr").forEach(row => {
+    const on = row.dataset.id === "philly" ? showPhilly : showOverture;
+    row.classList.toggle("off", !on);
+    row.querySelector(".ck").textContent = on ? "●" : "○";
+  });
+}
+
+function toggleLayer(id) {
+  if (id === "philly") { showPhilly = !showPhilly; syncLayerToggles(); return syncLayers(); }
+  const release = RELEASES[mode === "score" ? selected : cmpB];
+  if (!showOverture && !hasOutlines(release)) {
+    showHint(`Overture geometry for ${release} was not prepared — delete .cache `
+      + `and rebuild to include it.`, 6000);
+    return;
+  }
+  showOverture = !showOverture;
+  syncLayerToggles();
+  syncLayers();
+  if (showOverture && map.getZoom() < OVERTURE_MIN_ZOOM) {
+    showHint("Zooming in — Overture geometry draws from street level.");
+    map.easeTo({ zoom: 15.6, duration: 900 });
+  }
+}
+
+function renderLegend() {
+  const list = classes();
+  $("legendHead").textContent = mode === "score" ? "Match quality" : "Change";
+  $("legendNote").innerHTML = mode === "score"
+    ? "<b>IoU</b> = shared area ÷ combined area. 1.0 is exact, 0 means Overture has nothing there."
+    : `Compares each building's IoU in ${RELEASES[cmpA]} against ${RELEASES[cmpB]}.`;
+  const counts = mode === "score"
+    ? qualityCounts(selected)
+    : (diffStats ? diffStats.counts : null);
+  const all = Math.max(1, mode === "score" ? total() : (diffStats ? diffStats.counts.total : 1));
+
+  const holder = $("legend");
+  holder.innerHTML = "";
+  for (const cls of list) {
+    const row = document.createElement("button");
+    row.className = "lrow" + (hidden.has(cls.id) ? " off" : "");
+    row.dataset.id = cls.id;
+    const n = counts ? counts[cls.id] : null;
+    row.innerHTML = `<span class="sw" style="background:${cls.color}"></span>
+      <span class="nm">${cls.label} <em>${cls.range}</em></span>
+      <span class="ct">${n === null ? "…" : n.toLocaleString() + " · " + (n / all * 100).toFixed(1) + "%"}</span>`;
+    row.onclick = () => {
+      hidden.has(cls.id) ? hidden.delete(cls.id) : hidden.add(cls.id);
+      row.classList.toggle("off", hidden.has(cls.id));
+      syncOnlyBad();
+      applyMapStyle();
+    };
+    holder.appendChild(row);
+  }
+  syncOnlyBad();
+}
+
+const quietIds = () => (mode === "score" ? ["close", "partial"] : ["same"]);
+const isFocused = () => {
+  const quiet = quietIds();
+  return hidden.size === quiet.length && quiet.every(id => hidden.has(id));
+};
+
+function syncOnlyBad() {
+  const on = isFocused();
+  $("onlyBad").textContent = on
+    ? "Show everything"
+    : (mode === "score" ? "Show only mismatches" : "Show only what changed");
+  $("onlyBad").classList.toggle("on", on);
+}
+
+function wireOnlyBad() {
+  $("onlyBad").onclick = () => {
+    hidden = isFocused() ? new Set() : new Set(quietIds());
+    document.querySelectorAll(".lrow").forEach(row =>
+      row.classList.toggle("off", hidden.has(row.dataset.id)));
+    syncOnlyBad();
+    applyMapStyle();
+  };
+}
+
+/* -------------------------------- trend -------------------------------- */
+
+function drawTrend() {
+  const holder = $("trend");
+  const width = holder.clientWidth || 284;
+  const height = 132;
+  const m = { t: 8, r: 8, b: 28, l: 28 };
+  const svg = d3.select("#trend svg").attr("width", width).attr("height", height);
+  svg.selectAll("*").remove();
+  const data = RELEASES.map((release, index) => {
+    const s = statsFor(index);
+    return { release, index, matched: s.match_rate * 100, iou: s.mean_iou * 100 };
+  });
+  const x = d3.scalePoint(d3.range(RELEASES.length), [m.l, width - m.r]).padding(0.2);
+  const lo = Math.max(0, d3.min(data, d => Math.min(d.matched, d.iou)) - 5);
+  const y = d3.scaleLinear([lo, 100], [height - m.b, m.t]);
+
+  svg.append("g").attr("transform", `translate(${m.l},0)`)
+    .call(d3.axisLeft(y).ticks(3).tickFormat(v => v + "%").tickSize(-(width - m.l - m.r)))
+    .call(g => { g.select(".domain").remove();
+      g.selectAll("line").attr("stroke", "#e1e0d9");
+      g.selectAll("text").attr("fill", "#898781").attr("font-size", 8.5); });
+  svg.append("g").attr("transform", `translate(0,${height - m.b})`)
+    .call(d3.axisBottom(x).tickFormat(i => RELEASES[i].slice(2, 7)))
+    .call(g => { g.select(".domain").remove(); g.selectAll("line").remove();
+      g.selectAll("text").attr("fill", "#898781").attr("font-size", 8)
+        .attr("transform", "rotate(-34)").attr("text-anchor", "end"); });
+
+  const marks = mode === "score" ? [selected] : [cmpA, cmpB];
+  for (const i of marks) {
+    svg.append("line").attr("x1", x(i)).attr("x2", x(i))
+      .attr("y1", m.t - 2).attr("y2", height - m.b)
+      .attr("stroke", "#2a78d6").attr("stroke-width", 1).attr("stroke-opacity", .35);
+  }
+
+  const line = key => d3.line().x(d => x(d.index)).y(d => y(d[key]));
+  svg.append("path").datum(data).attr("d", line("matched"))
+    .attr("fill", "none").attr("stroke", "#2a78d6").attr("stroke-width", 2);
+  svg.append("path").datum(data).attr("d", line("iou"))
+    .attr("fill", "none").attr("stroke", "#4a3aa7").attr("stroke-width", 2)
+    .attr("stroke-dasharray", "4 3");
+
+  const tip = $("tip");
+  svg.selectAll(".hit").data(data).join("rect")
+    .attr("x", d => x(d.index) - 10).attr("y", m.t - 2).attr("width", 20)
+    .attr("height", height - m.t - m.b + 2).attr("fill", "transparent")
+    .style("cursor", "pointer")
+    .on("mousemove", (event, d) => {
+      tip.style.display = "block";
+      tip.style.left = (event.clientX + 13) + "px";
+      tip.style.top = (event.clientY + 13) + "px";
+      tip.innerHTML = `<div class="t">${d.release}</div>
+        <div class="s">${d.matched.toFixed(2)}% matched · mean IoU ${(d.iou / 100).toFixed(3)}</div>
+        <div class="h">${mode === "score" ? "click to show on the map" : "click to set as “to”"}</div>`;
+    })
+    .on("mouseleave", () => { tip.style.display = "none"; })
+    .on("click", (_e, d) => {
+      tip.style.display = "none";
+      if (mode === "score") scrubTo(d.index);
+      else { cmpB = d.index; refresh(); }
+    });
+
+  for (const key of ["matched", "iou"]) {
+    svg.selectAll(null).data(data).join("circle")
+      .attr("cx", d => x(d.index)).attr("cy", d => y(d[key]))
+      .attr("r", d => (marks.includes(d.index) ? 3 : 1.9))
+      .attr("fill", key === "matched" ? "#2a78d6" : "#4a3aa7")
+      .attr("stroke", "#fcfcfb").attr("stroke-width", 1)
+      .style("pointer-events", "none");
+  }
+}
+
+/* --------------------------------- map --------------------------------- */
+
+/* Basemap = Overture's own published vector tiles, over HTTP ranges. Only the
+   newest release is hosted there; it is context only and never scored. */
+const OVERTURE_TILES =
+  "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-07-22.0";
+
+let protocol = null;
+
+function localSource(cachePath, minzoom, maxzoom, promote) {
+  const url = fused.rawUrl(cachePath);
+  protocol.add(new pmtiles.PMTiles(url));
+  const source = { type: "vector", url: "pmtiles://" + url, minzoom, maxzoom,
+                   bounds: READY.bounds };
+  if (promote) source.promoteId = promote;
+  return source;
+}
+
+function initMap() {
+  const b = READY.bounds;
+  protocol = new pmtiles.Protocol();
+  maplibregl.addProtocol("pmtiles", protocol.tile);
+
+  map = new maplibregl.Map({
+    container: "map",
+    center: [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2],
+    zoom: 11, minZoom: 9.2, maxZoom: 19,
+    attributionControl: { compact: true },
+    style: {
+      version: 8,
+      sources: {
+        base: { type: "vector", url: `pmtiles://${OVERTURE_TILES}/base.pmtiles`,
+          attribution: "basemap © Overture Maps · footprints © City of Philadelphia" },
+        divisions: { type: "vector", url: `pmtiles://${OVERTURE_TILES}/divisions.pmtiles` },
+        philly: localSource("./.cache/philly_iou.pmtiles", 10, 15, "fid"),
+        box: { type: "geojson", data: emptyFC() },
+      },
+      layers: [
+        { id: "bg", type: "background", paint: { "background-color": "#f4f2ee" } },
+        { id: "land", type: "fill", source: "base", "source-layer": "land",
+          paint: { "fill-color": "#fbfaf7" } },
+        { id: "landuse", type: "fill", source: "base", "source-layer": "land_use",
+          paint: { "fill-color": ["match", ["get", "subtype"],
+            "park", "#eef2e8", "cemetery", "#eef2e8", "#f6f4f0"] } },
+        { id: "water", type: "fill", source: "base", "source-layer": "water",
+          paint: { "fill-color": "#e4ecf1" } },
+        /* Boundaries only. The global road and building archives are far heavier
+           to range-read than they are worth here — the scored footprints are
+           the subject, and they supply their own street grid. */
+        { id: "boundary", type: "line", source: "divisions",
+          "source-layer": "division_boundary", minzoom: 8,
+          paint: { "line-color": "#b9b7ad", "line-dasharray": [3, 2],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 8, .8, 13, 1.6] } },
+        { id: "bld", type: "fill", source: "philly", "source-layer": "buildings",
+          paint: { "fill-color": "#6da7ec", "fill-opacity": 0.92 } },
+        { id: "bldline", type: "line", source: "philly", "source-layer": "buildings",
+          minzoom: 13.5,
+          paint: { "line-color": "#fcfcfb", "line-width": 0.6, "line-opacity": 0.7 } },
+        /* hover via feature-state: no per-move re-filtering of the tileset */
+        { id: "bldhover", type: "line", source: "philly", "source-layer": "buildings",
+          paint: {
+            "line-color": "#ffffff",
+            "line-width": ["case", ["boolean", ["feature-state", "hover"], false], 2.6, 0],
+          } },
+        { id: "boxfill", type: "fill", source: "box",
+          paint: { "fill-color": "#2a78d6", "fill-opacity": 0.05 } },
+        { id: "boxline", type: "line", source: "box",
+          paint: { "line-color": "#2a78d6", "line-width": 1.4, "line-dasharray": [3, 2] } },
+      ],
+    },
+  });
+  window.__map = map;
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+  /* Layer-scoped listeners only bind once the layer exists, so wire them on load. */
+  map.on("load", () => { applyMapStyle(); syncLayers(); wireHover(); });
+  wireBox();
+  $("fitBtn").onclick = () => fitCity();
+  fitCity(0);
+}
+
+function fitCity(duration) {
+  const b = READY.bounds;
+  map.fitBounds([[b[0], b[1]], [b[2], b[3]]],
+    { padding: 24, duration: duration === undefined ? 500 : duration });
+}
+function emptyFC() { return { type: "FeatureCollection", features: [] }; }
+const iouExpr = i => ["coalesce", ["get", "i" + i], 0];
+
+function colourExpr() {
+  if (mode === "score") {
+    const v = iouExpr(selected);
+    return ["case",
+      [">=", v, 0.75], QUALITY[0].color,
+      [">=", v, 0.5], QUALITY[1].color,
+      [">", v, 0], QUALITY[2].color,
+      QUALITY[3].color];
+  }
+  const a = iouExpr(cmpA), b = iouExpr(cmpB);
+  return ["case",
+    ["all", ["==", a, 0], [">", b, 0]], CHANGE[0].color,
+    ["all", [">", a, 0], ["==", b, 0]], CHANGE[4].color,
+    [">=", ["-", b, a], MOVED], CHANGE[1].color,
+    ["<=", ["-", b, a], -MOVED], CHANGE[3].color,
+    CHANGE[2].color];
+}
+
+function filterExpr() {
+  const list = classes();
+  if (hidden.size === 0) return null;
+  if (hidden.size === list.length) return ["==", ["get", "fid"], -1];
+  const keep = [];
+  if (mode === "score") {
+    const v = iouExpr(selected);
+    if (!hidden.has("close")) keep.push([">=", v, 0.75]);
+    if (!hidden.has("partial")) keep.push(["all", [">=", v, 0.5], ["<", v, 0.75]]);
+    if (!hidden.has("poor")) keep.push(["all", [">", v, 0], ["<", v, 0.5]]);
+    if (!hidden.has("absent")) keep.push(["==", v, 0]);
+  } else {
+    const a = iouExpr(cmpA), b = iouExpr(cmpB);
+    const gained = ["all", ["==", a, 0], [">", b, 0]];
+    const lost = ["all", [">", a, 0], ["==", b, 0]];
+    if (!hidden.has("added")) keep.push(gained);
+    if (!hidden.has("dropped")) keep.push(lost);
+    if (!hidden.has("better"))
+      keep.push(["all", ["!", gained], ["!", lost], [">=", ["-", b, a], MOVED]]);
+    if (!hidden.has("worse"))
+      keep.push(["all", ["!", gained], ["!", lost], ["<=", ["-", b, a], -MOVED]]);
+    if (!hidden.has("same"))
+      keep.push(["all", ["!", gained], ["!", lost],
+        ["<", ["abs", ["-", b, a]], MOVED]]);
+  }
+  return keep.length ? ["any", ...keep] : ["==", ["get", "fid"], -1];
+}
+
+function applyMapStyle() {
+  if (!map || !map.getLayer("bld")) return;
+  map.setPaintProperty("bld", "fill-color", colourExpr());
+  const filter = filterExpr();
+  map.setFilter("bld", filter);
+  map.setFilter("bldline", filter);
+}
+
+const outlinesLoaded = new Set();
+const hasOutlines = release => (READY.outlines || []).includes(release);
+const OVERTURE_MIN_ZOOM = 15;
+
+function syncLayers() {
+  if (!map || !map.getLayer("bld")) return;
+  map.setLayoutProperty("bld", "visibility", showPhilly ? "visible" : "none");
+  map.setLayoutProperty("bldhover", "visibility", showPhilly ? "visible" : "none");
+  /* With Overture drawn on top, the city fill steps back and its own white
+     outline goes away — two outlines compete and neither reads. */
+  map.setLayoutProperty("bldline", "visibility",
+    showPhilly && !showOverture ? "visible" : "none");
+  map.setPaintProperty("bld", "fill-opacity", showOverture ? 0.42 : 0.92);
+
+  const release = RELEASES[mode === "score" ? selected : cmpB];
+  if (showOverture && hasOutlines(release) && !outlinesLoaded.has(release)) {
+    const id = "ov-" + release;
+    map.addSource(id, localSource(
+      `./.cache/overture_${release.replace(/-/g, "_")}.pmtiles`,
+      OVERTURE_MIN_ZOOM, OVERTURE_MIN_ZOOM));
+    /* A white casing under the magenta keeps it legible over both the palest
+       and the darkest fills. */
+    map.addLayer({ id: id + "-case", type: "line", source: id,
+      "source-layer": "buildings", minzoom: OVERTURE_MIN_ZOOM,
+      paint: { "line-color": "#ffffff", "line-width": 3.4, "line-opacity": 0.85 } });
+    map.addLayer({ id, type: "line", source: id, "source-layer": "buildings",
+      minzoom: OVERTURE_MIN_ZOOM,
+      paint: { "line-color": "#b5179e", "line-width": 1.7 } });
+    outlinesLoaded.add(release);
+  }
+  for (const loaded of outlinesLoaded) {
+    const on = showOverture && loaded === release ? "visible" : "none";
+    for (const id of ["ov-" + loaded + "-case", "ov-" + loaded]) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on);
+    }
+  }
+}
+
+let hintTimer = null;
+function showHint(text, ms) {
+  const hint = $("hint");
+  hint.textContent = text;
+  hint.style.display = "block";
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hint.style.display = "none"; }, ms || 3200);
+}
+
+/* ---------------------------- hover + detail ---------------------------- */
+
+function wireHover() {
+  const tip = $("tip");
+  const src = { source: "philly", sourceLayer: "buildings" };
+  let hoveredId = null, pending = null, frame = 0;
+
+  const clear = () => {
+    if (hoveredId !== null) map.setFeatureState({ ...src, id: hoveredId }, { hover: false });
+    hoveredId = null;
+  };
+
+  /* Coalesce to one update per frame and only ever draw the latest position —
+     stale moves are dropped rather than queued. */
+  const paint = () => {
+    frame = 0;
+    const hit = pending;
+    pending = null;
+    if (!hit) return;
+    const { id, p, point } = hit;
+    if (id !== hoveredId) {
+      clear();
+      hoveredId = id;
+      map.setFeatureState({ ...src, id }, { hover: true });
+    }
+    tip.style.display = "block";
+    tip.style.left = (point.x + map.getContainer().getBoundingClientRect().left + 14) + "px";
+    tip.style.top = (point.y + 16) + "px";
+    if (mode === "score") {
+      const v = +p["i" + selected] || 0;
+      const cls = qualityOf(v);
+      tip.innerHTML = `<div class="t" style="color:${cls.color}">${cls.label}</div>
+        <div class="s">${v ? "IoU " + v.toFixed(2) : "no Overture footprint"} · ${RELEASES[selected]}</div>
+        <div class="h">click for every release</div>`;
+    } else {
+      const a = +p["i" + cmpA] || 0, b = +p["i" + cmpB] || 0;
+      const cls = changeOf(a, b);
+      tip.innerHTML = `<div class="t" style="color:${cls.color}">${cls.label}</div>
+        <div class="s">IoU ${a ? a.toFixed(2) : "—"} → ${b ? b.toFixed(2) : "—"}</div>
+        <div class="h">click for every release</div>`;
+    }
+  };
+
+  /* MapLibre deletes event.features once the listener returns, so read what we
+     need synchronously and hand only that to the next frame. */
+  map.on("mousemove", "bld", event => {
+    const feature = event.features && event.features[0];
+    if (!feature) return;
+    pending = {
+      id: feature.id !== undefined ? feature.id : feature.properties.fid,
+      p: feature.properties,
+      point: event.point,
+    };
+    if (!frame) frame = requestAnimationFrame(paint);
+    map.getCanvas().style.cursor = "pointer";
+  });
+  map.on("mouseleave", "bld", () => {
+    pending = null;
+    if (frame) { cancelAnimationFrame(frame); frame = 0; }
+    clear();
+    tip.style.display = "none";
+    map.getCanvas().style.cursor = "";
+  });
+  map.on("click", "bld", event => {
+    const feature = event.features && event.features[0];
+    if (feature) showDetail(+feature.properties.fid);
+  });
+  $("detailClose").onclick = () => { $("detail").style.display = "none"; };
+  $("detailExpand").onclick = () => {
+    $("detail").classList.toggle("big");
+    if (detailEntries) drawDetailChart(detailEntries);
+  };
+}
+
+async function showDetail(fid) {
+  $("detail").style.display = "block";
+  $("detailTitle").textContent = "Building " + fid;
+  $("detailMeta").textContent = "Loading…";
+  d3.select("#detailChart").selectAll("*").remove();
+  $("detailGers").textContent = "";
+  const info = await runPy("./stats.py", { action: "detail", fid });
+  if (!info.found) { $("detailMeta").textContent = "Not found."; return; }
+  $("detailTitle").textContent = info.address || info.building_name || ("Building " + fid);
+  const bits = [];
+  if (info.building_name && info.address) bits.push(info.building_name);
+  if (info.height) bits.push(Math.round(info.height) + " ft");
+  if (info.area_sqft) bits.push(Math.round(info.area_sqft).toLocaleString() + " sq ft");
+  $("detailMeta").textContent = bits.join(" · ") || "—";
+  detailEntries = info.releases;
+  drawDetailChart(detailEntries);
+  const newest = info.releases[info.releases.length - 1];
+  if (newest && newest.gers_id) $("detailGers").textContent = "GERS " + newest.gers_id;
+}
+
+function drawDetailChart(entries) {
+  /* Target the expanded/collapsed width directly so a redraw mid-transition
+     still lays out against the final size. */
+  const big = $("detail").classList.contains("big");
+  const width = big ? 434 : 264;
+  const height = big ? 156 : 84;
+  const fs = big ? 10 : 8;
+  const m = { t: 8, r: 6, b: 20, l: big ? 28 : 24 };
+  const svg = d3.select("#detailChart").attr("width", width).attr("height", height);
+  svg.selectAll("*").remove();
+  const x = d3.scalePoint(d3.range(entries.length), [m.l, width - m.r]).padding(0.15);
+  const y = d3.scaleLinear([0, 1], [height - m.b, m.t]);
+
+  svg.append("g").attr("transform", `translate(${m.l},0)`)
+    .call(d3.axisLeft(y).tickValues([0, 0.5, 1]).tickFormat(d3.format(".1f"))
+      .tickSize(-(width - m.l - m.r)))
+    .call(g => { g.select(".domain").remove();
+      g.selectAll("line").attr("stroke", "#e1e0d9");
+      g.selectAll("text").attr("fill", "#898781").attr("font-size", fs); });
+  /* Enlarged, every release is labelled; small, only the endpoints fit. */
+  svg.append("g").attr("transform", `translate(0,${height - m.b})`)
+    .call(d3.axisBottom(x)
+      .tickFormat(i => (big || i === 0 || i === entries.length - 1
+        ? entries[i].release.slice(2, 7) : "")))
+    .call(g => { g.select(".domain").remove(); g.selectAll("line").remove();
+      g.selectAll("text").attr("fill", "#898781").attr("font-size", fs); });
+
+  const data = entries.map((e, i) => ({ i, iou: e.iou }));
+  svg.append("path").datum(data)
+    .attr("d", d3.line().x(d => x(d.i)).y(d => y(d.iou)))
+    .attr("fill", "none").attr("stroke", "#52514e").attr("stroke-width", big ? 2 : 1.6);
+  svg.selectAll(null).data(data).join("circle")
+    .attr("cx", d => x(d.i)).attr("cy", d => y(d.iou))
+    .attr("r", big ? 3.6 : 2.8).attr("fill", d => qualityOf(d.iou).color)
+    .attr("stroke", "#fcfcfb").attr("stroke-width", 1);
+
+  const last = data[data.length - 1];
+  svg.append("text").attr("x", x(last.i)).attr("y", y(last.iou) - 7)
+    .attr("text-anchor", "end").attr("font-size", big ? 11 : 9).attr("fill", "#0b0b0b")
+    .attr("font-weight", 600).text(last.iou.toFixed(2));
+}
+
+/* ------------------------------ area scope ------------------------------ */
+
+function wireBox() {
+  const marquee = $("marquee");
+  let armed = false, drawing = false, sx = 0, sy = 0;
+
+  $("scopeCity").onclick = () => setCityScope();
+  $("scopeBox").onclick = () => {
+    armed = true;
+    $("scopeBox").classList.add("on");
+    $("scopeCity").classList.remove("on");
+    showHint("Drag a box on the map · Esc to cancel");
+    map.getCanvas().style.cursor = "crosshair";
+    map.dragPan.disable();
+  };
+  window.addEventListener("keydown", e => {
+    if (e.key === "Escape" && (armed || boxBounds)) { armed = false; setCityScope(); }
+  });
+
+  map.getContainer().addEventListener("pointerdown", event => {
+    if (!armed) return;
+    drawing = true; sx = event.clientX; sy = event.clientY;
+    marquee.style.display = "block";
+    place(event);
+    event.preventDefault(); event.stopPropagation();
+  }, true);
+  window.addEventListener("pointermove", event => { if (drawing) place(event); });
+  window.addEventListener("pointerup", async event => {
+    if (!drawing) return;
+    drawing = false; armed = false;
+    marquee.style.display = "none";
+    map.getCanvas().style.cursor = "";
+    map.dragPan.enable();
+    if (Math.abs(event.clientX - sx) < 8 || Math.abs(event.clientY - sy) < 8) {
+      return setCityScope();
+    }
+    const rect = map.getContainer().getBoundingClientRect();
+    const a = map.unproject([sx - rect.left, sy - rect.top]);
+    const c = map.unproject([event.clientX - rect.left, event.clientY - rect.top]);
+    await setBoxScope([Math.min(a.lng, c.lng), Math.min(a.lat, c.lat),
+                       Math.max(a.lng, c.lng), Math.max(a.lat, c.lat)]);
+  });
+
+  function place(event) {
+    marquee.style.left = Math.min(sx, event.clientX) + "px";
+    marquee.style.top = Math.min(sy, event.clientY) + "px";
+    marquee.style.width = Math.abs(event.clientX - sx) + "px";
+    marquee.style.height = Math.abs(event.clientY - sy) + "px";
+  }
+}
+
+function setCityScope() {
+  statsSeq++;                           // cancel any in-flight area/compare fetch
+  boxBounds = null;
+  scopeStats = READY.summaries;
+  scopeStamp++;
+  $("scopeCity").classList.add("on");
+  $("scopeBox").classList.remove("on");
+  map.getCanvas().style.cursor = "";
+  map.dragPan.enable();
+  if (map.getSource("box")) map.getSource("box").setData(emptyFC());
+  refresh();
+}
+
+async function setBoxScope(bbox) {
+  boxBounds = bbox;
+  const seq = ++statsSeq;
+  const [w, s, e, n] = bbox;
+  map.getSource("box").setData({ type: "Feature", geometry: { type: "Polygon",
+    coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } });
+  $("scopeNote").textContent = "Scoring the drawn area…";
+  const stats = await runPy("./stats.py", { action: "area", bbox });
+  if (seq !== statsSeq) return;         // superseded (e.g. Escape, or a new box)
+  if (!stats.total) {
+    showHint("No buildings in that box.");
+    return setCityScope();
+  }
+  scopeStats = stats;
+  scopeStamp++;
+  refresh();
+}
+
+boot();
+</script>
+</body>
+</html>

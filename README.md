@@ -54,6 +54,7 @@ own machine, no setup. Start with either, then browse below.
 | [zarr_explainer](geospatial/zarr_explainer/) | An interactive 11-step guide to the Zarr format, on real NASA ocean data ([live](https://open.fused.io/mjyttte444gnh4sye2bzjgd5f4)) |
 | [cog_overview_pyramid](geospatial/cog_overview_pyramid/) | Every resolution level of a COG as an interactive 3D pyramid ([live](https://open.fused.io/5p5yp52aolmwqks63j7l4e7x3u)) |
 | [overture_census_isochrone](geospatial/overture_census_isochrone/) | Isochrone + Overture POIs + Census income on H3 hexes ([live](https://open.fused.io/sx43sjlduoo2r2fvfertxxkoqq)) |
+| [overture_footprint_scorecard](geospatial/overture_footprint_scorecard/) | Score Overture building footprints against a city's official layer across seven releases — every building, in DuckDB |
 | [zonal_stats_hex](geospatial/zonal_stats_hex/) | Who lives at what elevation — Census × DEM, joined in DuckDB ([live](https://open.fused.io/7c7rnluzsymgnxyoppn75k6eca)) |
 | [store_site_selection](geospatial/store_site_selection/) | "Where should I open a cafe?" weighted tract scoring ([live](https://open.fused.io/4yxl5j2nfame2v7elutsm25hde)) |
 | [forest_carbon_monitor](geospatial/forest_carbon_monitor/) | Deforestation inside protected areas via Global Forest Watch ([live](https://open.fused.io/qnstptjoep3pv4akfzdtsk63hi)) |
