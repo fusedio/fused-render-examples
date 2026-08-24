@@ -418,6 +418,7 @@ async function pollPrepare() {
   // "Long-running work" pattern.
   const job = fused.trackJob({
     id: JOB_ID, title: "Overture vs Philadelphia dataset", kind: "download",
+    cancellable: false,
   });
   for (;;) {
     let status;
