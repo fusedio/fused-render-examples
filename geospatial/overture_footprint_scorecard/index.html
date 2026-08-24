@@ -375,6 +375,10 @@ const classes = () => (mode === "score" ? QUALITY : CHANGE);
 
 /* ------------------------------- prepare ------------------------------- */
 
+// Shared with prepare.py's JOB_ID so the page and the detached worker report
+// into the SAME download-manager row instead of opening two for one build.
+const JOB_ID = "overture-footprint-scorecard";
+
 async function boot() {
   const status = await fused.runPython("./prepare.py", { action: "status" });
   if (status.ready) { READY = status.summary; return start(); }
@@ -408,14 +412,28 @@ function renderPrepSteps(steps) {
 
 async function pollPrepare() {
   $("prepMsg").textContent = "This keeps running if you close the tab.";
+  // The worker (prepare.py) posts to the same job id from the Python side —
+  // together the two keep the download-manager row live even after this
+  // page is navigated away from, per the fused-render-authoring skill's
+  // "Long-running work" pattern.
+  const job = fused.trackJob({
+    id: JOB_ID, title: "Overture vs Philadelphia dataset", kind: "download",
+  });
   for (;;) {
     let status;
     try { status = await fused.runPython("./prepare.py", { action: "status" }); }
     catch (e) { await new Promise(r => setTimeout(r, 4000)); continue; }
-    if (status.ready) { READY = status.summary; return start(); }
+    if (status.ready) { job.finish("Ready"); READY = status.summary; return start(); }
     const progress = status.progress || {};
     renderPrepSteps(progress.steps);
+    const steps = progress.steps || [];
+    if (steps.length) {
+      const done = steps.reduce((sum, s) => sum + Math.min(100, s.pct || 0), 0) / 100;
+      const current = steps.find(s => s.pct > 0 && s.pct < 100);
+      job.update({ done, total: steps.length, detail: current && current.label });
+    }
     if (progress.error) {
+      job.fail(progress.error);
       $("prepErr").style.display = "block";
       $("prepErr").textContent = progress.error;
       Object.assign($("prepGo"), { disabled: false, textContent: "Retry" });

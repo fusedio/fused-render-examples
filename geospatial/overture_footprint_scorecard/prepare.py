@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -54,8 +55,14 @@ PROGRESS = os.path.join(CACHE, "progress.json")
 READY = os.path.join(CACHE, "ready.json")
 LOG = os.path.join(CACHE, "prepare.log")
 
+# Shared with index.html's fused.trackJob({id: JOB_ID, ...}) call so the page
+# and this detached worker report into the SAME download-manager row instead
+# of opening two for one build.
+JOB_ID = "overture-footprint-scorecard"
+
 _progress_lock = threading.Lock()
 _progress = {}
+_job = None
 
 
 def main(action: str = "status"):
@@ -81,6 +88,28 @@ def _status():
     return {"ready": False, "running": running, "progress": progress}
 
 
+def _spawn_python():
+    """Interpreter for the detached worker. On Windows prefer pythonw.exe
+    (no console subsystem at all) beside whichever python is running this
+    file, so the ~45-60 min download never flashes a terminal window —
+    DETACHED_PROCESS alone isn't always enough in practice. Falls back to
+    sys.executable everywhere else, and when there is no pythonw.exe."""
+    exe = sys.executable
+    if os.name == "nt" and exe:
+        candidate = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        if os.path.exists(candidate):
+            return candidate
+    return exe
+
+
+def _clean_env():
+    """os.environ minus PYTHONHOME/PYTHONPATH, for spawning the worker: a
+    bundle-scoped value here would leak the packaged app's own stdlib/site
+    into the worker and shadow whichever interpreter's packages it should
+    actually see."""
+    return {k: v for k, v in os.environ.items() if k not in ("PYTHONHOME", "PYTHONPATH")}
+
+
 def _start():
     status = _status()
     if status.get("ready") or status.get("running"):
@@ -91,7 +120,7 @@ def _start():
         creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     log = open(LOG, "a", encoding="utf-8")
     proc = subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), "--worker"],
+        [_spawn_python(), os.path.abspath(__file__), "--worker"],
         stdout=log,
         stderr=log,
         stdin=subprocess.DEVNULL,
@@ -99,6 +128,7 @@ def _start():
         creationflags=creationflags,
         start_new_session=(os.name != "nt"),
         cwd=os.path.dirname(os.path.abspath(__file__)),
+        env=_clean_env(),
     )
     log.close()
     _publish({"pid": proc.pid, "stage": "starting", "steps": _fresh_steps()})
@@ -136,12 +166,26 @@ def _fresh_steps():
     return steps
 
 
+def _job_progress():
+    """(done, total, detail) across every step, for the download-manager row —
+    fractional (a step half done counts as 0.5), so the bar moves smoothly
+    instead of jumping once per completed step."""
+    steps = _progress.get("steps") or []
+    if not steps:
+        return 0, 1, None
+    done = sum(min(100.0, step.get("pct", 0)) for step in steps) / 100.0
+    current = next((step for step in steps if 0 < step.get("pct", 0) < 100), None)
+    return done, len(steps), current["label"] if current else None
+
+
 def _publish(update=None):
     with _progress_lock:
         if update:
             _progress.update(update)
         _progress["updated_at"] = time.time()
         write_json_atomic(PROGRESS, _progress, best_effort=True)
+    if _job:
+        _job.update(*_job_progress())
 
 
 def _step(step_id, pct, note=None):
@@ -154,14 +198,64 @@ def _step(step_id, pct, note=None):
         _progress["stage"] = step_id
         _progress["updated_at"] = time.time()
         write_json_atomic(PROGRESS, _progress, best_effort=True)
+    if _job:
+        _job.update(*_job_progress())
+
+
+class _JobReport:
+    """Best-effort progress report to the shell's download manager
+    (fused-render-authoring skill's "Long-running work" pattern) — index.html
+    opens the same row with fused.trackJob({id: JOB_ID, ...}) so it stays
+    visible if the user browses to another file while this runs. Never
+    raises: reporting must not break the build. Posts are rate-limited to
+    ~1/s since _step()/_publish() fire far more often than that.
+    """
+
+    def __init__(self, job_id, title):
+        origin = (os.environ.get("FUSED_RENDER_ORIGIN") or "").rstrip("/")
+        self.url = origin + "/api/jobs"
+        self.id = job_id
+        self.enabled = origin.startswith("http")
+        self._last_post = 0.0
+        if self.enabled:
+            self._post(title=title, kind="download", state="running", cancellable=False)
+
+    def _post(self, **fields):
+        if not self.enabled:
+            return
+        fields["id"] = self.id
+        request = urllib.request.Request(
+            self.url, data=json.dumps(fields).encode(),
+            headers={"Content-Type": "application/json", "X-Fused": "1"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=3):
+                pass
+        except (urllib.error.URLError, OSError, ValueError):
+            pass
+
+    def update(self, done, total, detail=None):
+        now = time.time()
+        if now - self._last_post < 1.0:
+            return
+        self._last_post = now
+        self._post(done=done, total=total, detail=detail)
+
+    def finish(self, detail=None):
+        self._post(state="done", detail=detail)
+
+    def fail(self, message):
+        self._post(state="error", detail=message)
 
 
 # ---------------------------------------------------------------- worker
 
 def worker():
+    global _job
     _progress.update({"pid": os.getpid(), "stage": "starting",
                       "steps": _fresh_steps(), "started_at": time.time(),
                       "error": None})
+    _job = _JobReport(JOB_ID, "Overture vs Philadelphia dataset")
     _publish()
     try:
         _download_philly()
@@ -171,10 +265,12 @@ def worker():
         _build_wide_tables()
         _build_tiles()
         _finish(summaries)
+        _job.finish("Ready")
     except Exception as error:  # surfaced to the UI via progress.json
         import traceback
         traceback.print_exc()
         _publish({"error": f"{type(error).__name__}: {error}"})
+        _job.fail(f"{type(error).__name__}: {error}")
         raise
 
 
