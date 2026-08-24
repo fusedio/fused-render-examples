@@ -162,17 +162,27 @@
   #tip .h { color: var(--muted); font-size: 10px; margin-top: 3px; }
 
   /* detail */
-  #detail { position: absolute; right: 14px; bottom: 26px; width: 268px; z-index: 25;
+  #detail { position: absolute; right: 14px; bottom: 26px; width: 296px; z-index: 25;
     display: none; background: var(--panel); border: 1px solid var(--hair);
-    border-radius: 8px; padding: 13px 15px; box-shadow: 0 3px 16px rgba(11,11,11,.12); }
-  #detail h4 { font-size: 12px; font-weight: 600; padding-right: 16px; line-height: 1.4; }
+    border-radius: 8px; padding: 14px 16px; box-shadow: 0 3px 16px rgba(11,11,11,.12);
+    transition: width .2s ease; }
+  #detail.big { width: 470px; padding: 16px 18px; }
+  #detail h4 { font-size: 12px; font-weight: 600; padding-right: 40px; line-height: 1.4; }
+  #detail.big h4 { font-size: 15px; }
   #detail .meta { font-size: 10px; color: var(--muted); margin-top: 3px; }
+  #detail.big .meta { font-size: 11.5px; margin-top: 5px; }
   #detail .close { position: absolute; top: 8px; right: 10px; color: var(--muted); font-size: 14px; }
   #detail .close:hover { color: var(--ink); }
+  #detail .expand { position: absolute; top: 8px; right: 30px; color: var(--muted); font-size: 13px;
+    line-height: 1; }
+  #detail .expand:hover { color: var(--ink); }
+  #detail.big .expand { transform: rotate(180deg); }
   #detail .hd { margin: 11px 0 3px; font-size: 9px; letter-spacing: .08em;
     text-transform: uppercase; color: var(--muted); }
+  #detail.big .hd { font-size: 10px; margin-top: 15px; }
   #detail svg { display: block; overflow: visible; }
   #detail .gers { margin-top: 9px; font-size: 9px; color: var(--muted); word-break: break-all; }
+  #detail.big .gers { font-size: 10px; margin-top: 12px; }
 
   /* prepare */
   #prep { position: absolute; inset: 0; z-index: 100; background: var(--page);
@@ -287,6 +297,7 @@
 <div id="tip"></div>
 
 <div id="detail">
+  <button class="expand" id="detailExpand" title="Larger view" aria-label="Toggle larger view">&#10530;</button>
   <button class="close" id="detailClose">&times;</button>
   <h4 id="detailTitle"></h4>
   <div class="meta" id="detailMeta"></div>
@@ -355,6 +366,7 @@ let hidden = new Set(), scopeStats = null, diffStats = null, boxBounds = null;
 let scopeStamp = 0;
 let statsSeq = 0;                        // guards against out-of-order stats.py replies
 let showPhilly = true, showOverture = false;
+let detailEntries = null;               // last building's per-release scores, for redraw on resize
 
 const $ = id => document.getElementById(id);
 const pct1 = v => (v * 100).toFixed(1) + "%";
@@ -450,13 +462,15 @@ function qualityCounts(i) {
 
 /* One refresh path for every state change. */
 async function refresh() {
-  const seq = ++statsSeq;
   if (mode === "diff") {
+    /* Only the async branches touch statsSeq: bumping it in score mode (which
+       does no stats query) would cancel an in-flight area query. */
+    const seq = ++statsSeq;
     diffStats = null;
     renderKpis(); renderLegend();
     const result = await runPy("./stats.py",
       { action: "compare", a: cmpA, b: cmpB, bbox: boxBounds || null });
-    if (seq !== statsSeq) return;       // a newer refresh has superseded this one
+    if (seq !== statsSeq) return;       // a newer stats request has superseded this one
     diffStats = result;
   }
   renderKpis();
@@ -1018,6 +1032,10 @@ function wireHover() {
     if (feature) showDetail(+feature.properties.fid);
   });
   $("detailClose").onclick = () => { $("detail").style.display = "none"; };
+  $("detailExpand").onclick = () => {
+    $("detail").classList.toggle("big");
+    if (detailEntries) drawDetailChart(detailEntries);
+  };
 }
 
 async function showDetail(fid) {
@@ -1034,13 +1052,20 @@ async function showDetail(fid) {
   if (info.height) bits.push(Math.round(info.height) + " ft");
   if (info.area_sqft) bits.push(Math.round(info.area_sqft).toLocaleString() + " sq ft");
   $("detailMeta").textContent = bits.join(" · ") || "—";
-  drawDetailChart(info.releases);
+  detailEntries = info.releases;
+  drawDetailChart(detailEntries);
   const newest = info.releases[info.releases.length - 1];
   if (newest && newest.gers_id) $("detailGers").textContent = "GERS " + newest.gers_id;
 }
 
 function drawDetailChart(entries) {
-  const width = 238, height = 78, m = { t: 8, r: 6, b: 20, l: 24 };
+  /* Target the expanded/collapsed width directly so a redraw mid-transition
+     still lays out against the final size. */
+  const big = $("detail").classList.contains("big");
+  const width = big ? 434 : 264;
+  const height = big ? 156 : 84;
+  const fs = big ? 10 : 8;
+  const m = { t: 8, r: 6, b: 20, l: big ? 28 : 24 };
   const svg = d3.select("#detailChart").attr("width", width).attr("height", height);
   svg.selectAll("*").remove();
   const x = d3.scalePoint(d3.range(entries.length), [m.l, width - m.r]).padding(0.15);
@@ -1051,26 +1076,27 @@ function drawDetailChart(entries) {
       .tickSize(-(width - m.l - m.r)))
     .call(g => { g.select(".domain").remove();
       g.selectAll("line").attr("stroke", "#e1e0d9");
-      g.selectAll("text").attr("fill", "#898781").attr("font-size", 8); });
+      g.selectAll("text").attr("fill", "#898781").attr("font-size", fs); });
+  /* Enlarged, every release is labelled; small, only the endpoints fit. */
   svg.append("g").attr("transform", `translate(0,${height - m.b})`)
     .call(d3.axisBottom(x)
-      .tickFormat(i => (i === 0 || i === entries.length - 1
+      .tickFormat(i => (big || i === 0 || i === entries.length - 1
         ? entries[i].release.slice(2, 7) : "")))
     .call(g => { g.select(".domain").remove(); g.selectAll("line").remove();
-      g.selectAll("text").attr("fill", "#898781").attr("font-size", 8); });
+      g.selectAll("text").attr("fill", "#898781").attr("font-size", fs); });
 
   const data = entries.map((e, i) => ({ i, iou: e.iou }));
   svg.append("path").datum(data)
     .attr("d", d3.line().x(d => x(d.i)).y(d => y(d.iou)))
-    .attr("fill", "none").attr("stroke", "#52514e").attr("stroke-width", 1.6);
+    .attr("fill", "none").attr("stroke", "#52514e").attr("stroke-width", big ? 2 : 1.6);
   svg.selectAll(null).data(data).join("circle")
     .attr("cx", d => x(d.i)).attr("cy", d => y(d.iou))
-    .attr("r", 2.8).attr("fill", d => qualityOf(d.iou).color)
+    .attr("r", big ? 3.6 : 2.8).attr("fill", d => qualityOf(d.iou).color)
     .attr("stroke", "#fcfcfb").attr("stroke-width", 1);
 
   const last = data[data.length - 1];
   svg.append("text").attr("x", x(last.i)).attr("y", y(last.iou) - 7)
-    .attr("text-anchor", "end").attr("font-size", 9).attr("fill", "#0b0b0b")
+    .attr("text-anchor", "end").attr("font-size", big ? 11 : 9).attr("fill", "#0b0b0b")
     .attr("font-weight", 600).text(last.iou.toFixed(2));
 }
 
@@ -1126,6 +1152,7 @@ function wireBox() {
 }
 
 function setCityScope() {
+  statsSeq++;                           // cancel any in-flight area/compare fetch
   boxBounds = null;
   scopeStats = READY.summaries;
   scopeStamp++;
