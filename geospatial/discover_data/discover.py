@@ -488,19 +488,38 @@ def idf_weights(collections, tokens):
     return {t: max(0.3, math.log((n + 1) / (df[t] + 0.5))) for t in tokens}
 
 
+def _lon_pieces(w, e):
+    # STAC encodes an antimeridian-crossing bbox with west > east; split it
+    # into its two non-wrapping pieces either side of 180, same idea as the
+    # map's client-side splitAM (index.html), just for overlap/area math
+    # instead of a draw.
+    return [(w, 180.0), (-180.0, e)] if w > e else [(w, e)]
+
+
+def _lon_span(w, e):
+    return (e - w) if w <= e else (360.0 - w + e)
+
+
 def _spatial_bonus(qbox, b):
     """How well a collection's extent fits the query box: up to +2 for covering
     it, plus up to +1 for being specific to it (a regional dataset outranks an
     equal-text global one)."""
     if not qbox or not b or len(b) < 4:
         return 0.0
-    w, s = max(qbox[0], b[0]), max(qbox[1], b[1])
-    e, n = min(qbox[2], b[2]), min(qbox[3], b[3])
-    if w >= e or s >= n:
+    s, n = max(qbox[1], b[1]), min(qbox[3], b[3])
+    if s >= n:
         return 0.0
-    inter = (e - w) * (n - s)
-    qarea = max(1e-9, (qbox[2] - qbox[0]) * (qbox[3] - qbox[1]))
-    carea = max(1e-9, (b[2] - b[0]) * (b[3] - b[1]))
+    # Piece-pair sum, same idea as _bbox_overlap: the west/east pieces of a
+    # crossing box never overlap each other, so summing each pair's overlap
+    # can't double-count.
+    lon_overlap = sum(max(0.0, min(qe, be) - max(qw, bw))
+                      for qw, qe in _lon_pieces(qbox[0], qbox[2])
+                      for bw, be in _lon_pieces(b[0], b[2]))
+    if lon_overlap <= 0:
+        return 0.0
+    inter = lon_overlap * (n - s)
+    qarea = max(1e-9, _lon_span(qbox[0], qbox[2]) * (qbox[3] - qbox[1]))
+    carea = max(1e-9, _lon_span(b[0], b[2]) * (b[3] - b[1]))
     return round(2.0 * (inter / qarea) + min(1.0, qarea / carea), 3)
 
 
@@ -512,14 +531,6 @@ def _parse_bbox(bbox):
     except ValueError:
         return None
     return _flat_bbox(parts)
-
-
-def _lon_pieces(w, e):
-    # STAC encodes an antimeridian-crossing bbox with west > east; split it
-    # into its two non-wrapping pieces either side of 180, same idea as the
-    # map's client-side splitAM (index.html), just for an overlap test instead
-    # of a draw.
-    return [(w, 180.0), (-180.0, e)] if w > e else [(w, e)]
 
 
 def _bbox_overlap(a, b):

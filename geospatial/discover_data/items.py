@@ -125,10 +125,20 @@ def _static_items(self_href, qbox, qinterval, limit, deadline, resume):
     if resume:
         children, pending, seen = resume["children"], resume["items"], set(resume.get("seen", []))
     else:
-        # self_href itself goes through the same walk as any child, so catalogs
-        # nested arbitrarily deep (Umbra: Catalog > year > month > day > item)
-        # get expanded level by level instead of assuming items sit one hop down.
-        children, pending, seen = [self_href], [], set()
+        # Fetched directly, not through the fail-open _fetch_all below: a
+        # timeout/HTTP error here means there is nothing to show at all, and
+        # should surface as a real error rather than a silent empty page.
+        doc = discover._get_json(self_href, 20.0)
+        seen = {self_href}
+        links = doc.get("links", []) or []
+        # Deeper levels (rel=child of a child) are walked below, same as any
+        # other child, so catalogs nested arbitrarily deep (Umbra: Catalog >
+        # year > month > day > item) get expanded instead of assuming items
+        # sit exactly one hop under self_href.
+        children = [urljoin(self_href, l["href"]) for l in links
+                    if l.get("rel") == "child" and l.get("href")]
+        pending = [urljoin(self_href, l["href"]) for l in links
+                   if l.get("rel") == "item" and l.get("href")]
 
     items, step = [], _CHILD_BATCH
     while len(items) < limit and time.time() < deadline:

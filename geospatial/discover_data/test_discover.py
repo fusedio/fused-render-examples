@@ -494,6 +494,16 @@ def test_spatial_bonus_prefers_regional():
     assert discover._spatial_bonus(india, None) == 0.0
 
 
+def test_spatial_bonus_across_the_antimeridian():
+    # A naive rectangle (west, east straight from the crossing bbox) collapses
+    # to a negative-width box and always scores 0 -- a Fiji-area query never
+    # outranked a global dataset for it. Piece-summed, self-overlap should
+    # score like india-vs-india above: full coverage plus the specificity bonus.
+    fiji = [172.6, -20.0, -168.4, -10.0]
+    assert discover._spatial_bonus(fiji, fiji) > discover._spatial_bonus(fiji, [-180, -90, 180, 90])
+    assert discover._spatial_bonus(fiji, [0.0, -20.0, 10.0, -10.0]) == 0.0   # nowhere near either piece
+
+
 def test_place_in_query_filters_spatially(monkeypatch):
     base = "https://loc"
     install_backend(monkeypatch, {base: {
