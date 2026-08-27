@@ -41,15 +41,19 @@ def main(url: str = "", dest_dir: str = "", name: str = ""):
     # A private temp per call, not `path + ".part"`: two downloads of assets that
     # share a basename would otherwise stream into the same file.
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".dl-", suffix=".part")
+    # Opened right away and closed in `finally` below, covering the request
+    # itself: on Windows an open handle blocks the cleanup path's os.remove,
+    # turning a plain request failure into a PermissionError that hides it.
+    f = os.fdopen(fd, "wb")
 
     started = time.time()
     size = 0
     try:
-        with discover._SESSION.get(url, headers=discover._HEADERS,
-                                   stream=True, timeout=30) as r:
-            r.raise_for_status()
-            total = int(r.headers.get("Content-Length") or 0)
-            with os.fdopen(fd, "wb") as f:
+        try:
+            with discover._SESSION.get(url, headers=discover._HEADERS,
+                                       stream=True, timeout=30) as r:
+                r.raise_for_status()
+                total = int(r.headers.get("Content-Length") or 0)
                 for chunk in r.iter_content(1 << 20):
                     f.write(chunk)
                     size += len(chunk)
@@ -60,6 +64,8 @@ def main(url: str = "", dest_dir: str = "", name: str = ""):
                         raise _too_large(total, size, el)
                     if el > _CEILING:
                         raise _too_large(total or size, size, el)
+        finally:
+            f.close()
         os.replace(tmp, path)
     except Exception:
         for leftover in (tmp, path):     # path is our own reservation

@@ -514,10 +514,22 @@ def _parse_bbox(bbox):
     return _flat_bbox(parts)
 
 
+def _lon_pieces(w, e):
+    # STAC encodes an antimeridian-crossing bbox with west > east; split it
+    # into its two non-wrapping pieces either side of 180, same idea as the
+    # map's client-side splitAM (index.html), just for an overlap test instead
+    # of a draw.
+    return [(w, 180.0), (-180.0, e)] if w > e else [(w, e)]
+
+
 def _bbox_overlap(a, b):
     if not b or len(b) < 4:
         return True  # no spatial extent advertised -- don't exclude
-    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+    if a[3] < b[1] or a[1] > b[3]:
+        return False  # latitude bands don't intersect
+    return any(not (ae < bw or aw > be)
+               for aw, ae in _lon_pieces(a[0], a[2])
+               for bw, be in _lon_pieces(b[0], b[2]))
 
 
 def _parse_interval(dt):

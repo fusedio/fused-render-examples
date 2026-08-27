@@ -4,10 +4,12 @@ Two code paths, mirroring the `access` field the search results carry:
 
   * access == "api"    -- GET the collection's items_href with bbox / datetime /
                           limit; one standard /collections/{id}/items page.
-  * access == "static" -- crawl self_href: the event collection links rel=child
-                          acquisition collections (each carrying its own extent,
-                          so they are pruned against the bbox before their items
-                          are fetched), which link rel=item item documents.
+  * access == "static" -- crawl self_href: rel=child links are walked to any
+                          depth (a Maxar event is one level -- child acquisition
+                          collections link rel=item directly; Umbra nests
+                          Catalog > year > month > day > item), pruning a branch
+                          against the bbox using its own extent, when it has one,
+                          before descending into it.
 
 Both paths return one page plus an opaque `cursor` to resume from. That matters
 most for the static path: a Maxar event fans out to hundreds of items across its
@@ -121,28 +123,31 @@ def _api_items(items_href, bbox, datetime, limit, resume):
 
 def _static_items(self_href, qbox, qinterval, limit, deadline, resume):
     if resume:
-        children, pending = resume["children"], resume["items"]
+        children, pending, seen = resume["children"], resume["items"], set(resume.get("seen", []))
     else:
-        doc = discover._get_json(self_href, 20.0)
-        links = doc.get("links", []) or []
-        children = [urljoin(self_href, l["href"]) for l in links
-                    if l.get("rel") == "child" and l.get("href")]
-        pending = [urljoin(self_href, l["href"]) for l in links
-                   if l.get("rel") == "item" and l.get("href")]
+        # self_href itself goes through the same walk as any child, so catalogs
+        # nested arbitrarily deep (Umbra: Catalog > year > month > day > item)
+        # get expanded level by level instead of assuming items sit one hop down.
+        children, pending, seen = [self_href], [], set()
 
     items, step = [], _CHILD_BATCH
     while len(items) < limit and time.time() < deadline:
-        # walk acquisitions only until the page can be filled
+        # walk the catalog tree only until the page can be filled
         while len(pending) < limit and children and time.time() < deadline:
             batch, children = children[:step], children[step:]
             step = min(step * 2, 16)
+            batch = [u for u in batch if u not in seen]
+            seen.update(batch)
             for url, child in _fetch_all(batch, deadline):
                 spatial = ((child.get("extent") or {}).get("spatial") or {}).get("bbox") or []
                 boxes = [b for b in (discover._flat_bbox(x) for x in spatial) if b]
                 if qbox and boxes and not any(discover._bbox_overlap(qbox, b) for b in boxes):
-                    continue  # this acquisition never touches the query area
-                pending.extend(urljoin(url, l["href"]) for l in child.get("links", [])
+                    continue  # this branch never touches the query area
+                links = child.get("links", []) or []
+                pending.extend(urljoin(url, l["href"]) for l in links
                                if l.get("rel") == "item" and l.get("href"))
+                children.extend(urljoin(url, l["href"]) for l in links
+                                if l.get("rel") == "child" and l.get("href"))
         if not pending:
             break
         # Floor each batch at one full parallel wave. Asking for exactly the
@@ -162,7 +167,8 @@ def _static_items(self_href, qbox, qinterval, limit, deadline, resume):
             items.append(it)
 
     items.sort(key=lambda i: i["datetime"] or "", reverse=True)
-    nxt = {"children": children, "items": pending} if (children or pending) else None
+    nxt = ({"children": children, "items": pending, "seen": sorted(seen)}
+           if (children or pending) else None)
     return items, None, nxt
 
 

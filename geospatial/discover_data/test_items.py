@@ -9,6 +9,7 @@ import time
 from urllib.parse import quote
 
 import pytest
+import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import discover  # noqa: E402
@@ -323,6 +324,26 @@ def test_download_rejects_non_http():
         download.main(url="s3://bucket/key.tif")
     with pytest.raises(ValueError):
         download.main(url="")
+
+
+def test_download_cleans_up_on_http_error_without_masking_it(tmp_path, monkeypatch):
+    # The failure lands in raise_for_status(), before any bytes are written --
+    # the temp file's handle is still open at that point. Cleanup must close it
+    # first: on Windows, removing a still-open file raises PermissionError,
+    # which used to replace this HTTPError instead of just cleaning up after it.
+    class FailingResponse(FakeResponse):
+        def raise_for_status(self):
+            raise requests.HTTPError("404 Client Error")
+
+    class FailingSession(FakeSession):
+        def get(self, url, headers=None, stream=False, timeout=None):
+            self.calls.append({"url": url, "stream": stream})
+            return FailingResponse([], {})
+
+    monkeypatch.setattr(discover, "_SESSION", FailingSession([]))
+    with pytest.raises(requests.HTTPError, match="404"):
+        download.main(url="https://data/missing.tif", dest_dir=str(tmp_path))
+    assert os.listdir(tmp_path) == []   # temp + reservation both cleaned up
 
 
 # ----------------------------------------------------------------------------

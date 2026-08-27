@@ -87,9 +87,19 @@ def _query(parts, tokens, qbox, kind):
     where, params = [], []
 
     if qbox:
-        # overlap, or no advertised extent (don't exclude those -- same rule as live)
-        where.append("(west IS NULL OR NOT (east < ? OR west > ? OR north < ? OR south > ?))")
-        params += [qbox[0], qbox[2], qbox[1], qbox[3]]
+        # overlap, or no advertised extent (don't exclude those -- same rule as live).
+        # A stored antimeridian-crossing row (west > east, STAC's encoding for it --
+        # query boxes here never cross: drawn ones clamp at +/-180, the gazetteer
+        # clamps Russia's to 180.0) is the union of [west,180] and [-180,east], so
+        # it needs the opposite combinator from the ordinary west<=east case --
+        # same idea as the map's splitAM, expressed as a predicate instead of a draw.
+        where.append("""(
+            west IS NULL
+            OR (west <= east AND NOT (east < ? OR west > ? OR north < ? OR south > ?))
+            OR (west > east AND (east >= ? OR west <= ?) AND north >= ? AND south <= ?)
+        )""")
+        params += [qbox[0], qbox[2], qbox[1], qbox[3],
+                   qbox[0], qbox[2], qbox[1], qbox[3]]
     if kind in ("raster", "vector"):
         where.append("kind = ?")
         params.append(kind)

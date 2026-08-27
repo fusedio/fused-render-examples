@@ -248,15 +248,15 @@
   .fb-crumbs { gap: 1px; margin-top: 8px; }
   .fb-places button, .fb-crumbs button { font-size: 11px; padding: 3px 8px; border-radius: 6px; }
   .fb-crumbs button { border: 0; background: none; color: var(--faint); }
-  .fb-crumbs button:hover { background: var(--hover); color: var(--ink); }
-  .fb-crumbs button[aria-current="true"] { color: var(--ink); font-weight: 600; }
+  .fb-crumbs button:hover { background: var(--panel-2); color: var(--text); }
+  .fb-crumbs button[aria-current="true"] { color: var(--text); font-weight: 600; }
   .fb-crumbs .sep { color: var(--faint); font-size: 11px; padding: 0 1px; }
   .fb-list { margin-top: 8px; height: 200px; overflow-y: auto; border: 1px solid var(--line);
     border-radius: 8px; background: var(--bg); }
   .fb-list button, .fb-list .file { display: flex; gap: 8px; align-items: center; width: 100%;
     text-align: left; border: 0; border-radius: 0; background: none; padding: 5px 10px;
     font-size: 12px; }
-  .fb-list button:hover { background: var(--hover); }
+  .fb-list button:hover { background: var(--panel-2); }
   .fb-list .file { color: var(--faint); }
   .fb-list .ic { width: 13px; flex: none; text-align: center; opacity: .8; }
   .fb-list .empty { padding: 10px; font-size: 11px; color: var(--faint); }
@@ -1413,18 +1413,17 @@ function toggleItem(c, i, fromCheckbox) {
   entry.sel.has(i) ? entry.sel.delete(i) : entry.sel.add(i);
   const row = $("itemsBox").querySelector(`.irow[data-i="${i}"]`);
   if (row && !fromCheckbox) row.querySelector(".ck input").checked = entry.sel.has(i);
-  const fp = footprintEl(i);
-  if (fp) fp.classList.toggle("on", entry.sel.has(i));
+  footprintEls(i).forEach(fp => fp.classList.toggle("on", entry.sel.has(i)));
   renderItemActions(c);
 }
 
-function footprintEl(i) {
-  return EXTENT_MAP && EXTENT_MAP.map.gShapes.querySelector(`.fp[data-i="${i}"]`);
+function footprintEls(i) {
+  // A dateline-crossing item bbox draws as two <rect>s sharing this data-i.
+  return EXTENT_MAP ? EXTENT_MAP.map.gShapes.querySelectorAll(`.fp[data-i="${i}"]`) : [];
 }
 
 function hotItem(c, i, on) {
-  const fp = footprintEl(i);
-  if (fp) fp.classList.toggle("hot", on);
+  footprintEls(i).forEach(fp => fp.classList.toggle("hot", on));
   const row = $("itemsBox") && $("itemsBox").querySelector(`.irow[data-i="${i}"]`);
   if (row) row.classList.toggle("hot", on);
 }
@@ -1437,21 +1436,25 @@ function paintFootprints(c) {
   if (!entry || !entry.data) return;
   entry.data.items.forEach((it, i) => {
     if (!validBox(it.bbox)) return;
-    const [w, s, e, n] = it.bbox;
-    const r = document.createElementNS(SVGNS, "rect");
-    r.setAttribute("class", "fp" + (entry.sel.has(i) ? " on" : ""));
-    r.setAttribute("data-i", i);
-    r.setAttribute("x", w); r.setAttribute("y", projY(n));
-    r.setAttribute("width", Math.max(e - w, 1e-4));
-    r.setAttribute("height", Math.max(projY(s) - projY(n), 1e-4));
-    r.addEventListener("pointerenter", () => hotItem(c, i, true));
-    r.addEventListener("pointerleave", () => hotItem(c, i, false));
-    r.addEventListener("click", () => {
-      toggleItem(c, i);
-      const row = $("itemsBox").querySelector(`.irow[data-i="${i}"]`);
-      if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
-    g.appendChild(r);
+    // splitAM: an antimeridian-crossing item bbox (west > east) drawn as a raw
+    // rect collapses to a 1e-4-wide speck; split it into its two real pieces,
+    // same as the extent map already does for collection extents.
+    for (const [w, s, e, n] of splitAM(it.bbox)) {
+      const r = document.createElementNS(SVGNS, "rect");
+      r.setAttribute("class", "fp" + (entry.sel.has(i) ? " on" : ""));
+      r.setAttribute("data-i", i);
+      r.setAttribute("x", w); r.setAttribute("y", projY(n));
+      r.setAttribute("width", Math.max(e - w, 1e-4));
+      r.setAttribute("height", Math.max(projY(s) - projY(n), 1e-4));
+      r.addEventListener("pointerenter", () => hotItem(c, i, true));
+      r.addEventListener("pointerleave", () => hotItem(c, i, false));
+      r.addEventListener("click", () => {
+        toggleItem(c, i);
+        const row = $("itemsBox").querySelector(`.irow[data-i="${i}"]`);
+        if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+      g.appendChild(r);
+    }
   });
 }
 
@@ -1778,8 +1781,11 @@ async function runSearch(p) {
 function onParams() {
   const p = P();
   syncControls(p);
+  // A blank-query search ("browse everything") has no query-affecting param to
+  // key off, so once it has loaded results, LAST keeps this true until a real
+  // navigation away clears it -- selecting a result shouldn't wipe the list.
   const browse = p.q || p.bbox || p.datetime || (p.mode === "index" && p.kind) ||
-    fused.params.get("browse") === "1";
+    fused.params.get("browse") === "1" || LAST !== null;
   if (!browse) { LAST = null; lastSig = null; renderLanding(); renderDetail(""); return; }
   if (!LAST || sig(p) !== lastSig) { runSearch(p); return; }
   // selection / catalog filter / AI toggle only — re-render from loaded data, no refetch

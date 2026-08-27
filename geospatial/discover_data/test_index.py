@@ -280,6 +280,18 @@ def test_query_no_extent_not_excluded(tmp_index, monkeypatch):
     assert [c["id"] for c in r["collections"]] == ["nobox"]
 
 
+def test_query_bbox_across_the_antimeridian(tmp_index, monkeypatch):
+    # STAC encodes a crossing bbox with west > east (here: Fiji-ish, spanning
+    # 172.6E through 180 to -168.4E). A naive rectangle predicate sees west far
+    # east of a Pacific query box's east edge and wrongly drops the row.
+    _seed(tmp_index, monkeypatch, [
+        col("fiji-lc", title="Land cover Fiji", bbox=[172.6, -20, -168.4, -10]),
+        col("elsewhere-lc", title="Land cover elsewhere", bbox=[0, -20, 10, -10]),
+    ])
+    r = query_index.main(bbox="170,-15,175,-12")   # touches the crossing row's west piece
+    assert [c["id"] for c in r["collections"]] == ["fiji-lc"]
+
+
 def test_query_unbuilt_index(tmp_index):
     r = query_index.main(q="anything")
     assert r["built"] is False and r["collections"] == []

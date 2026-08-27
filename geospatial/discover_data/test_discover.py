@@ -135,6 +135,18 @@ def test_bbox_overlap():
     assert discover._bbox_overlap(q, [1, 2]) is True
 
 
+def test_bbox_overlap_across_the_antimeridian():
+    # STAC encodes a crossing collection bbox with west > east (here: Fiji-ish,
+    # 172.6E through 180 to -168.4E). A naive rectangle test sees west (172.6)
+    # far east of a Pacific query box's east edge and wrongly excludes it.
+    pacific = [172.6, -20, -168.4, -10]
+    assert discover._bbox_overlap([170, -15, 175, -12], pacific) is True    # touches the west piece
+    assert discover._bbox_overlap([-175, -15, -170, -12], pacific) is True  # touches the east piece
+    assert discover._bbox_overlap([0, -15, 10, -12], pacific) is False      # nowhere near either piece
+    # a crossing query box, symmetrically
+    assert discover._bbox_overlap([170, -20, -170, -10], [172, -15, 178, -12]) is True
+
+
 def test_interval_overlap():
     q = discover._parse_interval("2021-01-01/..")
     assert discover._interval_overlap(q, ["2020-01-01T00:00:00Z", None]) is True   # open end
