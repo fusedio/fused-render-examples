@@ -64,6 +64,7 @@ own machine, no setup. Start with either, then browse below.
 | [flightdeck](geospatial/flightdeck/) | Live flight-ops suite: lookup, radar, sky, airports, hazards — seven interlinked real-time views ([live](https://unstable.open.fused.io/wihwz3nnlet3avpsr3qa22ywrm?flight=AAL292)) |
 | [japan_transit](geospatial/japan_transit/) | National rail map + Dijkstra station-to-station routing for Japan, on GPU-ready columnar binaries |
 | [temperature_explorer](geospatial/temperature_explorer/) | Historical daily temperature for any point on Earth, from a free REST API or a cloud-native Zarr store |
+| [discover_data](geospatial/discover_data/) | Federated STAC collection search across public Earth-observation catalogs, live or from a local parquet index |
 
 ## Local tools
 
