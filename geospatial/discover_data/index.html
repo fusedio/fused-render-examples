@@ -1,0 +1,2253 @@
+<!DOCTYPE html>
+<html lang="en" data-fused-theme="shell">
+<head>
+  <meta name="fused-app">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discover data — STAC collection search</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1116; --panel: #151a21; --panel-2: #1b2230; --raise: #212a38;
+    --text: #e6ebf2; --muted: #93a0b3; --faint: #64707f;
+    --line: #262e3a; --line-2: #313c4c;
+    --accent: #5cc8ff; --accent-ink: #04121c; --good: #62d29a; --bad: #ff6b6b;
+    --chip: #1e2733; --chip-line: #2c3949;
+    --ocean: #0b1a26; --land: #23303d; --coast: #3c4b5c; --grat: #1b2836;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f5f7fa; --panel: #ffffff; --panel-2: #f0f3f8; --raise: #e8edf4;
+    --text: #16202c; --muted: #566372; --faint: #8a95a3;
+    --line: #dde3ec; --line-2: #cbd4e0;
+    --accent: #0a7ec2; --accent-ink: #ffffff; --good: #1a9e63; --bad: #cf3b3b;
+    --chip: #eef2f7; --chip-line: #d7deea;
+    --ocean: #dfeaf3; --land: #f4f6f8; --coast: #b3c2d1; --grat: #cdd9e5;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  /* the hidden attribute must win over the display rules below (.kindchips,
+     .idxchip, .menu, .ai-toggle all set display, which would otherwise override
+     the UA [hidden]{display:none} and leave "hidden" elements on screen) */
+  [hidden] { display: none !important; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; }
+
+  header { border-bottom: 1px solid var(--line); background: var(--panel); padding: 14px 18px 10px; }
+  .brand { font-weight: 700; font-size: 17px; letter-spacing: .2px; display: flex; align-items: center; gap: 10px; }
+  .brand .sub { font-weight: 400; font-size: 12.5px; color: var(--muted); letter-spacing: 0; }
+
+  /* header index-build chip: the "come back later" indicator, always visible
+     in the header while a background build runs and after it finishes */
+  .idxchip { margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+    font: inherit; font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 20px;
+    border: 1px solid var(--chip-line); background: var(--chip); color: var(--muted); cursor: pointer; }
+  .idxchip:hover { border-color: var(--accent); color: var(--text); }
+  .idxchip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  .idxchip.building .dot { animation: pulse 1s ease-in-out infinite; }
+  .idxchip.ready .dot { background: var(--good); }
+  .idxchip .x { margin-left: 1px; font-weight: 700; opacity: .7; }
+  .idxchip .x:hover { opacity: 1; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+  /* settings dropdown: folds the rarely-touched catalogs + download-folder
+     panels off the main toolbar */
+  .menuwrap { position: relative; display: inline-flex; }
+  .menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 180px;
+    background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
+    box-shadow: 0 14px 38px rgba(0,0,0,.4); padding: 5px; display: flex; flex-direction: column; }
+  .menu button { text-align: left; border: none; border-radius: 7px; background: none;
+    color: var(--text); padding: 8px 11px; font-size: 13px; }
+  .menu button:hover { background: var(--panel-2); }
+
+  .searchbar { display: flex; gap: 8px; margin-top: 11px; }
+  .searchbar input {
+    flex: 1; background: var(--bg); border: 1px solid var(--line-2); color: var(--text);
+    border-radius: 9px; padding: 11px 14px; font-size: 15px; outline: none;
+  }
+  .searchbar input:focus { border-color: var(--accent); }
+  button {
+    font: inherit; cursor: pointer; border-radius: 9px; border: 1px solid var(--line-2);
+    background: var(--panel-2); color: var(--text); padding: 10px 16px;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.linkish { background: none; border: none; color: var(--muted); padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
+  button.linkish:hover { color: var(--text); background: var(--panel-2); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 9px; font-size: 12.5px; }
+  .ai-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted); }
+  .ai-toggle input { accent-color: var(--accent); }
+  .spacer { flex: 1; }
+  .count { color: var(--faint); }
+
+  .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; padding: 5px 12px; font-size: 12px; background: var(--panel-2); color: var(--muted); }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .kindchips { display: inline-flex; gap: 6px; }
+  .kindchips button { padding: 4px 10px; font-size: 11.5px; border-radius: 20px; }
+  .kindchips button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+  .sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .src { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 10px;
+    border: 1px solid var(--chip-line); background: var(--chip); border-radius: 20px; color: var(--muted);
+    cursor: pointer; user-select: none; }
+  .src:hover { border-color: var(--accent); color: var(--text); }
+  .src .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); flex: none; }
+  .src.bad { cursor: default; }
+  .src.bad:hover { border-color: var(--chip-line); color: var(--muted); }
+  .src.bad .dot { background: var(--bad); }
+  .src b { color: var(--text); font-weight: 600; }
+  .src.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .src.active b { color: var(--accent-ink); }
+  .src.active .dot { background: var(--accent-ink); }
+  .src.active .x { font-weight: 700; opacity: .8; }
+  .src.place { border-color: color-mix(in srgb, var(--accent) 55%, var(--chip-line)); cursor: default; }
+  .src.place:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--chip-line)); color: var(--muted); }
+  .src.place .dot { background: var(--accent); }
+
+  main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) var(--detail-w, clamp(360px, 36%, 580px)); min-height: 0; position: relative; }
+  /* drag handle on the results/detail boundary to widen the right panel */
+  .gutter { position: absolute; top: 0; bottom: 0; right: var(--detail-w, clamp(360px, 36%, 580px));
+    width: 9px; margin-right: -4px; cursor: col-resize; z-index: 6; }
+  .gutter::after { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px; background: transparent; transition: background .12s; }
+  .gutter:hover::after, .gutter.drag::after { background: var(--accent); }
+  .results-pane { overflow-y: auto; padding: 14px 16px; }
+  #aibar-slot:empty { display: none; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 11px; align-content: start; }
+  .grid > .landing, .grid > .loading, .grid > .err { grid-column: 1 / -1; }
+  .detail { overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 16px 20px; }
+
+  .card {
+    border: 1px solid var(--line); background: var(--panel); border-radius: 12px;
+    padding: 12px 13px; cursor: pointer; transition: border-color .12s; display: flex; flex-direction: column; min-width: 0;
+  }
+  .card:hover { border-color: var(--line-2); }
+  .card.sel { border-color: var(--accent); background: var(--panel-2); }
+  .src-tag { font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-title { margin: 3px 0 0; font-size: 14px; line-height: 1.3; font-weight: 600;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .card-id { font-size: 11px; color: var(--faint); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .desc { margin: 7px 0 0; color: var(--muted); font-size: 12.5px;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .kw { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 9px; }
+  .kw span { font-size: 10.5px; padding: 2px 7px; border-radius: 20px; background: var(--chip); border: 1px solid var(--chip-line); color: var(--muted);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-foot { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: auto; padding-top: 9px; font-size: 11px; color: var(--faint); }
+  .why { margin-top: 9px; font-size: 12px; color: var(--text); background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 8px; padding: 6px 9px; }
+  .kindtag { text-transform: capitalize; }
+
+  .detail .empty, .landing, .err, .loading { color: var(--muted); }
+  .landing { max-width: 560px; margin: 6vh auto 0; text-align: center; }
+  .landing h2 { color: var(--text); font-weight: 600; }
+  .err { border: 1px solid var(--bad); border-radius: 10px; padding: 14px; color: var(--bad); }
+  .loading { padding: 6px 2px 12px; color: var(--muted); }
+  .skeleton { height: 128px; border-radius: 12px; border: 1px solid var(--line);
+    background: linear-gradient(100deg, var(--panel) 30%, var(--panel-2) 50%, var(--panel) 70%);
+    background-size: 220% 100%; animation: sh 1.2s infinite; }
+  @keyframes sh { to { background-position: -220% 0; } }
+
+  .detail h2 { margin: 0 0 2px; font-size: 18px; }
+  .detail .sub-id { color: var(--faint); font-size: 12px; margin-bottom: 12px; word-break: break-all; }
+  .detail section { margin-bottom: 16px; }
+  .detail h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .detail .full-desc { font-size: 13px; color: var(--text); white-space: pre-wrap; max-height: 260px; overflow-y: auto; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; }
+  .kv .k { color: var(--muted); }
+  .links a { display: inline-block; margin: 0 12px 6px 0; }
+
+  /* inline filter in the detail panel, so the bbox + date controls are right
+     where you load the data (the top-left Filters are easy to miss) */
+  /* Compact filter: bbox + dates + presets + Load, right under the extent map. */
+  .filt { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+  .filt-row { display: flex; gap: 7px; align-items: center; }
+  .filt input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line-2);
+    color: var(--text); border-radius: 8px; padding: 7px 9px; font-size: 12.5px; outline: none; }
+  .filt input:focus { border-color: var(--accent); }
+  .filt .filt-load { flex: none; }
+  .df-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  pre.code { position: relative; background: var(--bg); border: 1px solid var(--line-2); border-radius: 9px;
+    padding: 12px; overflow-x: auto; font-size: 12px; line-height: 1.55; }
+  pre.code button.copy { position: absolute; top: 7px; right: 7px; padding: 3px 9px; font-size: 11px; }
+
+  .aibar { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line-2)); border-radius: 9px; font-size: 12.5px; color: var(--muted); }
+  .aibar .msg { flex: 1; }
+
+  /* detail panel: items table + asset chips */
+  .items-bar { display: flex; align-items: center; gap: 10px; }
+  .items-bar .hint { margin: 0; }
+  .items-note { color: var(--faint); font-size: 11px; margin-top: 8px; }
+  .nomap { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin-top: 8px;
+    padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
+  .openonly { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  .items td { padding: 6px 6px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .items td.ck { width: 22px; padding-top: 8px; }
+  .items td.ck input { accent-color: var(--accent); cursor: pointer; }
+  .items td.th { width: 50px; }
+  .items tr.irow { cursor: pointer; }
+  .items tr.irow.hot { background: var(--panel-2); }
+  .items .thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 6px;
+    border: 1px solid var(--line-2); display: block; }
+  .irow-head { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
+  .irow-head .iid { font-size: 11px; word-break: break-all; }
+  .irow-head .idate { color: var(--faint); font-size: 11px; }
+  .achips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .achip { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; padding: 2px 4px 2px 8px;
+    border-radius: 20px; background: var(--chip); border: 1px solid var(--chip-line); color: var(--muted); }
+  .achip a { color: inherit; }
+  .achip button { padding: 1px 7px; font-size: 10px; border-radius: 12px; }
+  .achip .good { color: var(--good); }
+  .achip .bad { color: var(--bad); }
+  .achip.blocked { opacity: .55; }
+  .achip .noopen { color: var(--faint); cursor: help; padding: 0 4px; }
+  .items-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .items-actions:empty { display: none; }
+  .map .fp { fill: transparent; stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke;
+    opacity: .6; cursor: pointer; }
+  .map .fp.hot { fill: var(--accent); fill-opacity: .22; opacity: 1; }
+  .map .fp.on { stroke: var(--good); stroke-width: 2; opacity: 1; }
+
+  /* modal dialogs */
+  dialog.modal { border: none; padding: 0; border-radius: 14px; color: var(--text); background: var(--panel);
+    width: 560px; max-width: 92vw; box-shadow: 0 24px 70px rgba(0,0,0,.5); }
+  dialog.modal::backdrop { background: rgba(4,8,14,.5); backdrop-filter: blur(1px); }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--line); }
+  .modal-head h3 { margin: 0; font-size: 15px; }
+  .modal-body { padding: 16px 18px; }
+  .modal-foot { display: flex; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--line); justify-content: flex-end; }
+  .x { background: transparent; border: none; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 8px; border-radius: 6px; }
+  .x:hover { color: var(--text); background: var(--panel-2); }
+  .modal-body label { display: block; color: var(--muted); margin: 13px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  .modal-body label:first-child { margin-top: 0; }
+  .modal-body label .lc { text-transform: none; letter-spacing: 0; color: var(--faint); }
+  .modal-body input, .modal-body textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--line-2); color: var(--text);
+    border-radius: 8px; padding: 9px 11px; font-size: 13px; outline: none;
+  }
+  .modal-body input:focus, .modal-body textarea:focus { border-color: var(--accent); }
+  #apis { min-height: 190px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.7; }
+  #idxSources { min-height: 150px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.7; }
+  .hint { color: var(--faint); font-size: 11.5px; margin-top: 8px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+  .presets button { padding: 5px 11px; font-size: 12px; border-radius: 20px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row input { flex: 1; min-width: 0; }
+  /* folder browser: shortcuts, a clickable path, then the listing */
+  .fb-places, .fb-crumbs { display: flex; flex-wrap: wrap; align-items: center; }
+  .fb-places { gap: 6px; margin-top: 12px; }
+  .fb-crumbs { gap: 1px; margin-top: 8px; }
+  .fb-places button, .fb-crumbs button { font-size: 11px; padding: 3px 8px; border-radius: 6px; }
+  .fb-crumbs button { border: 0; background: none; color: var(--faint); }
+  .fb-crumbs button:hover { background: var(--panel-2); color: var(--text); }
+  .fb-crumbs button[aria-current="true"] { color: var(--text); font-weight: 600; }
+  .fb-crumbs .sep { color: var(--faint); font-size: 11px; padding: 0 1px; }
+  .fb-list { margin-top: 8px; height: 200px; overflow-y: auto; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); }
+  .fb-list button, .fb-list .file { display: flex; gap: 8px; align-items: center; width: 100%;
+    text-align: left; border: 0; border-radius: 0; background: none; padding: 5px 10px;
+    font-size: 12px; }
+  .fb-list button:hover { background: var(--panel-2); }
+  .fb-list .file { color: var(--faint); }
+  .fb-list .ic { width: 13px; flex: none; text-align: center; opacity: .8; }
+  .fb-list .empty { padding: 10px; font-size: 11px; color: var(--faint); }
+  .vlist { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
+  .vlist:empty { display: none; }
+  .vrow { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 6px 10px;
+    border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+  .vrow.ok { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+  .vrow.bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+  .vrow .vmark { font-weight: 700; flex: none; }
+  .vrow.ok .vmark { color: var(--good); }
+  .vrow.bad .vmark { color: var(--bad); }
+  .vrow .vhost { color: var(--text); flex: none; }
+  .vrow .vmsg { color: var(--muted); }
+  .vrow.checking { color: var(--muted); }
+  .dropdowns { display: flex; gap: 10px; }
+  .dropdowns > div { flex: 1; }
+  .modal-body select { width: 100%; background: var(--bg); border: 1px solid var(--line-2); color: var(--text);
+    border-radius: 8px; padding: 9px 10px; font-size: 13px; outline: none; }
+  .modal-body select:focus { border-color: var(--accent); }
+  .bbox-row { display: flex; gap: 8px; }
+  .bbox-row input { flex: 1; }
+  .bbox-row button { white-space: nowrap; }
+
+  /* interactive map (extent view + draw-a-bbox) */
+  .map { position: relative; border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden;
+    background: var(--ocean); user-select: none; touch-action: none; }
+  .map svg { display: block; width: 100%; height: 100%; cursor: grab; }
+  .map svg.grabbing { cursor: grabbing; }
+  .map svg.drawing { cursor: crosshair; }
+  .map image { image-rendering: auto; }
+  /* basemap tiles fade in over the coarser fallback kept beneath, so a new zoom
+     level arrives smoothly instead of popping the ocean-blue background */
+  .map image.tile { opacity: 0; transition: opacity .18s ease-out; }
+  .map image.tile.in { opacity: 1; }
+  .map .ext { fill: var(--accent); fill-opacity: .18; stroke: var(--accent); stroke-width: 2;
+    vector-effect: non-scaling-stroke; }
+  .map .ext.sub { fill-opacity: .3; stroke-width: 1; }
+  .map .qbox { fill: none; stroke: var(--good); stroke-width: 2; stroke-dasharray: 6 4;
+    vector-effect: non-scaling-stroke; }
+  .map .draw { fill: var(--accent); fill-opacity: .2; stroke: var(--accent); stroke-width: 2;
+    vector-effect: non-scaling-stroke; cursor: move; }
+  .map .hnd { fill: var(--panel); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .mapctl { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .mapctl button { width: 28px; height: 28px; padding: 0; font-size: 14px; line-height: 1; border-radius: 7px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(2px); }
+  .mapctl button.wide { width: auto; padding: 0 8px; font-size: 11px; }
+  .mapctl button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .mapinfo:empty { display: none; }
+  .mapinfo { position: absolute; left: 8px; bottom: 8px; font-size: 10.5px; color: var(--muted);
+    background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid var(--line);
+    border-radius: 6px; padding: 2px 7px; pointer-events: none; }
+  /* geocoding place-search overlaid on the map */
+  .mapsearch { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; gap: 4px; align-items: center; }
+  .mapsearch input { width: 150px; font: inherit; font-size: 11.5px; padding: 4px 8px; border-radius: 7px;
+    border: 1px solid var(--line-2); color: var(--text); outline: none;
+    background: color-mix(in srgb, var(--panel) 90%, transparent); backdrop-filter: blur(2px); }
+  .mapsearch input:focus { border-color: var(--accent); }
+  .mapsearch button { padding: 4px 9px; font-size: 11px; border-radius: 7px;
+    background: color-mix(in srgb, var(--panel) 90%, transparent); backdrop-filter: blur(2px); }
+  .mapsearch .ms-status { font-size: 10px; color: var(--muted); max-width: 130px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+  .mapsearch .ms-status.bad { color: var(--bad); }
+  .mapsearch button[disabled] { opacity: .6; cursor: progress; }
+  .ms-spin { display: inline-block; width: 9px; height: 9px; flex: none; border-radius: 50%;
+    border: 2px solid var(--line-2); border-top-color: var(--accent); animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .draw-wrap h4 { margin: 0 0 2px; font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); }
+  .draw-hint { color: var(--muted); font-size: 12px; margin: 4px 0 10px; }
+  .draw-coords { margin: 12px 0 4px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .draw-coords label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); margin-bottom: 2px; }
+  .draw-coords input { width: 100%; background: var(--bg); border: 1px solid var(--line-2); color: var(--text);
+    border-radius: 7px; padding: 6px 7px; font-size: 12px; outline: none;
+    font-family: ui-monospace, Consolas, monospace; }
+  .draw-coords input:focus { border-color: var(--accent); }
+  .draw-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .draw-foot .spacer { flex: 1; }
+
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; }
+    .detail { border-left: none; border-top: 1px solid var(--line); }
+    .gutter { display: none; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">Discover data <span class="sub">Search Earth-observation datasets across many STAC catalogs</span>
+      <button type="button" class="idxchip" id="idxChip" hidden></button>
+    </div>
+    <form id="searchForm" class="searchbar">
+      <input id="q" autocomplete="off" placeholder="Describe the data you need — e.g. “sentinel-2 surface reflectance”, “forest biomass”, “elevation DEM”">
+      <button type="submit" class="primary">Search</button>
+    </form>
+    <div class="controls">
+      <span class="seg" id="modeSeg">
+        <button type="button" data-mode="" title="Search the live catalogs over the internet right now.">Live</button>
+        <button type="button" data-mode="index" title="Search a local snapshot saved on disk — instant and works offline. Build it once from Manage index.">Offline</button>
+      </span>
+      <span class="kindchips" id="kindChips" hidden>
+        <button type="button" data-kind="">All</button>
+        <button type="button" data-kind="raster">Raster</button>
+        <button type="button" data-kind="vector">Vector</button>
+      </span>
+      <button type="button" class="linkish" id="openFilters">Filters</button>
+      <button type="button" class="linkish" id="openIndex" hidden>Manage index</button>
+      <span class="menuwrap">
+        <button type="button" class="linkish" id="openSettings">Settings ▾</button>
+        <div class="menu" id="settingsMenu" hidden>
+          <button type="button" id="miCatalogs">Live catalogs…</button>
+          <button type="button" id="miDownloads">Download folder…</button>
+        </div>
+      </span>
+      <label class="ai-toggle" id="aiToggleWrap" hidden><input type="checkbox" id="aiToggle"> AI refine</label>
+      <span class="spacer"></span>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="sources" id="sources"></div>
+  </header>
+
+  <main>
+    <section class="results-pane">
+      <div id="aibar-slot"></div>
+      <section class="grid" id="results"></section>
+    </section>
+    <div class="gutter" id="gutter" title="Drag to resize the panel"></div>
+    <aside class="detail" id="detail"><div class="empty">Select a collection to see details, links, and a code snippet for pulling its items.</div></aside>
+  </main>
+
+  <!-- Filters modal -->
+  <dialog class="modal" id="filtersModal">
+    <div class="modal-head"><h3>Filters</h3><button type="button" class="x" data-close>✕</button></div>
+    <div class="modal-body">
+      <label>Bounding box <span class="lc">west, south, east, north</span></label>
+      <div class="bbox-row">
+        <input id="bbox" placeholder="-125, 24, -66, 50" autocomplete="off">
+        <button type="button" id="drawOnMap">Draw on map</button>
+      </div>
+      <div class="presets">
+        <button type="button" data-bbox="">Any</button>
+        <button type="button" data-bbox="-125,24,-66,50">CONUS</button>
+        <button type="button" data-bbox="-11,35,32,72">Europe</button>
+        <button type="button" data-bbox="-19,-35,52,38">Africa</button>
+        <button type="button" data-bbox="68,6,98,37">India</button>
+      </div>
+      <label>Date range</label>
+      <div class="dropdowns">
+        <div><input type="date" id="startDate" aria-label="Start date"></div>
+        <div><input type="date" id="endDate" aria-label="End date"></div>
+      </div>
+      <div class="hint">Leave a side empty for open-ended — any start, or up to now.</div>
+      <label>Max results per catalog</label>
+      <input id="limit" type="number" min="1" max="500" placeholder="40" autocomplete="off">
+    </div>
+    <div class="modal-foot">
+      <button type="button" id="clearFilters">Clear</button>
+      <button type="button" class="primary" id="applyFilters">Apply</button>
+    </div>
+  </dialog>
+
+  <!-- Catalogs modal -->
+  <dialog class="modal" id="catalogsModal">
+    <div class="modal-head"><h3>Live catalogs</h3><button type="button" class="x" data-close>✕</button></div>
+    <div class="modal-body">
+      <label>STAC API base URLs <span class="lc">one per line</span></label>
+      <textarea id="apis" spellcheck="false" autocomplete="off"></textarea>
+      <div class="hint">Blank uses the built-in defaults. Any STAC API with a <code>/collections</code> endpoint works; free-text is pushed down where the catalog supports it, filtered locally otherwise. Apply checks each URL is a reachable STAC catalog first.</div>
+      <div class="vlist" id="apiStatus"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" id="resetApis">Reset to defaults</button>
+      <button type="button" id="applyAnyway" hidden>Apply anyway</button>
+      <button type="button" class="primary" id="applyApis">Validate &amp; Apply</button>
+    </div>
+  </dialog>
+
+  <!-- Downloads modal -->
+  <dialog class="modal" id="downloadsModal">
+    <div class="modal-head"><h3>Download folder</h3><button type="button" class="x" data-close>✕</button></div>
+    <div class="modal-body">
+      <label>Where downloaded assets are saved</label>
+      <div class="row">
+        <input type="text" id="dlDir" spellcheck="false" autocomplete="off" placeholder="(default folder)">
+        <button type="button" id="dlBrowse">Browse…</button>
+      </div>
+      <div class="hint">Applies to every <b>↓</b> button. Paste it however you have it —
+        quoted, backslashes, a <code>file://</code> URL, <code>~</code> or
+        <code>%USERPROFILE%</code> all resolve. Blank uses
+        <code>~/.fused-render/downloads/</code> (alongside the rest of fused-render's
+        data); a missing folder is created on first use.
+        Remembered on this machine until you change it.</div>
+      <div class="vlist" id="dlStatus"></div>
+      <div id="dlBrowser" hidden>
+        <div class="fb-places" id="dlPlaces"></div>
+        <div class="fb-crumbs" id="dlCrumbs"></div>
+        <div class="fb-list" id="dlList"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" id="dlView" style="margin-right:auto">Open folder ↗</button>
+      <button type="button" id="dlReset">Use default</button>
+      <button type="button" class="primary" id="dlSave">Save</button>
+    </div>
+  </dialog>
+
+  <!-- Index modal -->
+  <dialog class="modal" id="indexModal">
+    <div class="modal-head"><h3>Offline index</h3><button type="button" class="x" data-close>✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">A local snapshot of each catalog's datasets. Once built,
+        <b>Offline</b> search answers instantly — bbox, text and raster/vector — with no internet, and can reach
+        static catalogs (Maxar, Umbra) that no live search covers.</p>
+      <label>Sources <span class="lc">one per line — STAC API URL, <code>static:&lt;catalog.json&gt;</code>, <code>collection:&lt;catalog.json&gt;</code> (index the whole catalog as one dataset), or <code>cmr:&lt;root&gt;</code>; add <code>|kind=raster</code> to hint the type</span></label>
+      <textarea id="idxSources" spellcheck="false" autocomplete="off"></textarea>
+      <div class="hint">Sources build <b>in parallel</b> and keep running in the background — close this dialog and
+        the header shows progress until it's done. Big sources (NASA CMR) build in resumable chunks. Find more
+        catalogs at stacindex.org.</div>
+      <div class="hint" id="idxPath"></div>
+      <div class="vlist" id="idxStatus"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="count" id="idxSummary" style="margin-right:auto"></span>
+      <button type="button" id="idxCancel" hidden>Stop</button>
+      <button type="button" class="primary" id="idxBuild">Build index</button>
+    </div>
+  </dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const DEFAULT_APIS = [
+  "https://planetarycomputer.microsoft.com/api/stac/v1",
+  "https://earth-search.aws.element84.com/v1",
+  "https://stac.maap-project.org",
+  "https://stac.eoapi.dev",
+  "https://openveda.cloud/api/stac",
+];
+const EXAMPLES = ["sentinel-2 surface reflectance", "forest biomass", "elevation DEM",
+  "land cover for india", "sea surface temperature", "nighttime lights", "flood imagery"];
+const AI_LOCAL = (typeof fused !== "undefined") && fused.env === "local";
+
+let LAST = null;         // last runPython payload
+let AI_ORDER = null;     // { q, map: {key -> {rank, why}} } from the last AI refine
+let DRAW = false, drawBox = null;   // draw-a-bbox-on-map state
+let EXTENT_MAP = null;   // { map, key } — the detail panel's live extent map
+let MAP_TPL = null;      // resolved path of the fused-render "map" core template
+const ITEMS_CACHE = new Map();   // itemsKey -> { data, sel:Set } | { error }
+const ITEMS_PAGE = 12;   // one page of items; the rest arrives via data.cursor
+let OPEN_ONLY = false;   // hide asset chips that can't be opened on the map
+// The detail panel's own bbox/date filter. It scopes the ITEMS load (and the
+// snippet + map query-box) for the selected collection only -- deliberately NOT
+// the global search params, so applying it never disturbs the results list on
+// the left. Re-initialised from the current global filter each time a different
+// collection is opened, so it starts from a sensible default.
+let DF = { bbox: "", datetime: "", forKey: null };
+
+const key = c => c.id + " @ " + c.api_host;
+
+// ---- params helpers ----
+function P() {
+  return {
+    q: fused.params.get("q") || "",
+    bbox: fused.params.get("bbox") || "",
+    datetime: fused.params.get("datetime") || "",
+    limit: fused.params.get("limit") || "40",
+    apis: fused.params.get("apis") || "",
+    sel: fused.params.get("sel") || "",
+    only: fused.params.get("only") || "",
+    ai: fused.params.get("ai") || "0",
+    mode: fused.params.get("mode") || "",
+    kind: fused.params.get("kind") || "",
+  };
+}
+function setParam(k, v) {
+  const cur = fused.params.get(k) || "";
+  if (String(v) === cur) return false;
+  fused.params.set(k, String(v));
+  return true;
+}
+
+// ---- rendering ----
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+function fmtTemporal(t) {
+  if (!t || !t.length) return "—";
+  const a = (t[0] || "").slice(0, 10) || "…";
+  const b = t[1] ? t[1].slice(0, 10) : "now";
+  return a + " → " + b;
+}
+
+function renderLoading() {
+  $("aibar-slot").innerHTML = "";
+  $("results").innerHTML = '<div class="loading">Searching catalogs…</div>' +
+    Array.from({length: 6}).map(() => '<div class="skeleton"></div>').join("");
+}
+
+function renderLanding() {
+  $("count").textContent = "";
+  $("sources").innerHTML = "";
+  $("aibar-slot").innerHTML = "";
+  $("results").innerHTML = `
+    <div class="landing">
+      <h2>Find datasets across many STAC catalogs at once</h2>
+      <p>Type what you're looking for in plain words. The search fans your query
+      out to several public Earth-observation catalogs in parallel and merges the
+      matching collections — then you grab items from the source with the code snippet.</p>
+      <div class="presets" style="justify-content:center">
+        ${EXAMPLES.map(e => `<button type="button" class="ex" data-q="${esc(e)}">${esc(e)}</button>`).join("")}
+      </div>
+    </div>`;
+  $("results").querySelectorAll(".ex").forEach(b =>
+    b.addEventListener("click", () => { $("q").value = b.dataset.q; setParam("q", b.dataset.q); }));
+}
+
+function renderSources(sources, only) {
+  const placeChip = (LAST && LAST.place)
+    ? `<span class="src place" title="Detected in your query — its bounding box (${esc(LAST.bbox_used)}) filters and boosts results. Set an explicit bbox in Filters to override.">
+        <span class="dot"></span><b>${esc(LAST.place.name)}</b></span>`
+    : "";
+  $("sources").innerHTML = placeChip + (sources || []).map(s => {
+    const active = only && s.host === only;
+    const label = s.ok
+      ? `<b>${esc(s.host)}</b> ${s.returned}${s.number_matched != null ? " / " + s.number_matched : ""}`
+      : `<b>${esc(s.host)}</b> failed`;
+    const tip = active ? "Showing only this catalog — click to clear"
+      : s.ok ? (s.supports_q ? "server-side free-text · click to show only this catalog" : "filtered locally · click to show only this catalog")
+      : esc(s.error || "");
+    return `<span class="src ${s.ok ? "" : "bad"} ${active ? "active" : ""}" data-host="${esc(s.host)}" title="${tip}">
+      <span class="dot"></span>${label}${active ? '<span class="x">✕</span>' : ""}</span>`;
+  }).join("");
+  $("sources").querySelectorAll(".src:not(.bad):not(.place)").forEach(el =>
+    el.addEventListener("click", () => {
+      const h = el.dataset.host;
+      setParam("only", (only === h) ? "" : h);   // toggle
+    }));
+}
+
+function orderedCollections() {
+  const cols = (LAST && LAST.collections) ? LAST.collections.slice() : [];
+  if (AI_ORDER && AI_ORDER.q === (LAST && LAST.q)) {
+    cols.sort((a, b) => {
+      const ra = AI_ORDER.map[key(a)], rb = AI_ORDER.map[key(b)];
+      if (ra && rb) return ra.rank - rb.rank;
+      if (ra) return -1;
+      if (rb) return 1;
+      return (b.score - a.score) || a.title.localeCompare(b.title);
+    });
+  }
+  return cols;
+}
+
+function renderResults(sel, only) {
+  let cols = orderedCollections();
+  if (only) cols = cols.filter(c => c.api_host === only);
+  const total = LAST ? LAST.total : 0;
+  const suffix = (LAST && LAST.indexed != null) ? ` · from ${LAST.indexed} indexed` : "";
+  $("count").textContent = LAST
+    ? (only ? `${cols.length} of ${total} · ${only}` : `${total} collections${suffix} · ${LAST.elapsed_ms} ms`)
+    : "";
+  if (!cols.length) {
+    $("results").innerHTML = `<div class="landing"><h2>No matches</h2><p>${only
+      ? "This catalog returned nothing for that query. Click the catalog chip again to clear the filter."
+      : "Nothing came back for that query. Try broader words, clear the filters, or add more catalogs."}</p></div>`;
+    return;
+  }
+  $("results").innerHTML = cols.map(c => {
+    const why = AI_ORDER && AI_ORDER.map[key(c)] ? `<div class="why">${esc(AI_ORDER.map[key(c)].why)}</div>` : "";
+    return `<article class="card ${key(c) === sel ? "sel" : ""}" data-key="${esc(key(c))}">
+      <div class="src-tag">${esc(c.api_host)}</div>
+      <h3 class="card-title">${esc(c.title)}</h3>
+      <div class="card-id mono">${esc(c.id)}</div>
+      ${c.description_short ? `<p class="desc">${esc(c.description_short)}</p>` : ""}
+      ${c.keywords && c.keywords.length ? `<div class="kw">${c.keywords.slice(0,5).map(k=>`<span>${esc(k)}</span>`).join("")}</div>` : ""}
+      <div class="card-foot"><span>${esc(fmtTemporal(c.temporal))}</span>${c.license ? `<span>${esc(c.license)}</span>` : ""}${c.kind && c.kind !== "unknown" ? `<span class="kindtag">${esc(c.kind)}</span>` : ""}</div>
+      ${why}
+    </article>`;
+  }).join("");
+  $("results").querySelectorAll(".card").forEach(el =>
+    el.addEventListener("click", () => setParam("sel", el.dataset.key)));
+}
+
+// ---- basemap: Google XYZ raster tiles (Web Mercator), the QGIS-style free
+// endpoint, so the extent map shows a real map instead of a vector outline ----
+// kept as a no-op so callers can still `await ensureBasemap()` before drawing;
+// the tiles fetch themselves now, there's no vendored basemap to load
+async function ensureBasemap() { return null; }
+
+const SVGNS = "http://www.w3.org/2000/svg";
+
+// ---- interactive map (Web Mercator, matching the Google tiles) ----
+// SVG user space is the whole Mercator world as a [-180,180] square: x is just
+// longitude, y is the projected latitude (north negative), so pan/zoom stay
+// plain viewBox changes and only the y projection is non-linear.
+//
+// == BEGIN pure-helpers ==  (dependency-free; extracted and unit-tested by
+// test_maplib.mjs -- keep everything between these markers free of DOM/fused refs)
+const MAXLAT = 85.05112878;                 // Web Mercator latitude limit
+const R2D = 180 / Math.PI;
+const clampLat = v => Math.max(-MAXLAT, Math.min(MAXLAT, v));
+const clampLon = v => Math.max(-180, Math.min(180, v));
+const validBox = b => Array.isArray(b) && b.length >= 4 && b.every(Number.isFinite);
+// STAC encodes an antimeridian-crossing bbox with west > east (bbox[0] > bbox[2]).
+const crosses = b => validBox(b) && b[0] > b[2];
+// Split a crossing bbox into the two non-wrapping pieces either side of 180, so
+// the SVG (drawn in a fixed [-180,180] frame) shows the real footprint instead
+// of the giant inverted rect a raw min/max would produce.
+const splitAM = b => crosses(b) ? [[b[0], b[1], 180, b[3]], [-180, b[1], b[2], b[3]]] : [b];
+// Horizontal extent of a set of bboxes in an unwrapped frame where a crossing
+// box carries its east past 180, so fitting a dateline-spanning extent centers
+// on the data, not on the whole world the other way round.
+function lonExtent(boxes) {
+  const bs = (boxes || []).filter(validBox);
+  if (!bs.length) return null;
+  let w = Infinity, e = -Infinity;
+  for (const b of bs) {
+    const be = b[0] > b[2] ? b[2] + 360 : b[2];
+    if (b[0] < w) w = b[0];
+    if (be > e) e = be;
+  }
+  let clon = (w + e) / 2;
+  if (clon > 180) clon -= 360;
+  return { w, e, clon, spanX: e - w };
+}
+const projY = lat => -R2D * Math.log(Math.tan(Math.PI / 4 + clampLat(lat) * Math.PI / 360));
+const unprojY = y => R2D * (2 * Math.atan(Math.exp(-y / R2D)) - Math.PI / 2);
+const GOOGLE_TILE = (x, y, z) =>
+  `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&x=${x}&y=${y}&z=${z}`;   // lyrs=y: satellite + labels
+// the tile zoom whose tiles land near 256 px wide on screen
+const tileZoom = (pxW, spanX) => Math.max(0, Math.min(20, Math.round(Math.log2(360 * pxW / (256 * spanX)))));
+// the visible tile grid for a viewBox (x0,y0,spanX,spanY) at zoom z
+function tileGrid(x0, y0, spanX, spanY, z) {
+  const n = 2 ** z, tsz = 360 / n;
+  return { n, tsz,
+    txmin: Math.floor((x0 + 180) / tsz), txmax: Math.floor((x0 + spanX + 180) / tsz),
+    tymin: Math.max(0, Math.floor((y0 + 180) / tsz)), tymax: Math.min(n - 1, Math.floor((y0 + spanY + 180) / tsz)) };
+}
+// a STAC datetime interval <-> the two yyyy-mm-dd <input type=date> values,
+// with "" on either side meaning open-ended ("..")
+function intervalFromDates(start, end) {
+  if (!start && !end) return "";
+  return `${start ? start + "T00:00:00Z" : ".."}/${end ? end + "T23:59:59Z" : ".."}`;
+}
+function datesFromInterval(dt) {
+  let start = "", end = "";
+  if (dt && dt.includes("/")) {
+    const [lo, hi] = dt.split("/");
+    if (lo && lo !== "..") start = lo.slice(0, 10);
+    if (hi && hi !== "..") end = hi.slice(0, 10);
+  } else if (dt) { start = dt.slice(0, 10); }
+  return { start, end };
+}
+// == END pure-helpers ==
+
+function GeoMap(host, opts = {}) {
+  const el = (t, a = {}) => {
+    const n = document.createElementNS(SVGNS, t);
+    for (const k in a) n.setAttribute(k, a[k]);
+    return n;
+  };
+  host.classList.add("map");
+  host.style.height = (opts.height || 240) + "px";
+  host.innerHTML = "";
+
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
+  const gTiles = el("g"), gShapes = el("g");
+  svg.append(gTiles, gShapes);
+  host.appendChild(svg);
+
+  const info = document.createElement("div");
+  info.className = "mapinfo";
+  host.appendChild(info);
+
+  // view is a lon/lat window; span is longitude degrees, the pixel aspect gives
+  // the matching vertical span in projected units
+  let view = { lon: 0, lat: 0, span: 360 };
+  const TILE = new Map();     // "z/x/y" -> <image> currently live in gTiles
+  let curWant = new Set(), curBox = null;   // the latest wanted keys + viewport, for pruning
+  let tileTimer = 0;          // debounces the refetch so a gesture doesn't refetch per frame
+  let fallbackTimer = 0;      // delays dropping the coarser fallback until the new level's fade ends
+  const api = { svg, gShapes, onBoxChange: null, onViewChange: null };
+
+  function px() { return { w: host.clientWidth || 360, h: host.clientHeight || 240 }; }
+
+  function box() {
+    const { w, h } = px();
+    const spanX = view.span, spanY = spanX * (h / w);
+    return { x0: view.lon - spanX / 2, y0: projY(view.lat) - spanY / 2, spanX, spanY, w, h };
+  }
+
+  // A view change rescales the SVG instantly (smooth), and the tile set is
+  // refetched on a short debounce -- so a continuous zoom/pan lets the existing
+  // tiles scale in place instead of thrashing the grid every frame, then loads
+  // the right level once the gesture settles.
+  function apply() {
+    const b = box();
+    svg.setAttribute("viewBox", `${b.x0} ${b.y0} ${b.spanX} ${b.spanY}`);
+    if (api.onViewChange) api.onViewChange({ ...view });
+    clearTimeout(tileTimer);
+    tileTimer = setTimeout(refreshTiles, 80);
+  }
+
+  // Does a tile still overlap the current viewport? (Keys carry z/x/y, and tiles
+  // are placed in the same unwrapped [-180,180] frame as the viewBox, so this is
+  // a plain rectangle overlap -- no antimeridian special-casing.)
+  function overlaps(key, b) {
+    const [z, x, y] = key.split("/").map(Number);
+    const tsz = 360 / 2 ** z, tx0 = x * tsz - 180, ty0 = y * tsz - 180;
+    return tx0 < b.x0 + b.spanX && tx0 + tsz > b.x0 && ty0 < b.y0 + b.spanY && ty0 + tsz > b.y0;
+  }
+
+  // Every wanted tile has finished loading? (A tile that errored is gone from
+  // TILE, so it doesn't block -- waiting on it would never resolve.)
+  function allLoaded() {
+    for (const k of curWant) { const im = TILE.get(k); if (im && !im.classList.contains("in")) return false; }
+    return true;
+  }
+
+  // Off-screen tiles are dropped at once (never visible). A coarser tile that
+  // still overlaps the viewport is a fallback: it stays until the wanted level is
+  // fully in AND its fade has finished, so the ocean-blue background never shows
+  // through the transition.
+  function prune() {
+    if (!curBox) return;
+    for (const [k, im] of TILE) {
+      if (curWant.has(k)) continue;
+      if (!overlaps(k, curBox)) { im.remove(); TILE.delete(k); }
+    }
+    clearTimeout(fallbackTimer);
+    if (allLoaded()) fallbackTimer = setTimeout(dropFallbacks, 220);
+  }
+
+  function dropFallbacks() {
+    for (const [k, im] of TILE) if (!curWant.has(k)) { im.remove(); TILE.delete(k); }
+  }
+
+  function refreshTiles() {
+    const b = box();
+    curBox = b;
+    const z = tileZoom(b.w, b.spanX);
+    const { n, tsz, txmin, txmax, tymin, tymax } = tileGrid(b.x0, b.y0, b.spanX, b.spanY, z);
+    const bleed = tsz * 0.01;                   // overlap neighbours a hair so no hairline seams show
+    const m = 1;                                // a ring of extra tiles so a small pan reveals imagery
+    const x0 = txmin - m, x1 = txmax + m;
+    const y0 = Math.max(0, tymin - m), y1 = Math.min(n - 1, tymax + m);
+    const want = new Set();
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        const k = z + "/" + tx + "/" + ty;
+        want.add(k);
+        if (TILE.has(k)) continue;
+        const twx = ((tx % n) + n) % n;        // wrap tile column across the antimeridian
+        const im = el("image", { x: tx * tsz - 180, y: ty * tsz - 180,
+          width: tsz + bleed, height: tsz + bleed, preserveAspectRatio: "none" });
+        im.classList.add("tile"); im.dataset.z = z;
+        im.setAttribute("href", GOOGLE_TILE(twx, ty, z));
+        im.addEventListener("load", () => { im.classList.add("in"); prune(); }, { once: true });
+        im.addEventListener("error", () => { im.remove(); TILE.delete(k); prune(); }, { once: true });
+        gTiles.appendChild(im);
+        TILE.set(k, im);
+      }
+    }
+    // paint coarser tiles under finer ones, so a finer tile covers its blurry
+    // fallback the instant it loads
+    [...gTiles.children].sort((a, c) => a.dataset.z - c.dataset.z).forEach(im => gTiles.appendChild(im));
+    curWant = want;
+    prune();
+  }
+
+  api.setView = (lon, lat, span) => {
+    view.span = Math.max(0.02, Math.min(360, span));
+    view.lat = clampLat(lat);
+    view.lon = lon;
+    apply();
+  };
+
+  api.fit = (boxes, pad = 0.35) => {
+    const bs = (boxes || []).filter(validBox);
+    if (!bs.length) { api.setView(0, 0, 360); return; }
+    const lx = lonExtent(bs);                       // unwraps any dateline-crossing box
+    const s = Math.min(...bs.map(b => b[1])), n = Math.max(...bs.map(b => b[3]));
+    const { w: pw, h: ph } = px();
+    const yTop = projY(n), yBot = projY(s);        // projected vertical extent
+    // a tiny or zero-size extent still needs surroundings to be locatable
+    const spanX = Math.max(lx.spanX * (1 + pad), (yBot - yTop) * (1 + pad) * (pw / ph), 0.4);
+    api.setView(lx.clon, unprojY((yTop + yBot) / 2), spanX);
+  };
+
+  api.zoom = (factor, cx, cy) => {
+    const before = cx == null ? null : api.toLL(cx, cy);
+    view.span = Math.max(0.02, Math.min(360, view.span * factor));
+    if (before) {   // keep the point under the cursor fixed
+      const after = api.toLL(cx, cy);              // toLL reads the new span
+      view.lon += before.lon - after.lon;
+      view.lat = clampLat(unprojY(projY(view.lat) + projY(before.lat) - projY(after.lat)));
+    }
+    apply();
+  };
+
+  api.toLL = (clientX, clientY) => {
+    const r = host.getBoundingClientRect(), b = box();
+    return {
+      lon: b.x0 + ((clientX - r.left) / r.width) * b.spanX,
+      lat: unprojY(b.y0 + ((clientY - r.top) / r.height) * b.spanY),
+    };
+  };
+
+  api.shapes = (boxes, qbox, cls) => {
+    gShapes.querySelectorAll("." + (cls || "ext") + ", .qbox").forEach(n => n.remove());
+    const add = (b, klass) => {
+      for (const p of splitAM(b)) {
+        const w = Math.min(p[0], p[2]), e = Math.max(p[0], p[2]);
+        const s = Math.min(p[1], p[3]), n = Math.max(p[1], p[3]);
+        gShapes.appendChild(el("rect", {
+          class: klass, x: w, y: projY(n),
+          width: Math.max(e - w, 1e-4), height: Math.max(projY(s) - projY(n), 1e-4),
+        }));
+      }
+    };
+    const bs = (boxes || []).filter(validBox);
+    bs.slice(1).forEach(b => add(b, "ext sub"));
+    if (bs.length) add(bs[0], "ext");
+    if (validBox(qbox)) add(qbox, "qbox");
+  };
+
+  api.setInfo = t => { info.textContent = t; };
+  api.view = () => ({ ...view });
+  api.refresh = apply;
+
+  // ---- interaction: drag to pan, wheel to zoom, dblclick to zoom in ----
+  let drag = null;
+  svg.addEventListener("pointerdown", ev => {
+    if (api.beforeDrag && api.beforeDrag(ev)) return;   // draw mode takes over
+    drag = { x: ev.clientX, y: ev.clientY, cx: view.lon, cy: projY(view.lat) };
+    svg.setPointerCapture(ev.pointerId);
+    svg.classList.add("grabbing");
+  });
+  svg.addEventListener("pointermove", ev => {
+    const ll = api.toLL(ev.clientX, ev.clientY);
+    api.setInfo(`${ll.lat.toFixed(3)}°, ${ll.lon.toFixed(3)}°`);
+    if (!drag) return;
+    const b = box();
+    view.lon = drag.cx - (ev.clientX - drag.x) / b.w * b.spanX;
+    view.lat = clampLat(unprojY(drag.cy - (ev.clientY - drag.y) / b.h * b.spanY));
+    apply();
+  });
+  const endDrag = ev => {
+    if (drag) { drag = null; svg.classList.remove("grabbing"); }
+    if (api.afterDrag) api.afterDrag(ev);
+  };
+  svg.addEventListener("pointerup", endDrag);
+  svg.addEventListener("pointercancel", endDrag);
+  svg.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    api.zoom(ev.deltaY > 0 ? 1.25 : 0.8, ev.clientX, ev.clientY);
+  }, { passive: false });
+  svg.addEventListener("dblclick", ev => api.zoom(0.5, ev.clientX, ev.clientY));
+
+  apply();
+  clearTimeout(tileTimer); refreshTiles();   // first paint immediately, don't wait out the debounce
+  return api;
+}
+
+function mapControls(host, map, extra = []) {
+  const bar = document.createElement("div");
+  bar.className = "mapctl";
+  const mk = (label, title, fn, wide) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = label; b.title = title;
+    if (wide) b.className = "wide";
+    b.addEventListener("click", e => { e.preventDefault(); fn(); });
+    bar.appendChild(b);
+    return b;
+  };
+  mk("+", "Zoom in", () => map.zoom(0.6));
+  mk("−", "Zoom out", () => map.zoom(1.7));
+  extra.forEach(([l, t, fn]) => mk(l, t, fn, true));
+  host.appendChild(bar);
+  return bar;
+}
+
+// A place-search box on the map: geocodes the query (server-side, via Nominatim)
+// and flies to the result's bounding box, so you can jump to an area of interest.
+function addMapSearch(host, map) {
+  const form = document.createElement("form");
+  form.className = "mapsearch";
+  form.innerHTML = `<input type="search" placeholder="Search a place…" autocomplete="off" spellcheck="false">
+    <button type="submit">Go</button><span class="ms-status"></span>`;
+  host.appendChild(form);
+  const input = form.querySelector("input"), status = form.querySelector(".ms-status");
+  const go = form.querySelector("button");
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+    go.disabled = true;
+    status.className = "ms-status"; status.innerHTML = `<span class="ms-spin"></span>Searching…`;
+    try {
+      const { results } = await fused.runPython("./geocode.py", { q }, { key: null });
+      if (!results.length) { status.className = "ms-status bad"; status.textContent = "No match"; return; }
+      const g = results[0];
+      if (g.bbox && validBox(g.bbox)) map.fit([g.bbox]); else map.setView(g.lon, g.lat, 4);
+      status.className = "ms-status"; status.textContent = g.name.split(",").slice(0, 2).join(",");
+    } catch (err) {
+      status.className = "ms-status bad"; status.textContent = "Search failed";
+    } finally {
+      go.disabled = false;
+    }
+  });
+}
+
+function codeHint(c) {
+  if (c.access === "static") {
+    // a static catalog has no search API — open the collection and walk it
+    return [
+      "# pip install pystac",
+      "import pystac",
+      "",
+      `col = pystac.Collection.from_file("${c.self_href}")`,
+      "items = list(col.get_items(recursive=True))",
+      'print(len(items), "items")',
+    ].join("\n");
+  }
+  const kw = [`    collections=["${c.id}"]`];
+  // the snippet mirrors the panel's own filter, so copying it reproduces exactly
+  // what "Load items" fetches
+  const bbox = DF.bbox;
+  if (bbox) kw.push(`    bbox=[${bbox.split(/[,\s]+/).filter(Boolean).join(", ")}]`);
+  if (DF.datetime) kw.push(`    datetime="${DF.datetime}"`);
+  kw.push("    max_items=50");
+  return [
+    "# pip install pystac-client",
+    "from pystac_client import Client",
+    "",
+    `catalog = Client.open("${c.api}")`,
+    "search = catalog.search(",
+    kw.join(",\n"),
+    ")",
+    "items = list(search.items())",
+    'print(len(items), "items")',
+  ].join("\n");
+}
+
+function renderDetail(sel) {
+  if (DRAW) return;   // the draw-a-bbox map owns the side panel while active
+  const box = $("detail");
+  if (!sel || !LAST) { box.innerHTML = `<div class="empty">Select a collection to see details, links, and a code snippet for pulling its items.</div>`; return; }
+  const c = LAST.collections.find(x => key(x) === sel);
+  if (!c) { box.innerHTML = `<div class="empty">That collection isn't in the current results.</div>`; return; }
+  const p = P();
+  // a freshly opened collection starts its local filter from the current global
+  // one (a sensible default); once opened, the panel edits it in isolation
+  if (DF.forKey !== sel) DF = { bbox: p.bbox || (LAST.bbox_used || ""), datetime: p.datetime || "", forKey: sel };
+  box.innerHTML = `
+    <h2>${esc(c.title)}</h2>
+    <div class="sub-id mono">${esc(c.id)} · ${esc(c.api_host)}</div>
+    ${c.description ? `<section><h4>Description</h4><div class="full-desc">${esc(c.description)}</div></section>` : ""}
+    <section><h4>Extent &amp; items</h4><div id="extentMap"></div>
+      <div class="kv" style="margin-top:8px">
+        <span class="k">Spatial</span><span class="mono">${c.bbox ? c.bbox.map(n=>(+n).toFixed(2)).join(", ") : "—"}</span>
+        <span class="k">Temporal</span><span>${esc(fmtTemporal(c.temporal))}</span>
+      </div>
+      ${(c.access === "static" ? c.self_href : c.items_href) ? `
+      <div class="filt">
+        <div class="filt-row">
+          <input id="dfBbox" autocomplete="off" placeholder="whole world — or use Draw on the map" value="${esc(DF.bbox)}">
+          <button type="button" id="dfClear" title="Clear the area and dates">Clear</button>
+        </div>
+        <div class="filt-row">
+          <input type="date" id="dfStartDate" aria-label="Start date">
+          <input type="date" id="dfEndDate" aria-label="End date">
+          <button type="button" class="primary filt-load" id="loadItems">Load items</button>
+        </div>
+        <div class="presets">
+          <button type="button" id="dfExtent">This dataset</button>
+          <button type="button" data-dfb="">Any</button>
+          <button type="button" data-dfb="-125,24,-66,50">CONUS</button>
+          <button type="button" data-dfb="-11,35,32,72">Europe</button>
+          <button type="button" data-dfb="68,6,98,37">India</button>
+        </div>
+      </div>
+      <div id="itemsBox"></div>` : `<div class="items-note" style="margin-top:10px">No items endpoint advertised.</div>`}
+    </section>
+    <section><h4>Metadata</h4><div class="kv">
+      <span class="k">License</span><span>${esc(c.license || "—")}</span>
+      <span class="k">Providers</span><span>${esc((c.providers||[]).join(", ") || "—")}</span>
+      ${c.kind && c.kind !== "unknown" ? `<span class="k">Type</span><span>${esc(c.kind)}</span>` : ""}
+      ${c.access === "static" ? `<span class="k">Access</span><span>static catalog (no search API)</span>` : ""}
+      ${c.keywords && c.keywords.length ? `<span class="k">Keywords</span><span>${esc(c.keywords.join(", "))}</span>` : ""}
+    </div></section>
+    <section class="links"><h4>Open</h4>
+      <a href="${esc(c.self_href)}" target="_blank" rel="noopener">Collection JSON ↗</a>
+      ${c.items_href ? `<a href="${esc(c.items_href)}" target="_blank" rel="noopener">Items API ↗</a>` : ""}
+      ${c.html_href ? `<a href="${esc(c.html_href)}" target="_blank" rel="noopener">Open in ${esc(c.api_host)} ↗</a>` : ""}
+    </section>
+    <section><h4>Fetch its items</h4>
+      <pre class="code"><button class="copy" type="button">Copy</button><code>${esc(codeHint(c))}</code></pre>
+    </section>`;
+  const btn = box.querySelector(".copy");
+  btn.addEventListener("click", () => {
+    navigator.clipboard.writeText(codeHint(c)).then(() => { btn.textContent = "Copied"; setTimeout(() => btn.textContent = "Copy", 1200); });
+  });
+  if ($("loadItems")) {
+    $("loadItems").addEventListener("click", () => loadWithFilter(c));
+    if (ITEMS_CACHE.has(itemsKey(c))) renderItems(c);
+  }
+  if ($("dfBbox")) wireDataFilter(c);
+  mountExtentMap(c);
+}
+
+// The detail panel's own bbox + date filter, sitting right under the extent map.
+// It only scopes the items load for this collection -- never the global search
+// params -- so it leaves the results list on the left alone. One action button
+// ("Load items") commits whatever is in these inputs and loads in a single step;
+// the bbox can be typed, picked from a preset, or drawn on the map above.
+function wireDataFilter(c) {
+  const d = datesFromInterval(DF.datetime);
+  $("dfStartDate").value = d.start; $("dfEndDate").value = d.end;
+  $("dfExtent").addEventListener("click", () => {
+    if (c.bbox) $("dfBbox").value = c.bbox.map(n => +(+n).toFixed(4)).join(",");
+  });
+  document.querySelectorAll(".filt [data-dfb]").forEach(b =>
+    b.addEventListener("click", () => { $("dfBbox").value = b.dataset.dfb; }));
+  $("dfClear").addEventListener("click", () => {
+    $("dfBbox").value = ""; $("dfStartDate").value = ""; $("dfEndDate").value = "";
+  });
+}
+
+// commit the filter inputs into DF, reflect them (summary, snippet, map box),
+// then load -- the single "Load items" / "Reload" action
+function loadWithFilter(c) {
+  DF.bbox = $("dfBbox").value.trim();
+  DF.datetime = intervalFromDates($("dfStartDate").value, $("dfEndDate").value);
+  const code = document.querySelector("#detail pre.code code"); if (code) code.textContent = codeHint(c);
+  if (EXTENT_MAP && EXTENT_MAP.key === key(c)) {
+    const boxes = (c.bboxes && c.bboxes.length ? c.bboxes : (c.bbox ? [c.bbox] : [])).filter(validBox);
+    EXTENT_MAP.map.shapes(boxes, DF.bbox ? DF.bbox.split(",").map(Number) : null);
+  }
+  loadItems(c);
+}
+
+async function mountExtentMap(c) {
+  await ensureBasemap();
+  const host = $("extentMap");
+  if (!host || DRAW) return;   // panel moved on while the basemap loaded
+  const boxes = (c.bboxes && c.bboxes.length ? c.bboxes : (c.bbox ? [c.bbox] : [])).filter(validBox);
+  const filtBox = () => DF.bbox ? DF.bbox.split(",").map(Number) : null;   // dashed box = the filter area
+  const map = GeoMap(host, { height: 230 });
+  map.shapes(boxes, filtBox());
+  map.fit(boxes);
+
+  // Draw the filter box right on this map -- no separate "Draw" screen. The
+  // toggle guards it so an untoggled drag still pans and footprint clicks still
+  // select items; toggled, a drag sets the bbox and fills the input below.
+  let drawMode = false, dstart = null, dcur = null;
+  const drawBtn = mapControls(host, map, [
+    ["Draw", "Toggle: drag on the map to set the filter area", () => {
+      drawMode = !drawMode;
+      drawBtn.classList.toggle("on", drawMode);
+      map.svg.style.cursor = drawMode ? "crosshair" : "";
+    }],
+    ["Fit", "Zoom to this collection's extent", () => map.fit(boxes)],
+    ["World", "Zoom out to the whole world", () => map.setView(0, 0, 360)],
+  ]).querySelector("button.wide");
+  addMapSearch(host, map);
+
+  const norm = (a, b) => ({
+    w: clampLon(Math.min(a.lon, b.lon)), e: clampLon(Math.max(a.lon, b.lon)),
+    s: clampLat(Math.min(a.lat, b.lat)), n: clampLat(Math.max(a.lat, b.lat)) });
+  function commit(b) {
+    DF.bbox = b ? [b.w, b.s, b.e, b.n].map(v => +v.toFixed(4)).join(",") : "";
+    const inp = $("dfBbox"); if (inp) inp.value = DF.bbox;
+    const code = document.querySelector("#detail pre.code code"); if (code) code.textContent = codeHint(c);
+    map.shapes(boxes, filtBox());
+  }
+
+  map.beforeDrag = ev => {
+    // pan mode: pass a press on a footprint through so its click selects the item
+    if (!drawMode) return !!(ev.target.closest && ev.target.closest(".fp"));
+    dstart = dcur = map.toLL(ev.clientX, ev.clientY);
+    map.svg.setPointerCapture(ev.pointerId);
+    return true;   // suppress the map's own pan while drawing
+  };
+  map.svg.addEventListener("pointermove", ev => {
+    if (!drawMode || !dstart) return;
+    dcur = map.toLL(ev.clientX, ev.clientY);
+    const b = norm(dstart, dcur);
+    map.shapes(boxes, [b.w, b.s, b.e, b.n]);   // live preview
+  });
+  map.afterDrag = () => {
+    if (!drawMode || !dstart) return;
+    const b = norm(dstart, dcur); dstart = dcur = null;
+    if (b.e - b.w < 1e-3 && b.n - b.s < 1e-3) { map.shapes(boxes, filtBox()); return; }  // a click, not a drag
+    commit(b);
+  };
+
+  EXTENT_MAP = { map, key: key(c) };
+  paintFootprints(c);   // items may already be loaded from cache
+}
+
+// ---- view the actual data: items, footprints, map handoff, download ----
+// Items load on demand (a network call), land in a table with their footprints
+// on the extent map (selection synced both ways), and each viewable asset can
+// be opened in the fused-render "map" template — remote COGs stream through
+// the local daemon, so no download is needed just to look.
+// The items query is driven by DF (the detail panel's own filter), never the
+// global search params -- so filtering items never disturbs the results list.
+function itemsKey(c) {
+  return key(c) + "|" + DF.bbox + "|" + DF.datetime;
+}
+
+async function mapTemplate() {
+  if (MAP_TPL) return MAP_TPL;
+  const inv = await (await fetch("/api/templates/inventory", { headers: { "X-Fused": "1" } })).json();
+  const t = (inv.templates || []).find(t => t.name === "map");
+  if (!t) throw new Error("the fused-render map template isn't installed");
+  MAP_TPL = t.path.replace(/\\/g, "/");
+  return MAP_TPL;
+}
+
+function camFor(boxes) {
+  const bs = (boxes || []).filter(validBox);
+  if (!bs.length) return "";
+  const lx = lonExtent(bs);                              // unwraps any dateline-crossing box
+  const s = Math.min(...bs.map(b => b[1])), n = Math.max(...bs.map(b => b[3]));
+  const span = Math.max(lx.spanX, (n - s) * 1.6, 0.003);   // rough 16:10 viewport fit
+  const zoom = Math.max(1, Math.min(16, Math.log2(360 / span)));
+  return `${((s + n) / 2).toFixed(4)},${lx.clon.toFixed(4)},${zoom.toFixed(1)}`;
+}
+
+// Mirrors sign.scheme_for, so a public host — nearly all of them — costs no
+// subprocess. Only downloads sign; the map template does its own (see openInMap).
+const NEEDS_SIGNING = /\.blob\.core\.windows\.net$/i;
+const needsSigning = u => { try { return NEEDS_SIGNING.test(new URL(u).host); } catch { return false; } };
+
+async function signIfNeeded(url) {
+  if (!needsSigning(url)) return url;
+  return (await fused.runPython("./sign.py", { url }, { key: null })).url;
+}
+
+async function openInMap(targets, boxes) {
+  const tpl = await mapTemplate();
+  const q = new URLSearchParams({ path: tpl + "/template.html" });
+  // Hand over the raw hrefs. The map template signs private Azure containers
+  // itself now (its blob_tokens learns from the 409 and refreshes the token as
+  // it expires), so pre-signing here would only pin a token that goes stale
+  // while the tab is open. Downloads still sign, having no such machinery.
+  q.set("open", targets.map(encodeURIComponent).join("~"));   // the template's multi-layer format
+  const cam = camFor(boxes);
+  if (cam) q.set("cam", cam);
+  window.open("/render?" + q.toString(), "_blank");
+}
+
+async function loadItems(c, more) {
+  const k = itemsKey(c);
+  const prev = more ? ITEMS_CACHE.get(k) : null;
+  const btn = $(more ? "moreItems" : "loadItems");
+  btn.disabled = true; btn.textContent = "Loading…";
+  if (!more) {
+    // warm the map daemon now, so the click into the map template is fast
+    mapTemplate().then(tpl =>
+      fused.runPython(tpl + "/map_render.py", { warmup: "1" }, { key: null })).catch(() => {});
+  }
+  try {
+    const data = await fused.runPython("./items.py", {
+      collection_json: JSON.stringify(c),
+      bbox: DF.bbox,
+      datetime: DF.datetime,
+      limit: String(ITEMS_PAGE),
+      cursor: prev ? prev.data.cursor : "",
+    });
+    if (prev) {
+      prev.data.items = prev.data.items.concat(data.items);
+      prev.data.count = prev.data.items.length;
+      prev.data.cursor = data.cursor;
+      prev.data.elapsed_ms = data.elapsed_ms;
+      delete prev.moreError;   // this page worked; drop the last failure's note
+    } else {
+      ITEMS_CACHE.set(k, { data, sel: new Set() });
+    }
+  } catch (err) {
+    const msg = err.message || String(err);
+    if (prev) prev.moreError = msg;
+    else ITEMS_CACHE.set(k, { error: msg });
+  }
+  if (P().sel === key(c)) renderItems(c);
+}
+
+function primaryAsset(it) {
+  const v = it.assets.filter(a => a.viewable);
+  return v.find(a => (a.roles || []).includes("visual")) || v.find(a => a.key === "visual") || v[0] || null;
+}
+
+function fmtSize(n) {
+  if (n == null) return "";
+  for (const [div, unit] of [[1 << 30, "GB"], [1 << 20, "MB"], [1 << 10, "KB"]]) {
+    if (n >= div) return (n / div).toFixed(1) + " " + unit;
+  }
+  return n + " B";
+}
+
+function renderItems(c) {
+  const entry = ITEMS_CACHE.get(itemsKey(c));
+  const box = $("itemsBox");
+  if (!entry || !box) return;
+  $("loadItems").disabled = false; $("loadItems").textContent = "Reload";
+  if (entry.error) {
+    box.innerHTML = `<div class="err" style="margin-top:8px">${esc(entry.error)}</div>`;
+    return;
+  }
+  const d = entry.data;
+  if (!d.items.length) {
+    // be honest about WHY it's empty: an endpoint that returns nothing even
+    // unfiltered (matched 0, no filter) is a catalog with no items here, not a
+    // too-tight filter -- and a filter date outside the collection's coverage
+    // is the usual real cause, so say so.
+    const hasFilter = !!(DF.bbox || DF.datetime);
+    let msg;
+    if (d.matched === 0 && !hasFilter) {
+      msg = "This catalog returned no items for this collection — it may not expose item-level data here.";
+    } else if (hasFilter) {
+      msg = "No items match your filter.";
+      if (DF.datetime && c.temporal && c.temporal.length) msg += ` This collection covers ${fmtTemporal(c.temporal)} — check your date range.`;
+    } else {
+      msg = "No items returned for this collection.";
+    }
+    box.innerHTML = `<div class="items-note">${esc(msg)}</div>`;
+    return;
+  }
+  const meta = `${d.count}${d.cursor ? "+" : ""} items` +
+    `${d.matched != null ? " of " + d.matched : ""} · ${d.elapsed_ms} ms` +
+    `${d.access === "static" ? " · crawled from the static catalog" : ""}`;
+  const total = d.items.reduce((n, it) => n + it.assets.length, 0);
+  const openable = d.items.reduce((n, it) => n + it.assets.filter(a => !blockedReason(a)).length, 0);
+  const blocked = total - openable;
+  // Nothing here can stream into the map -- explain why at the collection level
+  // instead of rendering rows with no map buttons (which reads as a bug), and
+  // don't offer the "show only openable" filter that would hide every asset.
+  const noneOpen = total > 0 && openable === 0;
+  box.innerHTML = `
+    <div class="items-note">${esc(meta)} — hover a row to highlight its footprint on the map</div>
+    ${noneOpen ? `<div class="nomap">${esc(noOpenNote(d.items))}</div>`
+      : blocked ? `<label class="items-note openonly"><input type="checkbox" id="openOnly"
+      ${OPEN_ONLY ? "checked" : ""}> show only assets that open on the map
+      <span>(${blocked} of ${total} can't)</span></label>` : ""}
+    <table class="items"><tbody>
+      ${d.items.map((it, i) => {
+        const th = itemThumb(it);
+        return `<tr class="irow" data-i="${i}">
+          <td class="ck"><input type="checkbox" ${entry.sel.has(i) ? "checked" : ""}></td>
+          <td class="th">${th ? `<img class="thumb" loading="lazy" src="${esc(th.href)}" alt="">` : ""}</td>
+          <td>
+            <div class="irow-head"><span class="mono iid">${esc(it.id)}</span>
+              <span class="idate">${esc((it.datetime || "").slice(0, 10))}</span></div>
+            <div class="achips">${it.assets.map((a, j) => OPEN_ONLY && !noneOpen && blockedReason(a) ? "" : assetChip(a, i, j)).join("")}</div>
+          </td>
+        </tr>`;
+      }).join("")}
+    </tbody></table>
+    ${entry.moreError ? `<div class="err" style="margin-top:8px">${esc(entry.moreError)}</div>` : ""}
+    ${d.cursor ? `<button type="button" id="moreItems">Load ${ITEMS_PAGE} more</button>` : ""}
+    <div class="items-actions" id="itemsActions"></div>`;
+  box.querySelectorAll(".irow").forEach(row => {
+    const i = +row.dataset.i;
+    row.addEventListener("pointerenter", () => hotItem(c, i, true));
+    row.addEventListener("pointerleave", () => hotItem(c, i, false));
+    row.addEventListener("click", ev => {
+      if (ev.target.closest("button, a, input")) return;
+      toggleItem(c, i);
+    });
+    row.querySelector(".ck input").addEventListener("change", () => toggleItem(c, i, true));
+  });
+  box.querySelectorAll(".achip [data-act]").forEach(b => b.addEventListener("click", () => {
+    const it = d.items[+b.dataset.item], a = it.assets[+b.dataset.asset];
+    if (b.dataset.act === "map") openInMap([a.href], [it.bbox || c.bbox]);
+    else downloadAsset(b, a, it, c);
+  }));
+  if ($("openOnly")) $("openOnly").addEventListener("change", ev => {
+    OPEN_ONLY = ev.target.checked;
+    renderItems(c);
+  });
+  if ($("moreItems")) $("moreItems").addEventListener("click", () => loadItems(c, true));
+  paintFootprints(c);
+  renderItemActions(c);
+}
+
+// == BEGIN item-panel-helpers (pure; unit-tested in test_items_ui.mjs) ==
+function itemThumb(it) {
+  // Only browser-renderable image types (never a COG's image/tiff), but accept
+  // the preview/overview assets that tile-API catalogs ship (VEDA's
+  // rendered_preview_dashboard, role "overview") so those items still show a picture.
+  return it.assets.find(a =>
+    /^https?:/i.test(a.href)
+    && /^image\/(png|jpe?g|webp|gif|avif)$/i.test((a.type || "").split(";")[0].trim())
+    && (a.key === "thumbnail" || /^rendered_preview/i.test(a.key)
+        || (a.roles || []).some(r => r === "thumbnail" || r === "overview" || r === "preview"))) || null;
+}
+
+// When nothing in the page can stream into the map, say why at the collection
+// level. Private off-HTTP data (s3://) is the common case.
+function noOpenNote(items) {
+  const assets = items.flatMap(it => it.assets);
+  if (assets.some(a => a.auth === "")) {
+    return "None of this collection's assets can stream into the map. The data files are private — " +
+      "published as s3:// objects this map can't fetch. Any preview shown is the catalog's own rendering.";
+  }
+  const reasons = [...new Set(assets.map(blockedReason).filter(Boolean))];
+  return "None of this collection's assets can open in the map: " + reasons.join("; ") + ".";
+}
+
+// Why an asset offers no map button (empty string if it can open). Computed
+// server-side in items.py (_block_reason) so the format rules live in one place.
+function blockedReason(a) {
+  return a.reason || "";
+}
+// == END item-panel-helpers ==
+
+function assetChip(a, i, j) {
+  const name = a.href.split("?")[0].split("/").pop();
+  const label = `<a href="${esc(a.href)}" target="_blank" rel="noopener" title="${esc(a.title || name)}${a.size ? " · " + fmtSize(a.size) : ""}">${esc(a.key)}</a>`;
+  const why = blockedReason(a);
+  const acts = why
+    ? `<span class="noopen" title="${esc(why)}">✕</span>`
+    : `<button type="button" data-act="map" data-item="${i}" data-asset="${j}" title="Open in the map template${a.auth === "azure-sas" ? " (private storage — signed for you, no account needed)" : " (streams remotely — no download)"}">map</button>`;
+  const dl = /^https?:/i.test(a.href)
+    ? `<button type="button" data-act="dl" data-item="${i}" data-asset="${j}" title="Download ${esc(name)} to your download folder">↓</button>` : "";
+  return `<span class="achip${why ? " blocked" : ""}">${label}${acts}${dl}<span class="dl-note"></span></span>`;
+}
+
+function renderItemActions(c) {
+  const entry = ITEMS_CACHE.get(itemsKey(c));
+  const bar = $("itemsActions");
+  if (!entry || !bar) return;
+  const sel = [...entry.sel].sort((x, y) => x - y);
+  const targets = sel.map(i => primaryAsset(entry.data.items[i])).filter(Boolean);
+  bar.innerHTML = sel.length ? `
+    <button type="button" class="primary" id="openSel" ${targets.length ? "" : "disabled"}>
+      Open ${targets.length} in Map</button>
+    <button type="button" id="clearSel">Clear</button>
+    <span class="count">${sel.length} selected</span>` : "";
+  if (!sel.length) return;
+  $("openSel").addEventListener("click", () => openInMap(
+    targets.map(a => a.href),
+    sel.map(i => entry.data.items[i].bbox).filter(Boolean)));
+  $("clearSel").addEventListener("click", () => {
+    entry.sel.clear();
+    renderItems(c);
+  });
+}
+
+function toggleItem(c, i, fromCheckbox) {
+  const entry = ITEMS_CACHE.get(itemsKey(c));
+  if (!entry) return;
+  entry.sel.has(i) ? entry.sel.delete(i) : entry.sel.add(i);
+  const row = $("itemsBox").querySelector(`.irow[data-i="${i}"]`);
+  if (row && !fromCheckbox) row.querySelector(".ck input").checked = entry.sel.has(i);
+  footprintEls(i).forEach(fp => fp.classList.toggle("on", entry.sel.has(i)));
+  renderItemActions(c);
+}
+
+function footprintEls(i) {
+  // A dateline-crossing item bbox draws as two <rect>s sharing this data-i.
+  return EXTENT_MAP ? EXTENT_MAP.map.gShapes.querySelectorAll(`.fp[data-i="${i}"]`) : [];
+}
+
+function hotItem(c, i, on) {
+  footprintEls(i).forEach(fp => fp.classList.toggle("hot", on));
+  const row = $("itemsBox") && $("itemsBox").querySelector(`.irow[data-i="${i}"]`);
+  if (row) row.classList.toggle("hot", on);
+}
+
+function paintFootprints(c) {
+  if (!EXTENT_MAP || EXTENT_MAP.key !== key(c)) return;
+  const g = EXTENT_MAP.map.gShapes;
+  g.querySelectorAll(".fp").forEach(n => n.remove());
+  const entry = ITEMS_CACHE.get(itemsKey(c));
+  if (!entry || !entry.data) return;
+  entry.data.items.forEach((it, i) => {
+    if (!validBox(it.bbox)) return;
+    // splitAM: an antimeridian-crossing item bbox (west > east) drawn as a raw
+    // rect collapses to a 1e-4-wide speck; split it into its two real pieces,
+    // same as the extent map already does for collection extents.
+    for (const [w, s, e, n] of splitAM(it.bbox)) {
+      const r = document.createElementNS(SVGNS, "rect");
+      r.setAttribute("class", "fp" + (entry.sel.has(i) ? " on" : ""));
+      r.setAttribute("data-i", i);
+      r.setAttribute("x", w); r.setAttribute("y", projY(n));
+      r.setAttribute("width", Math.max(e - w, 1e-4));
+      r.setAttribute("height", Math.max(projY(s) - projY(n), 1e-4));
+      r.addEventListener("pointerenter", () => hotItem(c, i, true));
+      r.addEventListener("pointerleave", () => hotItem(c, i, false));
+      r.addEventListener("click", () => {
+        toggleItem(c, i);
+        const row = $("itemsBox").querySelector(`.irow[data-i="${i}"]`);
+        if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+      g.appendChild(r);
+    }
+  });
+}
+
+async function downloadAsset(btn, a, it, c) {
+  const name = a.href.split("?")[0].split("/").pop();
+  const note = btn.parentElement.querySelector(".dl-note");
+  btn.disabled = true; btn.textContent = "…";
+  const job = fused.trackJob
+    ? fused.trackJob({ title: name, kind: "download", unit: "bytes" })
+    : { finish() {}, fail() {} };
+  try {
+    const url = await signIfNeeded(a.href);
+    const r = await fused.runPython("./download.py",
+      { url, name, dest_dir: dlDir() }, { key: null });
+    job.finish("Downloaded");
+    btn.remove();
+    note.innerHTML = `<span class="good">✓ ${fmtSize(r.size)}</span>
+      <button type="button" data-reveal>reveal</button>
+      <button type="button" data-local title="Open the downloaded file in the map template">map</button>`;
+    note.querySelector("[data-reveal]").addEventListener("click", () =>
+      fetch("/api/fs/reveal", { method: "POST",
+        headers: { "Content-Type": "application/json", "X-Fused": "1" },
+        body: JSON.stringify({ path: r.path }) }));
+    note.querySelector("[data-local]").addEventListener("click", () =>
+      openInMap([r.path], [it.bbox || c.bbox]));
+  } catch (err) {
+    job.fail(err);
+    btn.disabled = false; btn.textContent = "↓";
+    const msg = err.message || String(err);
+    // large/slow assets can't finish inside the runPython ceiling; say so plainly
+    // and point at the snippet, instead of a bare "failed"
+    const short = /too large/i.test(msg) ? "too large — use the snippet below" : "failed";
+    note.innerHTML = `<span class="bad" title="${esc(msg)}">✗ ${esc(short)}</span>`;
+  }
+}
+
+// ---- draw a bounding box on the map (side panel) ----
+// Pan/zoom stays live while drawing: hold the pointer on empty map to draw a
+// new box, grab an edge/corner handle to resize, grab the box body to move it,
+// or type exact degrees. Space-drag (or the Pan toggle) pans instead.
+const HANDLES = [["nw", 0, 1], ["n", .5, 1], ["ne", 1, 1], ["e", 1, .5],
+                 ["se", 1, 0], ["s", .5, 0], ["sw", 0, 0], ["w", 0, .5]];
+
+async function enterDraw(opts) {
+  // called both from the Filters modal (event arg, no onSave) and the detail
+  // panel's own filter (passes an onSave to apply the box directly)
+  const onSave = opts && typeof opts.onSave === "function" ? opts.onSave : null;
+  DRAW = true;
+  $("filtersModal").close();
+  $("detail").innerHTML = `
+    <div class="draw-wrap">
+      <h4>Draw a bounding box</h4>
+      <div class="draw-hint">Drag on the map to draw. Grab a handle to resize, the box to move it,
+        or type exact degrees below. Scroll to zoom, and use <b>Pan</b> to move the map.</div>
+      <div id="drawMap"></div>
+      <div class="draw-coords">
+        <div><label for="dW">West</label><input id="dW" inputmode="decimal" autocomplete="off"></div>
+        <div><label for="dS">South</label><input id="dS" inputmode="decimal" autocomplete="off"></div>
+        <div><label for="dE">East</label><input id="dE" inputmode="decimal" autocomplete="off"></div>
+        <div><label for="dN">North</label><input id="dN" inputmode="decimal" autocomplete="off"></div>
+      </div>
+      <div class="presets" id="drawPresets"></div>
+      <div class="draw-foot">
+        <button type="button" id="drawClear">Clear</button>
+        <span class="spacer"></span>
+        <button type="button" id="drawCancel">Cancel</button>
+        <button type="button" class="primary" id="drawSave" disabled>Save box</button>
+      </div>
+    </div>`;
+
+  await ensureBasemap();
+  if (!DRAW) return;                       // cancelled while the basemap loaded
+  const host = $("drawMap");
+  const map = GeoMap(host, { height: 300 });
+  let panMode = false;
+
+  const existing = ($("bbox").value || "").split(/[,\s]+/).map(Number).filter(Number.isFinite);
+  drawBox = existing.length === 4
+    ? { w: existing[0], s: existing[1], e: existing[2], n: existing[3] } : null;
+
+  const gBox = document.createElementNS(SVGNS, "g");
+  map.gShapes.appendChild(gBox);
+
+  function paint() {
+    gBox.innerHTML = "";
+    const b = drawBox;
+    $("drawSave").disabled = !b;
+    if (!b) { syncInputs(); return; }
+    const { span } = map.view();
+    const r = document.createElementNS(SVGNS, "rect");
+    r.setAttribute("class", "draw");
+    r.setAttribute("x", b.w); r.setAttribute("y", projY(b.n));
+    r.setAttribute("width", Math.max(b.e - b.w, 1e-4));
+    r.setAttribute("height", Math.max(projY(b.s) - projY(b.n), 1e-4));
+    r.dataset.role = "move";
+    gBox.appendChild(r);
+    const hs = span * 0.018;               // handles keep a constant screen size
+    for (const [role, fx, fy] of HANDLES) {
+      const cx = b.w + (b.e - b.w) * fx, cy = projY(b.s + (b.n - b.s) * fy);
+      const h = document.createElementNS(SVGNS, "rect");
+      h.setAttribute("class", "hnd");
+      h.setAttribute("x", cx - hs / 2); h.setAttribute("y", cy - hs / 2);
+      h.setAttribute("width", hs); h.setAttribute("height", hs);
+      h.setAttribute("rx", hs * 0.2);
+      h.style.cursor = (role === "n" || role === "s") ? "ns-resize"
+        : (role === "e" || role === "w") ? "ew-resize"
+        : (role === "ne" || role === "sw") ? "nesw-resize" : "nwse-resize";
+      h.dataset.role = role;
+      gBox.appendChild(h);
+    }
+    syncInputs();
+  }
+
+  function setBox(w, s, e, n) {
+    w = clampLon(w); e = clampLon(e); s = clampLat(s); n = clampLat(n);
+    if (w > e) [w, e] = [e, w];
+    if (s > n) [s, n] = [n, s];
+    drawBox = { w, s, e, n };
+    paint();
+  }
+
+  function syncInputs() {
+    const b = drawBox;
+    const f = v => (v == null ? "" : (+v).toFixed(4).replace(/\.?0+$/, ""));
+    if (document.activeElement && document.activeElement.closest(".draw-coords")) return;
+    $("dW").value = f(b && b.w); $("dS").value = f(b && b.s);
+    $("dE").value = f(b && b.e); $("dN").value = f(b && b.n);
+  }
+
+  ["dW", "dS", "dE", "dN"].forEach(id => $(id).addEventListener("change", () => {
+    const v = ["dW", "dS", "dE", "dN"].map(k => parseFloat($(k).value));
+    if (v.every(Number.isFinite)) setBox(v[0], v[1], v[2], v[3]);
+  }));
+
+  // pointer: handle > move > draw new, unless panning
+  let act = null;
+  map.beforeDrag = ev => {
+    if (panMode || ev.shiftKey) return false;      // let the map pan
+    const role = ev.target && ev.target.dataset ? ev.target.dataset.role : null;
+    const ll = map.toLL(ev.clientX, ev.clientY);
+    act = role ? { role, start: ll, box: { ...drawBox } } : { role: "new", start: ll };
+    if (act.role === "new") setBox(ll.lon, ll.lat, ll.lon, ll.lat);
+    map.svg.setPointerCapture(ev.pointerId);
+    map.svg.classList.add("drawing");
+    return true;                                    // suppress the map's own pan
+  };
+  map.svg.addEventListener("pointermove", ev => {
+    if (!act) return;
+    const ll = map.toLL(ev.clientX, ev.clientY);
+    if (act.role === "new") {
+      setBox(act.start.lon, act.start.lat, ll.lon, ll.lat);
+    } else if (act.role === "move") {
+      const dLon = ll.lon - act.start.lon, dLat = ll.lat - act.start.lat;
+      setBox(act.box.w + dLon, act.box.s + dLat, act.box.e + dLon, act.box.n + dLat);
+    } else {
+      const b = { ...act.box };
+      if (act.role.includes("n")) b.n = ll.lat;
+      if (act.role.includes("s")) b.s = ll.lat;
+      if (act.role.includes("e")) b.e = ll.lon;
+      if (act.role.includes("w")) b.w = ll.lon;
+      setBox(b.w, b.s, b.e, b.n);
+    }
+  });
+  map.afterDrag = () => {
+    if (!act) return;
+    // a click without a drag shouldn't leave a zero-size box behind
+    if (act.role === "new" && drawBox && drawBox.e - drawBox.w < 1e-3 && drawBox.n - drawBox.s < 1e-3) {
+      drawBox = null;
+    }
+    act = null;
+    map.svg.classList.remove("drawing");
+    paint();
+  };
+  map.onViewChange = paint;   // keep handles a constant size across zooms
+
+  const panBtn = mapControls(host, map, [
+    ["Pan", "Toggle pan mode (or hold Shift)", () => {
+      panMode = !panMode;
+      panBtn.classList.toggle("on", panMode);
+      panBtn.textContent = panMode ? "Draw" : "Pan";
+      map.svg.style.cursor = panMode ? "grab" : "crosshair";
+    }],
+    ["Fit", "Zoom to the current box", () => {
+      if (drawBox) map.fit([[drawBox.w, drawBox.s, drawBox.e, drawBox.n]]);
+    }],
+    ["World", "Zoom out to the whole world", () => map.setView(0, 0, 360)],
+  ]).querySelector("button.wide");
+  addMapSearch(host, map);
+  map.svg.style.cursor = "crosshair";
+
+  const regions = [["World", -180, -85, 180, 85], ["N. America", -168, 7, -52, 72],
+    ["S. America", -82, -56, -34, 13], ["Europe", -11, 35, 32, 72], ["Africa", -19, -35, 52, 38],
+    ["Asia", 25, 5, 150, 78], ["Oceania", 110, -48, 180, 0], ["India", 68, 6, 98, 37]];
+  $("drawPresets").innerHTML = regions.map(r =>
+    `<button type="button" data-b="${r.slice(1).join(",")}">${r[0]}</button>`).join("") +
+    `<button type="button" id="useView" title="Turn the current map view into the box">Use current view</button>`;
+  $("drawPresets").querySelectorAll("[data-b]").forEach(b =>
+    b.addEventListener("click", () => {
+      const [w, s, e, n] = b.dataset.b.split(",").map(Number);
+      setBox(w, s, e, n);
+      map.fit([[w, s, e, n]]);
+    }));
+  $("useView").addEventListener("click", () => {
+    const r = host.getBoundingClientRect();
+    const a = map.toLL(r.left + r.width * 0.08, r.top + r.height * 0.92);
+    const b = map.toLL(r.left + r.width * 0.92, r.top + r.height * 0.08);
+    setBox(a.lon, a.lat, b.lon, b.lat);
+  });
+
+  $("drawClear").addEventListener("click", () => { drawBox = null; paint(); });
+  $("drawCancel").addEventListener("click", () => { exitDraw(); if (!onSave) openModal($("filtersModal")); });
+  $("drawSave").addEventListener("click", () => {
+    if (!drawBox) return;
+    const val = [drawBox.w, drawBox.s, drawBox.e, drawBox.n].map(v => +v.toFixed(4)).join(",");
+    exitDraw();
+    if (onSave) { onSave(val); return; }   // detail-panel filter: apply the box directly
+    $("bbox").value = val;                 // "come back" to Filters with the box filled in
+    openModal($("filtersModal"));
+  });
+
+  if (drawBox) { paint(); map.fit([[drawBox.w, drawBox.s, drawBox.e, drawBox.n]]); }
+  else { paint(); }
+}
+
+function exitDraw() { DRAW = false; drawBox = null; renderDetail(P().sel); }
+
+// ---- AI refine (local only) ----
+function renderAiBar() {
+  const p = P();
+  const slot = $("aibar-slot");
+  if (!(AI_LOCAL && p.ai === "1" && LAST && LAST.collections.length)) { slot.innerHTML = ""; return; }
+  const done = AI_ORDER && AI_ORDER.q === LAST.q;
+  slot.innerHTML = `<div class="aibar"><span class="msg">${done
+    ? "Ranked by relevance to your use case." : "Let Claude read these results and rank them for your use case."}</span>
+    <button type="button" id="aiRun">${done ? "Re-rank" : "Rank for my use case"}</button></div>`;
+  $("aiRun").addEventListener("click", runAiRefine);
+}
+
+async function runAiRefine() {
+  const btn = $("aiRun"); if (!btn || !LAST) return;
+  const q = LAST.q || $("q").value;
+  const cols = LAST.collections.slice(0, 60);
+  btn.disabled = true;
+  const msg = $("aibar-slot").querySelector(".msg");
+  msg.textContent = "Claude is reading the results…";
+  const compact = cols.map(c => ({ id: c.id, host: c.api_host, title: c.title,
+    keywords: (c.keywords||[]).slice(0,8), summary: (c.description_short||"").slice(0,160) }));
+  try {
+    const res = await fused.ai(
+      "Use case: " + (q || "(none given)") + "\n\nCollections (JSON):\n" + JSON.stringify(compact),
+      { systemPrompt:
+        "You are a geospatial data librarian. Given a user's use case and a list of STAC dataset " +
+        "collections, pick the ones genuinely useful for that use case and rank them best-first. " +
+        'Reply with ONLY compact JSON: {"ranked":[{"id":"...","host":"...","why":"<=12 word reason"}]}. ' +
+        "Include at most 8. Use ids and hosts exactly as given; never invent them.",
+        effort: "low" });
+    const m = res.text.replace(/```(?:json)?/g, "").match(/\{[\s\S]*\}/);
+    const parsed = m ? JSON.parse(m[0]) : { ranked: [] };
+    const map = {};
+    (parsed.ranked || []).forEach((r, i) => { map[(r.id + " @ " + r.host)] = { rank: i, why: r.why || "" }; });
+    AI_ORDER = { q: LAST.q, map };
+    renderResults(P().sel, P().only); renderAiBar();
+  } catch (err) {
+    msg.textContent = (err.type === "ai_unavailable")
+      ? "AI unavailable — " + (err.message || "the local Claude CLI isn't set up.")
+      : "AI error: " + (err.message || err);
+    btn.disabled = false;
+  }
+}
+
+// ---- draw orchestration ----
+// Only a change to a query-affecting param re-runs the (slow) federated search;
+// selecting a collection, filtering by catalog, or toggling AI just re-renders.
+let lastSig = null;
+const sig = p => [p.q, p.bbox, p.datetime, p.limit, p.apis, p.mode, p.kind].join("|");
+
+function syncControls(p) {
+  if ($("q").value !== p.q) $("q").value = p.q;
+  $("bbox").value = p.bbox;
+  const d = datesFromInterval(p.datetime);
+  $("startDate").value = d.start; $("endDate").value = d.end;
+  $("limit").value = p.limit; $("apis").value = p.apis;
+  if (AI_LOCAL) { $("aiToggleWrap").hidden = false; $("aiToggle").checked = p.ai === "1"; }
+  $("modeSeg").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.mode === p.mode));
+  $("kindChips").hidden = p.mode !== "index";
+  $("openIndex").hidden = p.mode !== "index";   // "Manage index" belongs to Offline mode
+  $("kindChips").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.kind === p.kind));
+}
+
+async function runSearch(p) {
+  lastSig = sig(p);
+  renderLoading();
+  try {
+    const data = p.mode === "index"
+      ? await fused.runPython("./query_index.py",
+          { q: p.q, bbox: p.bbox, datetime: p.datetime, limit: p.limit, kind: p.kind })
+      : await fused.runPython("./discover.py",
+          { q: p.q, bbox: p.bbox, datetime: p.datetime, limit: p.limit, apis: p.apis });
+    LAST = data;
+    if (!AI_ORDER || AI_ORDER.q !== data.q) AI_ORDER = null;   // ranking is stale for a new query
+    if (p.mode === "index" && data.built === false) {
+      lastSig = null;   // keep re-rendering this CTA on any param change, not "No matches"
+      $("sources").innerHTML = ""; $("count").textContent = ""; $("aibar-slot").innerHTML = "";
+      $("results").innerHTML = `<div class="landing"><h2>No offline index yet</h2>
+        <p>Offline search answers from a local snapshot of many catalogs — including static
+        ones like Maxar and Umbra — with instant spatial queries and no internet. Build it
+        once (it saves to disk and keeps running in the background), then search offline.</p>
+        <div class="presets" style="justify-content:center"><button type="button" id="ctaBuild">Build the index</button></div></div>`;
+      $("ctaBuild").addEventListener("click", openIndexModal);
+      renderDetail("");
+      return;
+    }
+    const cur = P();
+    renderSources(data.sources, cur.only);
+    renderResults(cur.sel, cur.only);
+    renderAiBar();
+    renderDetail(cur.sel);
+  } catch (err) {
+    $("sources").innerHTML = ""; $("count").textContent = ""; $("aibar-slot").innerHTML = "";
+    $("results").innerHTML = `<div class="err"><b>${esc(err.type || "error")}</b><br>${esc(err.message || String(err))}</div>`;
+  }
+}
+
+function onParams() {
+  const p = P();
+  syncControls(p);
+  // A blank-query search ("browse everything") has no query-affecting param to
+  // key off, so once it has loaded results, LAST keeps this true until a real
+  // navigation away clears it -- selecting a result shouldn't wipe the list.
+  const browse = p.q || p.bbox || p.datetime || (p.mode === "index" && p.kind) ||
+    fused.params.get("browse") === "1" || LAST !== null;
+  if (!browse) { LAST = null; lastSig = null; renderLanding(); renderDetail(""); return; }
+  if (!LAST || sig(p) !== lastSig) { runSearch(p); return; }
+  // selection / catalog filter / AI toggle only — re-render from loaded data, no refetch
+  renderSources(LAST.sources, p.only);
+  renderResults(p.sel, p.only);
+  renderAiBar();
+  renderDetail(p.sel);
+}
+
+// ---- modal helpers ----
+function openModal(dlg) { if (!dlg.open) dlg.showModal(); }
+// ---- download folder ----
+// A machine preference, not view state, so it lives in localStorage rather than
+// a URL param: a filesystem path has no business in a link you share.
+const DL_KEY = "discover_data.downloadDir";
+const dlDir = () => { try { return localStorage.getItem(DL_KEY) || ""; } catch { return ""; } };
+
+function dlNote(kind, text) {
+  $("dlStatus").innerHTML = `<div class="vrow ${kind}">${esc(text)}</div>`;
+}
+
+function openDownloadsModal() {
+  $("dlDir").value = dlDir();
+  $("dlStatus").innerHTML = "";
+  $("dlBrowser").hidden = true;
+  openModal($("downloadsModal"));
+}
+
+// Saving must feel instant, so it resolves in-page and validates with stat
+// (8-26 ms) instead of runPython. That is not a micro-optimization: a runPython
+// call costs a whole subprocess, and an EMPTY main() measured 5-33 s through the
+// runner, which is most of a second at best and a hang at worst for one click.
+//
+// It does mean the rules below mirror download.clean_dir. That stays safe
+// because download.py re-cleans whatever it is handed, so a disagreement can
+// only change what this dialog DISPLAYS, never where a file lands. Environment
+// variables are the one thing a page cannot expand, so those still go to Python.
+const QUOTE_PAIRS = [['"', '"'], ["'", "'"], ["“", "”"], ["‘", "’"]];
+const HOME_PREFIX = /^(~|%USERPROFILE%|\$HOME)(?=[/\\]|$)/i;
+// Forms only Python can settle: an environment variable, or `~someone` (whose
+// home only expanduser knows). Anything matching goes to resolve_dir.py.
+const NEEDS_PYTHON = /%[^%/\\]+%|\$[A-Za-z_]\w*|^~[^/\\]/;
+
+function cleanDirJS(raw, home) {
+  let s = String(raw || "").trim();
+  for (const [a, b] of QUOTE_PAIRS) {
+    if (s.length >= 2 && s.startsWith(a) && s.endsWith(b)) { s = s.slice(1, -1).trim(); break; }
+  }
+  if (/^file:\/\//i.test(s)) {
+    s = decodeURIComponent(s.replace(/^file:\/\/\/?/i, ""));
+    if (!/^[A-Za-z]:/.test(s)) s = "/" + s;      // file:///home/x -> /home/x
+  }
+  // A UNC share leads with two separators and must keep them, the way normpath
+  // does; collapsing them turns \\nas\geodata into a local C:\nas\geodata.
+  const unc = /^[/\\]{2}[^/\\]/.test(s);
+  s = s.replace(HOME_PREFIX, home || "~").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  if (unc) s = "/" + s;
+  return s.length > 1 ? s.replace(/\/$/, "") : s;
+}
+
+// Kept for the env-var path only, where the page genuinely cannot do the work.
+const resolveDir = dir => fused.runPython("./resolve_dir.py", { dest_dir: dir }, { key: null });
+
+// The folder, or the nearest ancestor that exists — a folder that isn't there
+// yet is fine, so long as something above it can be written to.
+async function statNearest(dir) {
+  let at = dir;
+  for (let i = 0; i < 24; i++) {
+    try { return { st: await fused.stat(at), exists: at === dir, at }; } catch {}
+    const up = at.replace(/\/[^/]*$/, "");
+    if (!up || up === at) break;
+    at = up;
+  }
+  return { st: null, exists: false, at };
+}
+
+// Check before saving, so a typo surfaces here and not on the first download.
+async function saveDownloadDir() {
+  const raw = $("dlDir").value.trim();
+  const cfg = await fusedConfig();
+  let dir = cleanDirJS(raw, (cfg.home || "").replace(/\\/g, "/"));
+  if (NEEDS_PYTHON.test(dir)) {
+    dlNote("ok", "Resolving...");
+    try { dir = (await resolveDir(raw)).dir; }
+    catch (err) { return dlNote("bad", err.message || String(err)); }
+  }
+  if (dir) {
+    const { st, exists } = await statNearest(dir);
+    if (!st) return dlNote("bad", "Can't reach " + dir + ".");
+    if (exists && !st.is_dir) return dlNote("bad", dir + " is a file, not a folder.");
+    if (!st.writable) return dlNote("bad", "Nothing writable along " + dir + ".");
+    dlNote("ok", "Saving to " + dir + (exists ? "" : " — created on the first download"));
+  } else {
+    dlNote("ok", "Saving to ~/.fused-render/downloads/");
+  }
+  // store the resolved path, so what was pasted can never be re-interpreted later
+  try { dir ? localStorage.setItem(DL_KEY, dir) : localStorage.removeItem(DL_KEY); } catch {}
+  $("dlDir").value = dir;
+  setTimeout(() => $("downloadsModal").close(), 600);
+}
+
+// Open the current download folder in the fused-render file explorer in a new
+// tab. Resolves the same path a download would use (blank -> the default from
+// download.py), so it always points where files actually land.
+function viewDownloadFolder() {
+  // Open the tab NOW, inside the click gesture. Opening it after the await
+  // below makes the browser treat it as an unsolicited pop-up and block it
+  // (the banner the user saw); a synchronous open is allowed, and navigating
+  // that same window later is not restricted.
+  const win = window.open("about:blank", "_blank");
+  if (!win) return dlNote("bad", "Your browser blocked the new tab — allow pop-ups for this page and retry.");
+  // resolve_dir owns the path rules (blank -> download.py's default) and
+  // creates the folder, so the explorer opens a real directory, not a 404.
+  fused.runPython("./resolve_dir.py", { dest_dir: $("dlDir").value.trim(), create: "1" }, { key: null })
+    .then(r => {
+      win.location = "/explorer/view/" + r.dir.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
+    })
+    .catch(err => { win.close(); dlNote("bad", err.message || String(err)); });
+}
+
+// Try the OS chooser, and fall back to browsing in-page. The fallback is not an
+// error worth shouting about — this build's Windows picker throws every time
+// (a fused-render bug) — so it just opens the browser and says nothing.
+async function browseForDir() {
+  const start = $("dlDir").value.trim();
+  try {
+    const res = await fetch("/api/fs/pick-folder", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Fused": "1" },
+      body: JSON.stringify({ start: start || null, title: "Save downloaded assets in..." }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    if (data.path) { $("dlDir").value = data.path; $("dlBrowser").hidden = true; }
+    return;   // a cancel answers with no path, and is an answer
+  } catch {
+    /* fall through to the in-page browser */
+  }
+  const cfg = await fusedConfig();
+  listDirs(start || cfg.home || "/");
+}
+
+// Memoized, but a failure is not: dropping the cached promise on the way out
+// lets the next caller retry instead of inheriting an empty config for good.
+const fusedConfig = () => (fusedConfig._p = fusedConfig._p
+  || fetch("/api/config", { headers: { "X-Fused": "1" } }).then(r => r.json())
+       .catch(() => { fusedConfig._p = null; return {}; }));
+
+// Jump-off points, so browsing never starts with a walk up from wherever we are.
+async function renderPlaces() {
+  const box = $("dlPlaces");
+  if (box.dataset.ready) return;
+  const cfg = await fusedConfig();
+  const seen = new Set();
+  const places = [];
+  const add = (label, p) => {
+    if (!p) return;
+    const path = p.replace(/\\/g, "/");
+    if (seen.has(path.toLowerCase())) return;
+    seen.add(path.toLowerCase());
+    places.push({ label, path });
+  };
+  add("Home", cfg.home);
+  add("Downloads", cfg.home && cfg.home + "/Downloads");
+  add("Fused", cfg.fused_dir);
+  const drive = (cfg.home || "").match(/^[A-Za-z]:/);
+  add(drive ? drive[0] : "/", drive ? drive[0] + "/" : "/");
+  box.innerHTML = places.map((p, i) =>
+    `<button type="button" data-goto="${esc(p.path)}" title="${esc(p.path)}">${esc(p.label)}</button>`).join("");
+  box.querySelectorAll("[data-goto]").forEach(b =>
+    b.addEventListener("click", () => listDirs(b.dataset.goto)));
+  // Only remember this as done when the config actually arrived: fusedConfig
+  // swallows a failure into {}, and caching that leaves one useless shortcut
+  // for the rest of the session.
+  if (cfg.home) box.dataset.ready = "1";
+}
+
+// `dir` and every ancestor, root first. A folder chooser must never be vague
+// about where it is pointing, and every step has to be clickable to get back.
+function crumbsOf(p) {
+  const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const out = [];
+  let at = "";
+  norm.split("/").forEach((seg, i) => {
+    if (i === 0) at = seg === "" ? "/" : seg + "/";
+    else at = at.replace(/\/$/, "") + "/" + seg;
+    out.push({ path: at, label: seg === "" ? "/" : seg });
+  });
+  return out;
+}
+
+async function listDirs(path) {
+  $("dlBrowser").hidden = false;
+  await renderPlaces();
+  const r = await fetch("/api/fs/list?path=" + encodeURIComponent(path),
+                        { headers: { "X-Fused": "1" } }).then(r => r.json()).catch(() => null);
+  if (!r || !r.entries) {
+    $("dlList").innerHTML = `<div class="empty">Can't open ${esc(path)}</div>`;
+    return;
+  }
+  // browsing IS choosing: Save takes the folder shown. One separator throughout,
+  // so the field and the breadcrumb never disagree about the same path.
+  $("dlDir").value = r.path.replace(/\\/g, "/");
+  const crumbs = crumbsOf(r.path);
+  $("dlCrumbs").innerHTML = crumbs.map((c, i) =>
+    `${i ? '<span class="sep">/</span>' : ""}<button type="button" data-goto="${esc(c.path)}"` +
+    `${i === crumbs.length - 1 ? ' aria-current="true"' : ""}>${esc(c.label)}</button>`).join("");
+  $("dlCrumbs").querySelectorAll("[data-goto]").forEach(b =>
+    b.addEventListener("click", () => listDirs(b.dataset.goto)));
+
+  const visible = r.entries.filter(e => !e.name.startsWith("."));
+  const dirs = visible.filter(e => e.is_dir);
+  const files = visible.filter(e => !e.is_dir);
+  const up = crumbs.length > 1
+    ? `<button type="button" data-goto="${esc(crumbs[crumbs.length - 2].path)}">` +
+      `<span class="ic">&#8598;</span>..</button>` : "";
+  // Files are listed but not selectable: they are what tells you which folder
+  // this is, and a listing of nothing but sub-folders reads as empty.
+  $("dlList").innerHTML = up
+    + dirs.map(e => `<button type="button" data-enter="${esc(e.name)}">` +
+        `<span class="ic">&#128193;</span>${esc(e.name)}</button>`).join("")
+    + files.slice(0, 200).map(e => `<div class="file"><span class="ic">&#183;</span>${esc(e.name)}</div>`).join("")
+    + (visible.length ? "" : `<div class="empty">Empty folder — Save to download here.</div>`)
+    // A chooser that quietly shows half a folder is worse than one that admits it
+    + (r.truncated ? `<div class="empty">This folder has more entries than are shown —
+        type the path above if what you want is missing.</div>` : "");
+  $("dlList").querySelectorAll("[data-goto]").forEach(b =>
+    b.addEventListener("click", () => listDirs(b.dataset.goto)));
+  $("dlList").querySelectorAll("[data-enter]").forEach(b =>
+    b.addEventListener("click", () => listDirs(r.path.replace(/\/$/, "") + "/" + b.dataset.enter)));
+}
+
+function wireModal(dlg) {
+  dlg.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => dlg.close()));
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });  // backdrop click
+}
+wireModal($("filtersModal")); wireModal($("catalogsModal")); wireModal($("downloadsModal"));
+$("dlSave").addEventListener("click", saveDownloadDir);
+$("dlReset").addEventListener("click", () => { $("dlDir").value = ""; saveDownloadDir(); });
+$("dlBrowse").addEventListener("click", browseForDir);
+$("dlView").addEventListener("click", viewDownloadFolder);
+
+// ---- wiring ----
+$("searchForm").addEventListener("submit", e => {
+  e.preventDefault();
+  if (!setParam("q", $("q").value.trim())) runSearch(P());   // unchanged query → force a refresh
+});
+$("openFilters").addEventListener("click", () => { syncControls(P()); openModal($("filtersModal")); });
+$("drawOnMap").addEventListener("click", enterDraw);
+function openCatalogsModal() {
+  $("apis").value = P().apis; $("apiStatus").innerHTML = ""; $("applyAnyway").hidden = true;
+  openModal($("catalogsModal"));
+}
+// Settings folds the rarely-touched catalogs + download-folder panels off the toolbar
+function toggleSettings(show) {
+  const m = $("settingsMenu");
+  m.hidden = show === undefined ? !m.hidden : !show;
+}
+$("openSettings").addEventListener("click", e => { e.stopPropagation(); toggleSettings(); });
+$("miCatalogs").addEventListener("click", () => { toggleSettings(false); openCatalogsModal(); });
+$("miDownloads").addEventListener("click", () => { toggleSettings(false); openDownloadsModal(); });
+document.addEventListener("click", e => { if (!e.target.closest(".menuwrap")) toggleSettings(false); });
+$("modeSeg").querySelectorAll("button").forEach(b =>
+  b.addEventListener("click", () => setParam("mode", b.dataset.mode)));
+$("kindChips").querySelectorAll("button").forEach(b =>
+  b.addEventListener("click", () => setParam("kind", b.dataset.kind)));
+
+// ---- offline index builder ----
+// Sources build concurrently (a small worker pool over runPython subprocesses,
+// each call keyed null so they don't cancel one another) and keep running in
+// the background — the header chip is the "come back later" indicator. Safe to
+// parallelise because build_index.py serialises its own meta.json writes with a
+// cross-process lock, so two sources finishing at once never lose progress.
+const IDX = { building: false, stop: false, added: 0, sources: [], doneSources: 0,
+              failures: 0, clientErrors: [], indexDir: "", ready: false };
+
+function idxMeta() {   // blank source -> default source list + current meta + on-disk path
+  return fused.runPython("./build_index.py", {}, { key: "idx-meta" });
+}
+
+async function openIndexModal() {
+  openModal($("indexModal"));
+  try {
+    const st = await idxMeta();
+    if (!$("idxSources").value.trim()) $("idxSources").value = st.sources.join("\n");
+    IDX.indexDir = st.index_dir || IDX.indexDir;
+    $("idxPath").innerHTML = IDX.indexDir ? `Saved to <code>${esc(IDX.indexDir)}</code>` : "";
+    renderIdxStatus(st.meta, IDX.building);
+  } catch (err) {
+    $("idxStatus").innerHTML = `<div class="vrow bad"><span class="vmark">✗</span><span class="vmsg">${esc(err.message || err)}</span></div>`;
+  }
+}
+
+function renderIdxStatus(meta, live) {
+  const entries = Object.entries((meta && meta.sources) || {});
+  const rows = entries.map(([slug, e]) => {
+    const mark = e.status === "done" ? "✓" : e.status === "error" ? "✗" : "…";
+    const cls = e.status === "done" ? "ok" : e.status === "error" ? "bad" : "checking";
+    return `<div class="vrow ${cls}"><span class="vmark">${mark}</span>
+      <span class="vhost mono">${esc(e.source || slug)}</span>
+      <span class="vmsg">${e.status === "error" ? esc(e.error || "failed") : `${e.count || 0} collections`}</span></div>`;
+  });
+  // client-side failures (e.g. a source that made no progress) never reach meta
+  const extra = IDX.clientErrors.map(msg =>
+    `<div class="vrow bad"><span class="vmark">✗</span><span class="vmsg">${esc(msg)}</span></div>`);
+  $("idxStatus").innerHTML = rows.join("") + extra.join("");
+  const total = entries.reduce((n, [, e]) => n + (e.count || 0), 0);
+  $("idxSummary").textContent = entries.length
+    ? `${total} collections indexed${live ? " — building…" : ""}` : "";
+}
+
+function updateIdxChip() {
+  const chip = $("idxChip");
+  if (IDX.building) {
+    chip.hidden = false;
+    chip.className = "idxchip building";
+    chip.innerHTML = `<span class="dot"></span>Building index — ${IDX.added} collections
+      <span class="count">${IDX.doneSources}/${IDX.sources.length} sources</span>`;
+  } else if (IDX.ready) {
+    chip.hidden = false;
+    chip.className = "idxchip ready";
+    chip.innerHTML = `<span class="dot"></span>Offline index ready — ${IDX.added} collections
+      <span class="x" data-dismiss title="Dismiss">×</span>`;
+  } else {
+    chip.hidden = true;
+  }
+}
+
+async function buildIndex() {
+  if (IDX.building) return;
+  const sources = $("idxSources").value.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  if (!sources.length) return;
+  Object.assign(IDX, { building: true, stop: false, added: 0, sources,
+                       doneSources: 0, failures: 0, clientErrors: [], ready: false });
+  $("idxBuild").disabled = true; $("idxCancel").hidden = false;
+  updateIdxChip();
+  const job = fused.trackJob
+    ? fused.trackJob({ title: "Building offline index", kind: "task", cancellable: true })
+    : { update() {}, finish() {}, fail() {}, cancelled() {}, cancelRequested: false };
+
+  // a worker pool over the source queue: concurrency scaled to the machine, so
+  // a many-core box builds every source at once and a small one still paces
+  const queue = sources.slice();
+  const width = Math.max(2, Math.min(sources.length, navigator.hardwareConcurrency || 4));
+  const worker = async () => {
+    while (queue.length && !IDX.stop && !job.cancelRequested) {
+      await buildOneSource(queue.shift(), job);
+      IDX.doneSources++;
+      updateIdxChip();
+    }
+  };
+  await Promise.all(Array.from({ length: width }, worker));
+
+  const cancelled = IDX.stop || job.cancelRequested;
+  cancelled ? job.cancelled()
+    : IDX.failures ? job.fail(new Error(`${IDX.failures} source(s) failed`))
+    : job.finish(`${IDX.added} collections indexed`);
+  IDX.building = false;
+  IDX.ready = !cancelled;
+  $("idxBuild").disabled = false; $("idxCancel").hidden = true;
+  updateIdxChip();
+  try { renderIdxStatus((await idxMeta()).meta); } catch (e) { /* rows already show it */ }
+  if (P().mode === "index") { lastSig = null; onParams(); }   // fresh index -> re-run the search
+}
+
+async function buildOneSource(source, job) {
+  let cursor = "", done = false, stalls = 0;
+  try {
+    while (!done && !IDX.stop && !job.cancelRequested) {
+      const r = await fused.runPython("./build_index.py", { source, cursor }, { key: null });
+      // a chunk that neither advanced the cursor nor added rows is stuck (a page
+      // persistently failing) -- retry twice, then give up on this one source
+      stalls = (r.added === 0 && r.next_cursor === cursor) ? stalls + 1 : 0;
+      if (stalls >= 2) throw new Error(`${source}: no progress after retries`);
+      IDX.added += r.added; cursor = r.next_cursor; done = r.done;
+      job.update({ done: IDX.added, detail: `${r.slug} · ${r.count}` });
+      updateIdxChip();
+      if ($("indexModal").open) renderIdxStatus(r.meta, true);
+    }
+  } catch (err) {   // one flaky source must not sink the rest
+    IDX.failures++;
+    IDX.clientErrors.push(err.message || String(err));
+  }
+}
+
+$("openIndex").addEventListener("click", openIndexModal);
+$("idxChip").addEventListener("click", e => {
+  if (e.target.closest("[data-dismiss]")) { IDX.ready = false; updateIdxChip(); return; }
+  openIndexModal();
+});
+$("idxBuild").addEventListener("click", buildIndex);
+$("idxCancel").addEventListener("click", () => { IDX.stop = true; $("idxCancel").disabled = true; setTimeout(() => $("idxCancel").disabled = false, 100); });
+wireModal($("indexModal"));
+$("applyFilters").addEventListener("click", () => {
+  setParam("bbox", $("bbox").value.trim());
+  setParam("datetime", intervalFromDates($("startDate").value, $("endDate").value));
+  setParam("limit", $("limit").value.trim() || "40");
+  $("filtersModal").close();
+});
+$("clearFilters").addEventListener("click", () => {
+  $("bbox").value = ""; $("startDate").value = ""; $("endDate").value = ""; $("limit").value = "40";
+});
+document.querySelectorAll(".presets [data-bbox]").forEach(b =>
+  b.addEventListener("click", () => { $("bbox").value = b.dataset.bbox; }));
+function apisFromTextarea() {
+  return $("apis").value.split(/\n+/).map(s => s.trim()).filter(Boolean);
+}
+async function validateAndApply() {
+  const urls = apisFromTextarea();
+  const status = $("apiStatus");
+  if (!urls.length) { setParam("apis", ""); $("catalogsModal").close(); return; }   // blank = defaults
+  const btn = $("applyApis"); btn.disabled = true; $("applyAnyway").hidden = true;
+  status.innerHTML = `<div class="vrow checking">Validating ${urls.length} URL${urls.length > 1 ? "s" : ""}…</div>`;
+  try {
+    const res = await fused.runPython("./validate.py", { apis: urls.join(",") });
+    const results = res.results || [];
+    status.innerHTML = results.map(r =>
+      `<div class="vrow ${r.ok ? "ok" : "bad"}"><span class="vmark">${r.ok ? "✓" : "✗"}</span>
+       <span class="vhost mono">${esc(r.host)}</span><span class="vmsg">${esc(r.message)}</span></div>`).join("");
+    if (results.length && results.every(r => r.ok)) {
+      setParam("apis", urls.join(",")); $("catalogsModal").close();
+    } else {
+      $("applyAnyway").hidden = false;   // some failed — let the user override
+    }
+  } catch (err) {
+    status.innerHTML = `<div class="vrow bad"><span class="vmark">✗</span><span class="vmsg">Validation failed: ${esc(err.message || err)}</span></div>`;
+  } finally { btn.disabled = false; }
+}
+$("applyApis").addEventListener("click", validateAndApply);
+$("applyAnyway").addEventListener("click", () => { setParam("apis", apisFromTextarea().join(",")); $("catalogsModal").close(); });
+$("resetApis").addEventListener("click", () => { $("apis").value = ""; $("apiStatus").innerHTML = ""; $("applyAnyway").hidden = true; });
+$("apis").addEventListener("input", () => { $("apiStatus").innerHTML = ""; $("applyAnyway").hidden = true; });
+if (AI_LOCAL) $("aiToggle").addEventListener("change", e => setParam("ai", e.target.checked ? "1" : "0"));
+
+$("apis").setAttribute("placeholder", DEFAULT_APIS.join("\n"));
+
+// ---- resizable detail panel ----
+// A layout preference (this machine), not view state, so localStorage, not a URL param.
+const DETAIL_W_KEY = "discover_data.detailW";
+function setDetailW(w) {
+  w = Math.max(320, Math.min(window.innerWidth * 0.72, w));
+  document.querySelector("main").style.setProperty("--detail-w", w + "px");
+  try { localStorage.setItem(DETAIL_W_KEY, Math.round(w)); } catch {}
+}
+(() => { let w; try { w = +localStorage.getItem(DETAIL_W_KEY); } catch {} if (w) setDetailW(w); })();
+$("gutter").addEventListener("pointerdown", e => {
+  e.preventDefault();
+  $("gutter").classList.add("drag");
+  const move = ev => setDetailW(window.innerWidth - ev.clientX);   // detail is flush to the right edge
+  const up = () => {
+    $("gutter").classList.remove("drag");
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up);
+    document.removeEventListener("pointercancel", up);
+    if (EXTENT_MAP) EXTENT_MAP.map.refresh();   // width changed -> re-pick the tile zoom
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", up);
+  document.addEventListener("pointercancel", up);   // touch interruption must also unbind
+});
+
+fused.params.onChange(onParams);
+onParams();
+</script>
+</body>
+</html>
