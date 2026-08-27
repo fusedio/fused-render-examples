@@ -121,6 +121,18 @@ def _api_items(items_href, bbox, datetime, limit, resume):
     return items, matched, {"next": urljoin(url, nxt)} if nxt else None
 
 
+def _overlaps_bbox(doc, qbox):
+    """True unless doc advertises its own extent and that extent provably
+    misses qbox -- the same rule applied to every node in the tree, root
+    included, so a query outside the whole catalog stops there instead of
+    walking every child only to return nothing."""
+    if not qbox:
+        return True
+    spatial = ((doc.get("extent") or {}).get("spatial") or {}).get("bbox") or []
+    boxes = [b for b in (discover._flat_bbox(x) for x in spatial) if b]
+    return not boxes or any(discover._bbox_overlap(qbox, b) for b in boxes)
+
+
 def _static_items(self_href, qbox, qinterval, limit, deadline, resume):
     if resume:
         children, pending, seen = resume["children"], resume["items"], set(resume.get("seen", []))
@@ -130,6 +142,8 @@ def _static_items(self_href, qbox, qinterval, limit, deadline, resume):
         # should surface as a real error rather than a silent empty page.
         doc = discover._get_json(self_href, 20.0)
         seen = {self_href}
+        if not _overlaps_bbox(doc, qbox):
+            return [], None, None   # the whole catalog's own extent misses qbox
         links = doc.get("links", []) or []
         # Deeper levels (rel=child of a child) are walked below, same as any
         # other child, so catalogs nested arbitrarily deep (Umbra: Catalog >
@@ -149,9 +163,7 @@ def _static_items(self_href, qbox, qinterval, limit, deadline, resume):
             batch = [u for u in batch if u not in seen]
             seen.update(batch)
             for url, child in _fetch_all(batch, deadline):
-                spatial = ((child.get("extent") or {}).get("spatial") or {}).get("bbox") or []
-                boxes = [b for b in (discover._flat_bbox(x) for x in spatial) if b]
-                if qbox and boxes and not any(discover._bbox_overlap(qbox, b) for b in boxes):
+                if not _overlaps_bbox(child, qbox):
                     continue  # this branch never touches the query area
                 links = child.get("links", []) or []
                 pending.extend(urljoin(url, l["href"]) for l in links

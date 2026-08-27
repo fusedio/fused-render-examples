@@ -188,6 +188,21 @@ def test_static_crawl_prunes_children_by_bbox(monkeypatch):
     assert ITEM_B1 not in fetched      # ...but its items were never fetched
 
 
+def test_static_crawl_stops_at_root_when_its_own_extent_misses_bbox(monkeypatch):
+    # The root Collection carries an extent too (unlike the plain Catalog in
+    # static_docs()) -- when the query bbox misses it, the whole tree is
+    # provably empty, so no child should ever be fetched.
+    docs = static_docs()
+    docs[ROOT] = {"type": "Collection",
+                  "extent": {"spatial": {"bbox": [[0, 0, 10, 10]]}},
+                  "links": docs[ROOT]["links"]}
+    calls = install(monkeypatch, docs)
+    r = items.main(collection_json=collection("static"), bbox="100,40,110,50")
+    assert r["items"] == [] and r["cursor"] == ""
+    fetched = [u for u, _ in calls]
+    assert fetched == [ROOT]           # neither child was ever fetched
+
+
 def test_static_relative_assets_resolve_against_item_url(monkeypatch):
     install(monkeypatch, static_docs())
     r = items.main(collection_json=collection("static"))
