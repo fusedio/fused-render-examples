@@ -1,5 +1,5 @@
 """Build the local evaluation dataset: Philadelphia's official building
-footprints scored against seven Overture Maps releases.
+footprints scored against eight Overture Maps releases.
 
 runPython entrypoint:
     main(action="status")  -> progress snapshot for the UI

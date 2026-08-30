@@ -1,13 +1,13 @@
 # Overture footprint scorecard
 
 Score **Overture Maps building footprints** against a city's official building
-layer, every building, across seven Overture releases — entirely on your
+layer, every building, across eight Overture releases — entirely on your
 machine.
 
 ![Overture footprint scorecard](../../assets/overture_footprint_scorecard.png)
 
 The reference example is Philadelphia: the city's `LI_BUILDING_FOOTPRINTS`
-layer is treated as ground truth, and each of its **546,070** buildings gets an
+layer is treated as ground truth, and each of its **546,076** buildings gets an
 **IoU** score (shared area ÷ combined area) against its best-overlapping
 Overture footprint — 1.0 is an exact match, 0 means Overture has no building
 there. Comparing those scores across releases turns the map into an evaluation
@@ -27,7 +27,7 @@ Python calls per interaction.
   one per release for Overture's own geometry. `/api/fs/raw` serves HTTP ranges
   for the pmtiles JS protocol, so there is no tile server.
 - **Release switching is a pure client-side restyle** — every building carries
-  all seven scores (`i0…i6`) as tile attributes, so changing the release
+  all eight scores (`i0…i7`) as tile attributes, so changing the release
   repaints without refetching a single tile.
 - **The basemap is Overture's own published vector tiles**, read remotely over
   HTTP range requests — no raster basemap, and thematically apt.
@@ -47,8 +47,8 @@ once, downloads both datasets and runs the conflation locally:
 - scores every city building against every release in DuckDB
 - bakes the result into PMTiles
 
-Budget about **1.7 GB of disk** and **45–60 minutes**, once — most of it
-downloading ~1 GB of Overture geometry. Everything is cached under `.cache/`
+Budget about **2 GB of disk** and **50–70 minutes**, once — most of it
+downloading ~1.2 GB of Overture geometry. Everything is cached under `.cache/`
 and each stage is skipped if already present, so an interrupted build resumes.
 Delete `.cache/` to start over. After the build the app is instant and offline.
 
@@ -75,7 +75,7 @@ Around that:
 - **Draw an area** — drag a box to re-score just that area (a DuckDB aggregate,
   well under a second).
 - **Click a building** for its address, size, and a line chart of its IoU
-  across all seven releases (bottom-right).
+  across all eight releases (bottom-right).
 
 ## Files
 
@@ -88,6 +88,7 @@ Around that:
 | `stats.py` | runPython endpoints: drawn-area stats + per-building detail |
 | `common.py` | releases, city bbox, cache paths, DuckDB connections |
 | `vendor/` | maplibre-gl, pmtiles, d3 |
+| `slides/index.html` | a five-slide talk on what the scorecard found — open it on its own |
 | `.cache/` | (generated) parquet, summaries, `*.pmtiles` — gitignored |
 
 ## Adapting it to another city

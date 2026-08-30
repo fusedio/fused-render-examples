@@ -8,17 +8,19 @@ CACHE = os.path.join(HERE, ".cache")
 # Philadelphia city extent (covers every LI_BUILDING_FOOTPRINTS feature).
 PHILLY_BOUNDS = (-75.280098, 39.867004, -74.955831, 40.137992)
 
-# Overture releases scored against the city layer, oldest -> newest.
+# Overture releases scored against the city layer, oldest -> newest: roughly
+# every other monthly drop, which spans a year and a half at half the download.
 # All of these live on Fused's mirror of the Overture releases; the official
 # Overture bucket only retains the two most recent monthly drops.
 RELEASES = [
     "2024-12-18-0",
-    "2025-01-22-0",
     "2025-03-19-1",
-    "2025-04-23-0",
     "2025-05-21-0",
+    "2025-09-24-0",
+    "2025-11-19-0",
     "2026-01-21-0",
-    "2026-02-18-0",
+    "2026-03-18-0",
+    "2026-04-15-0",
 ]
 
 MIRROR = "https://data.source.coop/fused"
