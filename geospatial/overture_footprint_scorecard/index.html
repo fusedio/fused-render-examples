@@ -605,7 +605,24 @@ function wirePanelButton() {
     const open = panel.style.display !== "none";
     panel.style.display = open ? "none" : "";
     $("panelBtn").classList.toggle("on", !open);
+    layoutRight();
   };
+  window.addEventListener("resize", layoutRight);
+}
+
+/* The legend panel (top-right) and the building detail card (bottom-right)
+   share the right column. When both are open, cap the panel's height so it
+   ends above the card and scrolls internally instead of sitting under it. */
+function layoutRight() {
+  const panel = $("rightPanel");
+  const detail = $("detail");
+  if (panel.style.display !== "none" && detail.style.display === "block") {
+    const top = panel.getBoundingClientRect().top;
+    const room = detail.getBoundingClientRect().top - top - 10;
+    panel.style.maxHeight = Math.max(140, room) + "px";
+  } else {
+    panel.style.maxHeight = "";
+  }
 }
 
 /* Slide the left panel out of the way; the map fills the space. */
@@ -1050,15 +1067,17 @@ function wireHover() {
     const feature = event.features && event.features[0];
     if (feature) showDetail(+feature.properties.fid);
   });
-  $("detailClose").onclick = () => { $("detail").style.display = "none"; };
+  $("detailClose").onclick = () => { $("detail").style.display = "none"; layoutRight(); };
   $("detailExpand").onclick = () => {
     $("detail").classList.toggle("big");
     if (detailEntries) drawDetailChart(detailEntries);
+    layoutRight();
   };
 }
 
 async function showDetail(fid) {
   $("detail").style.display = "block";
+  layoutRight();
   $("detailTitle").textContent = "Building " + fid;
   $("detailMeta").textContent = "Loading…";
   d3.select("#detailChart").selectAll("*").remove();
@@ -1075,6 +1094,7 @@ async function showDetail(fid) {
   drawDetailChart(detailEntries);
   const newest = info.releases[info.releases.length - 1];
   if (newest && newest.gers_id) $("detailGers").textContent = "GERS " + newest.gers_id;
+  layoutRight();
 }
 
 function drawDetailChart(entries) {
