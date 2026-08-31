@@ -84,7 +84,8 @@ Around that:
   those buildings; the panel's header says which. It can also **change the map**:
   "show me the worst 10% of matches" runs a real quantile over the scores in
   scope and filters to it, and it can isolate quality bands, switch release or
-  clear filters. An AI-set filter shows as a chip with a way out of it. The reply
+  clear filters. Whatever is currently hiding buildings — an AI-set IoU cut, hidden
+  legend classes, or both — shows as one chip with a single **Clear** button. The reply
   is one JSON object rather than prose, which is what made the map commands
   reliable — see the note above `AI_RULES`.
 

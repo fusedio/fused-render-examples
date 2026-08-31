@@ -137,9 +137,9 @@
     color: var(--ink); background: #e8f0fb; border: 1px solid #bcd5f4;
     font-variant-numeric: tabular-nums; }
   #aiFilter span { flex: 1; }
-  #aiFilter button { font-size: 14px; line-height: 1; color: var(--sub);
-    padding: 0 3px; }
-  #aiFilter button:hover { color: var(--ink); }
+  #aiFilter button { font-size: 10.5px; font-weight: 500; color: var(--accent);
+    padding: 2px 6px; border-radius: 4px; }
+  #aiFilter button:hover { background: #d7e5f8; }
   #aiOut { margin-top: 10px; font-size: 11.5px; line-height: 1.6; color: var(--sub);
     white-space: pre-wrap; }
   #aiOut.err { color: var(--q0); }
@@ -1024,6 +1024,9 @@ function applyMapStyle() {
   const filter = filterExpr();
   map.setFilter("bld", filter);
   map.setFilter("bldline", filter);
+  // every path that hides buildings comes through here, so the chip and its
+  // Clear button stay in step with the legend as well as with the AI
+  renderAiFilter();
 }
 
 const outlinesLoaded = new Set();
@@ -1480,24 +1483,47 @@ async function applyAiCommand(cmd) {
   renderLegend();
   fillPickers();
   applyMapStyle();
-  renderAiFilter();
 }
 
-/* The active filter, with a way out of it — an AI-set filter the user cannot
-   see the origin of, and cannot clear, is a map that looks broken. */
+/* Everything currently hiding buildings, in one line with one way out. A
+   filter the user cannot see the origin of, or escape, is a map that looks
+   broken — and the AI can set both kinds, so one button clears both. */
+function activeFilters() {
+  const parts = [];
+  if (aiFilter) {
+    parts.push(aiFilter.label +
+      (aiFilter.count != null ? ` · ${aiFilter.count.toLocaleString()}` : ""));
+  }
+  if (hidden.size) {
+    const shown = classes().filter(cls => !hidden.has(cls.id));
+    parts.push(shown.length
+      ? "only " + shown.map(cls => cls.label.toLowerCase()).join(", ")
+      : "nothing shown");
+  }
+  return parts;
+}
+
 function renderAiFilter() {
   const el = $("aiFilter");
   if (!el) return;
-  el.hidden = !aiFilter;
-  if (!aiFilter) return;
-  el.innerHTML = `<span>Map: ${aiFilter.label}` +
-    (aiFilter.count != null ? ` · ${aiFilter.count.toLocaleString()}` : "") +
-    `</span><button type="button" title="Clear">&times;</button>`;
-  el.querySelector("button").onclick = () => {
-    aiFilter = null;
-    renderAiFilter();
-    applyMapStyle();
-  };
+  const parts = activeFilters();
+  el.hidden = !parts.length;
+  if (!parts.length) return;
+  el.textContent = "";
+  const label = document.createElement("span");
+  label.textContent = parts.join(" · ");
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.textContent = "Clear";
+  clear.onclick = clearFilters;
+  el.append(label, clear);
+}
+
+function clearFilters() {
+  aiFilter = null;
+  hidden = new Set();
+  renderLegend();
+  applyMapStyle();
 }
 
 /* Says which buildings the next answer covers, and keeps the two scope buttons
