@@ -81,8 +81,12 @@ Around that:
   summary rows the panel is already showing — never the 546k buildings behind
   them — so a question costs about 1.1k tokens. It **follows the area scope**:
   draw a box (from the panel or the Area section) and the next answer covers only
-  those buildings; the panel's header says which. Answers stream in, and one
-  about a previous area is cleared rather than left to look current.
+  those buildings; the panel's header says which. It can also **change the map**:
+  "show me the worst 10% of matches" runs a real quantile over the scores in
+  scope and filters to it, and it can isolate quality bands, switch release or
+  clear filters. An AI-set filter shows as a chip with a way out of it. The reply
+  is one JSON object rather than prose, which is what made the map commands
+  reliable — see the note above `AI_RULES`.
 
 ## Files
 
@@ -92,7 +96,7 @@ Around that:
 | `prepare.py` | build orchestrator + detached worker; `main(action="status"/"start")` |
 | `tiler.py` | DuckDB `ST_AsMVT` → PMTiles archives |
 | `pmtiles_writer.py` | minimal clustered PMTiles v3 writer |
-| `stats.py` | runPython endpoints: drawn-area stats + per-building detail |
+| `stats.py` | runPython endpoints: drawn-area stats, per-building detail, the Ask AI method notes, and IoU quantile thresholds |
 | `common.py` | releases, city bbox, cache paths, DuckDB connections |
 | `vendor/` | maplibre-gl, pmtiles, d3 |
 | `slides/index.html` | a five-slide talk on what the scorecard found — open it on its own |

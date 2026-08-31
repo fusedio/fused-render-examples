@@ -17,7 +17,8 @@ from common import (
 )
 
 
-def main(action: str = "area", bbox=None, fid: int = 0, a: int = 0, b: int = 0):
+def main(action: str = "area", bbox=None, fid: int = 0, a: int = 0, b: int = 0,
+         percent: float = 10.0, top: bool = True):
     if action == "area":
         return area_stats([float(v) for v in bbox])
     if action == "detail":
@@ -27,7 +28,38 @@ def main(action: str = "area", bbox=None, fid: int = 0, a: int = 0, b: int = 0):
         return compare(int(a), int(b), box)
     if action == "method":
         return method()
+    if action == "threshold":
+        return threshold(int(a), percent, top, bbox)
     raise ValueError(f"unknown action {action!r}")
+
+
+def threshold(index, percent, top=True, bbox=None):
+    """The IoU cut that isolates the best (or worst) `percent` of buildings for
+    one release, plus how many actually fall inside it. Asked for by the Ask AI
+    panel so "show me the worst 10%" becomes a real quantile over the data in
+    scope rather than a guessed number."""
+    percent = min(99.0, max(0.1, float(percent)))
+    top = bool(top)
+    column = f"i{int(index)}"
+    where = ""
+    if bbox:
+        west, south, east, north = (float(v) for v in bbox)
+        where = (f"WHERE maxx >= {west} AND minx <= {east} "
+                 f"AND maxy >= {south} AND miny <= {north}")
+    con = connect_plain()
+    path = cache_path("stats.parquet").replace("\\", "/")
+    q = (100.0 - percent) / 100.0 if top else percent / 100.0
+    cut = con.execute(
+        f"SELECT quantile_cont({column}, {q}) FROM read_parquet('{path}') {where}"
+    ).fetchone()[0]
+    op = ">=" if top else "<="
+    total, kept = con.execute(f"""
+        SELECT count(*), count(*) FILTER ({column} {op} {cut})
+        FROM read_parquet('{path}') {where}
+    """).fetchone()
+    con.close()
+    return {"op": op, "value": float(cut), "count": int(kept), "total": int(total),
+            "percent": percent, "top": top, "release_index": int(index)}
 
 
 def method():
