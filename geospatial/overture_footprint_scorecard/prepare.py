@@ -1,5 +1,5 @@
 """Build the local evaluation dataset: Philadelphia's official building
-footprints scored against seven Overture Maps releases.
+footprints scored against eight Overture Maps releases.
 
 runPython entrypoint:
     main(action="status")  -> progress snapshot for the UI
@@ -356,6 +356,18 @@ def _list_release_files(release):
     return urls
 
 
+# Releases fetched at once. Each one spends most of its time waiting on the
+# mirror rather than on this machine: DuckDB opens the footer of every one of
+# the ~440 parquet files in a release to find the handful that overlap the
+# city, and each of those round trips costs 0.4-1.2 s no matter how many
+# threads are pointed at it. Overlapping whole releases is what actually
+# hides that latency.
+FETCH_WORKERS = 4
+
+# Goes per release before the build gives up on it.
+FETCH_ATTEMPTS = 3
+
+
 def _fetch_release(release):
     out = cache_path(f"overture_{release_key(release)}.parquet")
     step = f"fetch:{release}"
@@ -365,9 +377,8 @@ def _fetch_release(release):
     urls = _list_release_files(release)
     _step(step, 5, f"{len(urls)} files")
     minx, miny, maxx, maxy = PHILLY_BOUNDS
-    con = connect_duckdb_remote()
     tmp = out + ".tmp"
-    con.execute(f"""
+    query = f"""
         COPY (
             SELECT
                 id AS gers_id,
@@ -384,8 +395,27 @@ def _fetch_release(release):
             )
             WHERE geom_valid IS NOT NULL AND NOT ST_IsEmpty(geom_valid)
         ) TO '{_sql_path(tmp)}' (FORMAT PARQUET, COMPRESSION ZSTD)
-    """, {"urls": urls})
-    con.close()
+    """
+    # One release reads a few hundred remote files over several minutes, and the
+    # whole build spends the best part of an hour doing it. A single dropped
+    # name lookup or TLS handshake anywhere in there used to abort everything,
+    # so give each release a couple of extra goes before giving up.
+    for attempt in range(FETCH_ATTEMPTS):
+        con = connect_duckdb_remote()
+        try:
+            con.execute(query, {"urls": urls})
+            break
+        except Exception as error:
+            if os.path.exists(tmp):
+                os.remove(tmp)          # a half-written COPY target
+            if attempt == FETCH_ATTEMPTS - 1:
+                raise
+            print(f"{release}: attempt {attempt + 1} failed ({error}); retrying",
+                  flush=True)
+            _step(step, 5, f"retrying ({attempt + 2}/{FETCH_ATTEMPTS})")
+            time.sleep(5 * (attempt + 1))
+        finally:
+            con.close()
     os.replace(tmp, out)
     _step(step, 100)
 
@@ -434,7 +464,8 @@ def _fetch_releases():
                 errors.append((release, error))
                 return
 
-    threads = [threading.Thread(target=run, daemon=True) for _ in range(2)]
+    threads = [threading.Thread(target=run, daemon=True)
+               for _ in range(min(FETCH_WORKERS, len(pending)))]
     for thread in threads:
         thread.start()
     ticker = 0

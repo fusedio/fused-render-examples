@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Overture footprint scorecard — lightning talk</title>
+<style>
+  :root {
+    --page: #f9f9f7; --ink: #0b0b0b; --sub: #52514e; --muted: #898781;
+    --hair: #e1e0d9; --accent: #2a78d6; --overture: #b5179e;
+    --good: #256abf; --bad: #d03b3b;
+  }
+  * { margin: 0; box-sizing: border-box;
+      font-family: Inter, 'Segoe UI', ui-sans-serif, system-ui, sans-serif; }
+  html, body { height: 100%; overflow: hidden; background: #131313; color: var(--ink); }
+  b { font-weight: 600; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* A fixed 1280x720 stage scaled to the window, so type sizes are exact and
+     nothing reflows between a laptop and a projector. */
+  #fit { position: absolute; inset: 0; display: grid; place-items: center; }
+  #stage { width: 1280px; height: 720px; position: relative; background: var(--page);
+    transform-origin: center; overflow: hidden; }
+
+  .slide { position: absolute; inset: 0; padding: 84px 96px 96px;
+    display: none; flex-direction: column; }
+  .slide.on { display: flex; animation: in .22s ease both; }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } }
+
+  .eyebrow { font-size: 19px; font-weight: 600; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 26px; }
+  h1 { font-size: 82px; font-weight: 600; letter-spacing: -.03em; line-height: 1.03; }
+  h2 { font-size: 62px; font-weight: 600; letter-spacing: -.025em; line-height: 1.08; }
+  .lead { margin-top: 26px; font-size: 34px; line-height: 1.42; color: var(--sub);
+    max-width: 34ch; }
+
+  /* bullets sit at Google-Slides "heading 2" scale (~24pt on a 720pt deck) */
+  ul { list-style: none; margin-top: 38px; display: grid; gap: 22px; }
+  li { font-size: 36px; line-height: 1.28; letter-spacing: -.015em;
+    display: grid; grid-template-columns: 40px 1fr; align-items: baseline; }
+  li .n { font-size: 22px; font-weight: 600; color: var(--accent);
+    font-variant-numeric: tabular-nums; }
+  li .d { width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+    transform: translateY(-7px); }
+  li small { display: block; font-size: 24px; color: var(--muted);
+    margin-top: 7px; letter-spacing: 0; }
+
+  /* title slide */
+  #s1 { justify-content: center; }
+  #s1 .rule { width: 108px; height: 5px; background: var(--ink); margin-bottom: 40px; }
+  #s1 .who { margin-top: auto; font-size: 25px; color: var(--muted); }
+  #s1 .who b { color: var(--sub); }
+  .hl { color: var(--overture); }
+
+  /* findings slide */
+  .figs { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 40px; border-top: 1px solid var(--hair); padding-top: 32px; }
+  .fig .v { font-size: 66px; font-weight: 600; letter-spacing: -.03em; line-height: 1;
+    font-variant-numeric: tabular-nums; }
+  .fig .v .to { color: var(--muted); font-size: 40px; font-weight: 400; }
+  .fig .l { margin-top: 12px; font-size: 23px; color: var(--sub); line-height: 1.35; }
+  .up { color: var(--good); } .dn { color: var(--bad); }
+
+  #chart { margin-top: 34px; }
+  #chart text { font-size: 19px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* chrome */
+  #dots { position: absolute; left: 96px; bottom: 44px; display: flex; gap: 9px; }
+  #dots i { width: 30px; height: 4px; border-radius: 2px; background: var(--hair); }
+  #dots i.on { background: var(--ink); }
+  #pg { position: absolute; right: 96px; bottom: 40px; font-size: 21px;
+    color: var(--muted); font-variant-numeric: tabular-nums; }
+  #hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    font-size: 13px; color: #6b6b6b; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+
+<div id="fit"><div id="stage">
+
+  <section class="slide on" id="s1">
+    <div class="rule"></div>
+    <h1>Is Overture right<br>where you live?</h1>
+    <div class="lead">Scoring every one of Philadelphia's
+      <b>546,076</b> buildings against <b>8 Overture releases</b> — on one laptop.</div>
+    <div class="who">Overture Maps meetup · lightning talk · built with
+      <b>Fused Render</b> + DuckDB</div>
+  </section>
+
+  <section class="slide" id="s2">
+    <div class="eyebrow">What this does</div>
+    <h2>Ground truth, per building.</h2>
+    <ul>
+      <li><span class="d"></span><span>The city's own footprint layer is the reference</span></li>
+      <li><span class="d"></span><span>Every building gets an <b>IoU</b> vs. its best-matching Overture footprint
+        <small>shared area ÷ combined area — 1.0 is exact, 0 means Overture has nothing there</small></span></li>
+      <li><span class="d"></span><span>Repeated across <b>17 months</b> of releases</span></li>
+    </ul>
+  </section>
+
+  <section class="slide" id="s3">
+    <div class="eyebrow">What it found</div>
+    <h2>Overture's big leap was<br>early 2025 — then it held.</h2>
+    <div id="chart"></div>
+    <div class="figs">
+      <div class="fig">
+        <div class="v"><span class="num">0.90</span> <span class="to">→</span>
+          <span class="num up">0.96</span></div>
+        <div class="l">mean IoU, Dec 2024 → Mar 2025</div>
+      </div>
+      <div class="fig">
+        <div class="v"><span class="num">34k</span> <span class="to">→</span>
+          <span class="num up">5.7k</span></div>
+        <div class="l">poor matches, a 6× drop</div>
+      </div>
+      <div class="fig">
+        <div class="v"><span class="num">+47,015</span></div>
+        <div class="l">buildings became near-exact</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="s4">
+    <div class="eyebrow">Why it matters</div>
+    <h2>An answer you can check.</h2>
+    <ul>
+      <li><span class="d"></span><span>Per building — not one national accuracy number</span></li>
+      <li><span class="d"></span><span>Runs on a laptop: no cloud bill, no tile server</span></li>
+      <li><span class="d"></span><span><b class="hl">Every one of these releases is gone from the official bucket</b>
+        <small>it keeps only the two most recent — the history lives on Fused's mirror</small></span></li>
+      <li><span class="d"></span><span>Point it at any city: one bbox, one URL</span></li>
+    </ul>
+  </section>
+
+  <section class="slide" id="s5">
+    <div class="eyebrow">How it's built</div>
+    <h2>Build once, explore instantly.</h2>
+    <ul>
+      <li><span class="n">01</span><span>Pull all 8 releases for the city bbox</span></li>
+      <li><span class="n">02</span><span>DuckDB <b>SPATIAL_JOIN</b> — areas in <b>EPSG:2272</b>, not degrees</span></li>
+      <li><span class="n">03</span><span>Best-overlapping match per building → one IoU</span></li>
+      <li><span class="n">04</span><span>Bake all 8 scores into <b>PMTiles</b> as attributes</span></li>
+      <li><span class="n">05</span><span>Switching release is a <b>repaint</b> — no refetch</span></li>
+    </ul>
+  </section>
+
+  <div id="dots"></div>
+  <div id="pg"></div>
+</div></div>
+<div id="hint">← → or space to advance · F for fullscreen</div>
+
+<script>
+/* mean IoU of matched buildings, per release (from .cache/summary_*.json) */
+const TREND = [
+  ["24-12", 0.8972], ["25-03", 0.9617], ["25-05", 0.9632], ["25-09", 0.9632],
+  ["25-11", 0.9631], ["26-01", 0.9631], ["26-03", 0.9631], ["26-04", 0.9631],
+];
+
+/* Scale the fixed stage to whatever window it is shown in. */
+const stage = document.getElementById("stage");
+function fit() {
+  const k = Math.min(innerWidth / 1280, innerHeight / 720);
+  stage.style.transform = `scale(${k})`;
+}
+addEventListener("resize", fit);
+fit();
+
+/* A plain line chart — no chart library, it is four points. */
+function drawTrend() {
+  const pts = TREND.filter(d => d[1] !== null);
+  const W = 1088, H = 150, L = 8, R = 8, T = 16, B = 34;
+  const lo = 0.88, hi = 0.98;
+  const x = i => L + (W - L - R) * (i / (TREND.length - 1));
+  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  const idx = d => TREND.findIndex(t => t[0] === d[0]);
+
+  const line = pts.map((d, k) => `${k ? "L" : "M"}${x(idx(d))},${y(d[1])}`).join("");
+  const dots = pts.map(d =>
+    `<circle cx="${x(idx(d))}" cy="${y(d[1])}" r="7" fill="var(--good)"/>`).join("");
+  // anchor the end labels inward so they do not run off the stage
+  const labels = TREND.map((d, i) => {
+    const anchor = i === 0 ? "start" : i === TREND.length - 1 ? "end" : "middle";
+    return `<text x="${x(i)}" y="${H - 8}" text-anchor="${anchor}">${d[0]}</text>`;
+  }).join("");
+  const guides = [0.90, 0.96].map(v =>
+    `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"
+           stroke="var(--hair)" stroke-dasharray="3 5"/>
+     <text x="${W - R}" y="${y(v) - 9}" text-anchor="end">${v.toFixed(2)}</text>`).join("");
+
+  document.getElementById("chart").innerHTML =
+    `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${guides}
+       <path d="${line}" fill="none" stroke="var(--good)" stroke-width="4"
+             stroke-linejoin="round" stroke-linecap="round"/>
+       ${dots}${labels}
+     </svg>`;
+}
+drawTrend();
+
+/* ------------------------------- navigation ------------------------------- */
+const slides = [...document.querySelectorAll(".slide")];
+const dots = document.getElementById("dots");
+dots.innerHTML = slides.map(() => "<i></i>").join("");
+let at = 0;
+
+function show(next) {
+  at = Math.max(0, Math.min(slides.length - 1, next));
+  slides.forEach((s, i) => s.classList.toggle("on", i === at));
+  [...dots.children].forEach((d, i) => d.classList.toggle("on", i === at));
+  document.getElementById("pg").textContent = `${at + 1} / ${slides.length}`;
+  location.hash = at + 1;
+}
+
+addEventListener("keydown", event => {
+  const k = event.key;
+  if (k === "ArrowRight" || k === " " || k === "PageDown") { show(at + 1); event.preventDefault(); }
+  else if (k === "ArrowLeft" || k === "PageUp") show(at - 1);
+  else if (k === "Home") show(0);
+  else if (k === "End") show(slides.length - 1);
+  else if (k === "f" || k === "F") {
+    document.fullscreenElement ? document.exitFullscreen()
+                               : document.documentElement.requestFullscreen();
+  }
+});
+addEventListener("click", event => show(at + (event.clientX < innerWidth * .25 ? -1 : 1)));
+
+show((+location.hash.slice(1) || 1) - 1);
+</script>
+</body>
+</html>

@@ -111,12 +111,16 @@ def projects(names):
 
 def git_tracked(path):
     """Files git actually tracks under `path` (what a user downloads), relative
-    to `path`. Local-only gitignored files (.env, .cache) are excluded."""
+    to `path`, always '/'-separated. Local-only gitignored files (.env, .cache)
+    are excluded. The separator matters: callers below test for a top-level file
+    with `"/" not in rel` and split path SEGMENTS on "/", both of which quietly
+    do the wrong thing with the backslashes relpath hands back on Windows."""
     out = subprocess.check_output(["git", "-C", REPO, "ls-files", path], text=True)
     rels = []
     for line in out.splitlines():
         if line:
-            rels.append(os.path.relpath(os.path.join(REPO, line), path))
+            rel = os.path.relpath(os.path.join(REPO, line), path)
+            rels.append(rel.replace(os.sep, "/"))
     return rels
 
 

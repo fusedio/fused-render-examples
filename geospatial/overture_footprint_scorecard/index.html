@@ -104,6 +104,46 @@
     box-shadow: inset 0 0 0 1px var(--accent); font-weight: 500; }
   #scopeNote { margin-top: 7px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
 
+  /* ask AI — bottom-left of the map, tracking the sidebar the way #map does */
+  #aiWrap { position: absolute; left: 334px; bottom: 14px; z-index: 18;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 7px;
+    transition: left .28s ease; }
+  body.side-collapsed #aiWrap { left: 14px; }
+  #aiPanel { width: 330px; background: var(--panel); border: 1px solid var(--hair);
+    border-radius: 8px; box-shadow: 0 6px 20px rgba(11,11,11,.13); padding: 13px 14px;
+    max-height: calc(100vh - 130px); overflow-y: auto; animation: panelIn .16s ease; }
+  #aiPanel h3 { font-size: 9.5px; font-weight: 600; letter-spacing: .1em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 9px; }
+  #aiScope { float: right; letter-spacing: 0; text-transform: none; font-weight: 400;
+    font-size: 10px; }
+  #aiScope.box { color: var(--accent); }
+  #aiChips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
+  #aiChips button { font-size: 10.5px; color: var(--sub); background: var(--sunk);
+    border: 1px solid var(--hair); border-radius: 999px; padding: 3px 9px;
+    text-align: left; }
+  #aiChips button:hover { color: var(--ink); border-color: var(--rule); }
+  #aiQ { width: 100%; resize: vertical; font: inherit; font-size: 11.5px;
+    color: var(--ink); background: var(--panel); border: 1px solid var(--hair);
+    border-radius: 5px; padding: 6px 7px; line-height: 1.45; }
+  #aiQ:focus { outline: none; border-color: var(--accent); }
+  #aiQ::placeholder { color: var(--muted); }
+  #aiRow { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+  #aiAsk { padding: 6px 14px; border-radius: 5px; background: var(--accent);
+    color: #fff; font-size: 11.5px; font-weight: 500; }
+  #aiAsk:disabled { background: var(--rule); cursor: default; }
+  #aiRow .sbtn { padding: 6px 10px; }
+  #aiFilter { display: flex; align-items: center; gap: 7px; margin-top: 9px;
+    padding: 5px 6px 5px 9px; border-radius: 5px; font-size: 11px;
+    color: var(--ink); background: #e8f0fb; border: 1px solid #bcd5f4;
+    font-variant-numeric: tabular-nums; }
+  #aiFilter span { flex: 1; }
+  #aiFilter button { font-size: 10.5px; font-weight: 500; color: var(--accent);
+    padding: 2px 6px; border-radius: 4px; }
+  #aiFilter button:hover { background: #d7e5f8; }
+  #aiOut { margin-top: 10px; font-size: 11.5px; line-height: 1.6; color: var(--sub);
+    white-space: pre-wrap; }
+  #aiOut.err { color: var(--q0); }
+
   /* trend */
   #trend svg { display: block; overflow: visible; }
   #trendKey { display: flex; gap: 13px; margin-top: 5px; font-size: 10px; color: var(--sub); }
@@ -270,6 +310,24 @@
   </div>
 </aside>
 
+<!-- Ask AI rides the bottom-left of the map, clear of the legend and the
+     detail card that already share the right column. -->
+<div id="aiWrap">
+  <div id="aiPanel" hidden>
+    <h3>Ask AI <span id="aiScope"></span></h3>
+    <div id="aiChips"></div>
+    <textarea id="aiQ" rows="2" placeholder="Ask about these releases…"></textarea>
+    <div id="aiRow">
+      <button id="aiAsk">Ask</button>
+      <button class="sbtn" id="aiDraw">Draw an area</button>
+      <button class="sbtn" id="aiCity">Whole city</button>
+    </div>
+    <div id="aiFilter" hidden></div>
+    <div id="aiOut"></div>
+  </div>
+  <button class="mbtn" id="aiBtn">Ask AI</button>
+</div>
+
 <button id="sideOpen" title="Show controls" aria-label="Show controls">
   <span class="bars">&#9776;</span>Controls</button>
 
@@ -310,10 +368,10 @@
   <div id="prepCard">
     <h2>Overture vs Philadelphia</h2>
     <div class="lead">
-      Scores <b>seven Overture Maps releases</b> against all <b>546,070</b> of
+      Scores <b>eight Overture Maps releases</b> against all <b>546,076</b> of
       Philadelphia's official building footprints. The first run downloads both
-      datasets and runs the conflation locally in DuckDB — about <b>1.7 GB of disk</b>
-      and <b>45–60 minutes</b>, once. After that the app is instant and offline.
+      datasets and runs the conflation locally in DuckDB — about <b>2 GB of disk</b>
+      and <b>50–70 minutes</b>, once. After that the app is instant and offline.
     </div>
     <div id="prepSteps"></div>
     <div id="prepAction">
@@ -464,6 +522,8 @@ async function start() {
   wireOnlyBad();
   wirePanelButton();
   wireSideToggle();
+  wireAI();
+  loadAiMethod();                       // not awaited; only the AI panel needs it
   initMap();
   await refresh();
 }
@@ -592,6 +652,7 @@ function updateScopeNote() {
   $("scopeNote").innerHTML = boxBounds
     ? `<b>${total().toLocaleString()}</b> buildings inside the box.`
     : `All <b>${total().toLocaleString()}</b> buildings in Philadelphia.`;
+  updateAiScope();
 }
 
 /* -------------------------------- right -------------------------------- */
@@ -605,7 +666,24 @@ function wirePanelButton() {
     const open = panel.style.display !== "none";
     panel.style.display = open ? "none" : "";
     $("panelBtn").classList.toggle("on", !open);
+    layoutRight();
   };
+  window.addEventListener("resize", layoutRight);
+}
+
+/* The legend panel (top-right) and the building detail card (bottom-right)
+   share the right column. When both are open, cap the panel's height so it
+   ends above the card and scrolls internally instead of sitting under it. */
+function layoutRight() {
+  const panel = $("rightPanel");
+  const detail = $("detail");
+  if (panel.style.display !== "none" && detail.style.display === "block") {
+    const top = panel.getBoundingClientRect().top;
+    const room = detail.getBoundingClientRect().top - top - 10;
+    panel.style.maxHeight = Math.max(140, room) + "px";
+  } else {
+    panel.style.maxHeight = "";
+  }
 }
 
 /* Slide the left panel out of the way; the map fills the space. */
@@ -900,7 +978,19 @@ function colourExpr() {
     CHANGE[2].color];
 }
 
+/* Band filter (the legend's own class toggles) AND, when the AI has set one,
+   an IoU cut. The cut is only meaningful against a single release's score, so
+   it is ignored in compare mode. */
 function filterExpr() {
+  const band = bandFilter();
+  const cut = (aiFilter && mode === "score")
+    ? [aiFilter.op, iouExpr(selected), aiFilter.value]
+    : null;
+  if (band && cut) return ["all", band, cut];
+  return band || cut;
+}
+
+function bandFilter() {
   const list = classes();
   if (hidden.size === 0) return null;
   if (hidden.size === list.length) return ["==", ["get", "fid"], -1];
@@ -934,6 +1024,9 @@ function applyMapStyle() {
   const filter = filterExpr();
   map.setFilter("bld", filter);
   map.setFilter("bldline", filter);
+  // every path that hides buildings comes through here, so the chip and its
+  // Clear button stay in step with the legend as well as with the AI
+  renderAiFilter();
 }
 
 const outlinesLoaded = new Set();
@@ -1050,15 +1143,17 @@ function wireHover() {
     const feature = event.features && event.features[0];
     if (feature) showDetail(+feature.properties.fid);
   });
-  $("detailClose").onclick = () => { $("detail").style.display = "none"; };
+  $("detailClose").onclick = () => { $("detail").style.display = "none"; layoutRight(); };
   $("detailExpand").onclick = () => {
     $("detail").classList.toggle("big");
     if (detailEntries) drawDetailChart(detailEntries);
+    layoutRight();
   };
 }
 
 async function showDetail(fid) {
   $("detail").style.display = "block";
+  layoutRight();
   $("detailTitle").textContent = "Building " + fid;
   $("detailMeta").textContent = "Loading…";
   d3.select("#detailChart").selectAll("*").remove();
@@ -1075,6 +1170,7 @@ async function showDetail(fid) {
   drawDetailChart(detailEntries);
   const newest = info.releases[info.releases.length - 1];
   if (newest && newest.gers_id) $("detailGers").textContent = "GERS " + newest.gers_id;
+  layoutRight();
 }
 
 function drawDetailChart(entries) {
@@ -1121,25 +1217,31 @@ function drawDetailChart(entries) {
 
 /* ------------------------------ area scope ------------------------------ */
 
+/* Arming lives out here because two places start a draw: the Area section and
+   the Ask AI panel's own button. */
+let boxArmed = false;
+
+function armBox() {
+  boxArmed = true;
+  $("scopeBox").classList.add("on");
+  $("scopeCity").classList.remove("on");
+  showHint("Drag a box on the map · Esc to cancel");
+  map.getCanvas().style.cursor = "crosshair";
+  map.dragPan.disable();
+}
+
 function wireBox() {
   const marquee = $("marquee");
-  let armed = false, drawing = false, sx = 0, sy = 0;
+  let drawing = false, sx = 0, sy = 0;
 
   $("scopeCity").onclick = () => setCityScope();
-  $("scopeBox").onclick = () => {
-    armed = true;
-    $("scopeBox").classList.add("on");
-    $("scopeCity").classList.remove("on");
-    showHint("Drag a box on the map · Esc to cancel");
-    map.getCanvas().style.cursor = "crosshair";
-    map.dragPan.disable();
-  };
+  $("scopeBox").onclick = armBox;
   window.addEventListener("keydown", e => {
-    if (e.key === "Escape" && (armed || boxBounds)) { armed = false; setCityScope(); }
+    if (e.key === "Escape" && (boxArmed || boxBounds)) { boxArmed = false; setCityScope(); }
   });
 
   map.getContainer().addEventListener("pointerdown", event => {
-    if (!armed) return;
+    if (!boxArmed) return;
     drawing = true; sx = event.clientX; sy = event.clientY;
     marquee.style.display = "block";
     place(event);
@@ -1148,7 +1250,7 @@ function wireBox() {
   window.addEventListener("pointermove", event => { if (drawing) place(event); });
   window.addEventListener("pointerup", async event => {
     if (!drawing) return;
-    drawing = false; armed = false;
+    drawing = false; boxArmed = false;
     marquee.style.display = "none";
     map.getCanvas().style.cursor = "";
     map.dragPan.enable();
@@ -1168,6 +1270,303 @@ function wireBox() {
     marquee.style.width = Math.abs(event.clientX - sx) + "px";
     marquee.style.height = Math.abs(event.clientY - sy) + "px";
   }
+}
+
+/* -------------------------------- ask AI -------------------------------- */
+
+/* The model is handed the same per-release rows the panel is showing — eight
+   summaries, never the 546k buildings behind them — so it stays well inside a
+   prompt and follows the drawn area for free. */
+/* Where the data came from and how it was scored — fetched once, from the same
+   constants the pipeline runs on. Without it the model can only talk about the
+   numbers, and questions like "how are buildings matched?" or "where do the
+   city footprints come from?" get refused rather than answered. */
+let aiMethod = null;
+
+async function loadAiMethod() {
+  try {
+    aiMethod = await runPy("./stats.py", { action: "method" });
+  } catch (error) {
+    aiMethod = null;                    // numbers still answer; method questions won't
+  }
+}
+
+function aiContext() {
+  const releases = RELEASES.map((release, index) => {
+    const s = statsFor(index);
+    const b = s.bands;
+    const row = {
+      release,
+      matched_pct: +(s.match_rate * 100).toFixed(2),
+      mean_iou: +s.mean_iou.toFixed(4),
+      median_iou: +s.median_iou.toFixed(4),
+      close: b.excellent, partial: b.good, poor: b.fair + b.weak, absent: b.missing,
+    };
+    // only the whole-city summaries carry Overture's own count
+    if (s.overture_buildings) row.overture_footprints = s.overture_buildings;
+    return row;
+  });
+  return {
+    city: "Philadelphia",
+    scope: boxBounds ? "the drawn area only" : "the whole city",
+    reference_buildings: total(),
+    // without this the model asks which release to act on instead of acting
+    release_on_screen: RELEASES[selected],
+    method: aiMethod,
+    releases,
+  };
+}
+
+const AI_SYSTEM =
+  "You are the control surface of a building-footprint map, not only a " +
+  "commentator on it: you answer questions about the scorecard and you change " +
+  "what the map draws. The JSON has two halves — `releases`, one row of scores " +
+  "per Overture Maps release, and `method`, where the data came from and how it " +
+  "was scored. Answer about either, using only what the JSON contains.";
+
+/* These ride the USER turn, not the system prompt. On the Claude path a system
+   prompt does not govern formatting — asking there for plain prose still came
+   back as markdown tables and headings, which the panel renders as literal
+   asterisks because the answer is written with textContent. Asked after the
+   question, they hold. */
+/* One JSON object, rather than prose with a command appended to it. Asking for
+   a trailing command line was measurably worse over the same eight questions:
+   it missed commands entirely until the rules were rewritten around it, then
+   still fired a release switch at a question that only asked which release
+   improved, and leaked markdown into the prose. Replying as one object scored
+   every question, so the reply is parsed rather than streamed. */
+const AI_RULES =
+  "Reply with ONLY one JSON object, no code fence and no other text: " +
+  "{\"say\": \"<at most three sentences of plain prose, no markdown, no " +
+  "asterisks>\", \"map\": <object or null>}. Identify a release by the exact id " +
+  "in the data, and never convert one to a calendar date or state when it was " +
+  "published. If the data cannot answer, say only that. Set \"map\" to null " +
+  "unless the question asks to show, filter, highlight, switch or clear " +
+  "something on the map; a question that only asks what the numbers say leaves " +
+  "it null. Keys for \"map\": \"topPercent\": N for the best N% by IoU; " +
+  "\"bottomPercent\": N for the worst N%; \"minIou\" / \"maxIou\": an absolute " +
+  "cut; \"bands\": a list from close, partial, poor, absent; \"release\": one of " +
+  "the release ids; \"reset\": true to clear filters. You have no other way to " +
+  "affect the map, so never claim to have shown or cleared something with " +
+  "\"map\" null. Never ask the user which release to use: a request that does " +
+  "not name one applies to release_on_screen. Act on the request rather than " +
+  "asking a question back. The JSON only summarises the data, but the map " +
+  "itself draws every individual building and the app applies these keys to " +
+  "that full per-building data — a percentile is worked out over the real " +
+  "scores. So never refuse a filter on the grounds that individual buildings " +
+  "are not listed here.";
+
+const AI_SUGGESTIONS = [
+  "Show me the worst 10% of matches",
+  "Show only the buildings Overture is missing",
+  "How are buildings matched?",
+  "Which release improved the most?",
+];
+
+let aiBusy = false;
+let aiStamp = 0;                        // the scope the shown answer was about
+let aiFilter = null;                    // {op, value, label} — an IoU cut the AI set
+
+
+async function askAI(question) {
+  question = (question || "").trim();
+  if (!question || aiBusy) return;
+  aiBusy = true;                        // AI calls have no stale-cancel of their own
+  aiStamp = scopeStamp;
+  $("aiAsk").disabled = true;
+  const out = $("aiOut");
+  out.className = "";
+  out.textContent = "Thinking…";
+  let streamed = false;
+  try {
+    let buffer = "";
+    const reply = await fused.ai(
+      `Data (JSON):\n${JSON.stringify(aiContext())}\n\n` +
+      `Question: ${question}\n\n${AI_RULES}`, {
+        systemPrompt: AI_SYSTEM,
+        effort: "low",
+        onChunk: (text) => {
+          streamed = true;
+          buffer += text;
+          // the reply is one JSON object, so show `say` as it is written
+          const partial = partialSay(buffer);
+          if (partial) out.textContent = partial;
+        },
+      });
+    if (!streamed) buffer = reply.text;
+    const parsed = parseReply(buffer);
+    out.textContent = parsed.say;
+    await applyAiCommand(parsed.map);
+  } catch (error) {
+    out.className = "err";
+    out.textContent = error.type === "ai_unavailable"
+      ? "Ask AI needs the Claude Code CLI on this machine."
+      : `${error.type || "error"}: ${error.message}`;
+  } finally {
+    aiBusy = false;
+    $("aiAsk").disabled = false;
+  }
+}
+
+/* The reply is one JSON object. A model that ignores that and answers in prose
+   anyway should still be readable, so fall back to the raw text rather than
+   showing the user a parse error. */
+function parseReply(text) {
+  let body = text.trim();
+  if (body.startsWith("```")) {               // asked for no fence, sometimes fenced
+    body = body.replace(/^```[a-z]*\s*/i, "").replace(/```\s*$/, "").trim();
+  }
+  try {
+    const obj = JSON.parse(body);
+    if (obj && typeof obj.say === "string") {
+      return { say: obj.say.trim(), map: obj.map || null };
+    }
+  } catch { /* not JSON — fall through */ }
+  return { say: body, map: null };
+}
+
+/* `say` out of a half-written object, for the streaming view only. Undoes the
+   JSON string escapes that matter in prose; anything it cannot make sense of
+   yet just leaves the previous frame on screen. */
+function partialSay(text) {
+  const at = text.indexOf('"say"');
+  if (at < 0) return null;
+  const open = text.indexOf('"', text.indexOf(":", at) + 1);
+  if (open < 0) return null;
+  let outText = "";
+  for (let i = open + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\\") {
+      const next = text[++i];
+      outText += next === "n" ? "\n" : next === "t" ? " " : next || "";
+    } else if (ch === '"') {
+      break;
+    } else {
+      outText += ch;
+    }
+  }
+  return outText;
+}
+
+/* Apply the map half of a reply. Unknown or missing keys are simply ignored —
+   the sentences are still a good answer, and an exception here would replace
+   them with a stack trace. */
+async function applyAiCommand(cmd) {
+  if (!cmd || typeof cmd !== "object") return;
+
+  if (cmd.reset) { aiFilter = null; hidden = new Set(); }
+
+  const index = RELEASES.indexOf(cmd.release);
+  if (index >= 0) selected = index;
+
+  if (Array.isArray(cmd.bands) && cmd.bands.length) {
+    const want = new Set(cmd.bands);
+    hidden = new Set(QUALITY.map(c => c.id).filter(id => !want.has(id)));
+  }
+
+  const percent = cmd.topPercent != null ? cmd.topPercent : cmd.bottomPercent;
+  if (percent != null && isFinite(percent)) {
+    const top = cmd.topPercent != null;
+    const cut = await runPy("./stats.py", {
+      action: "threshold", a: selected, percent, top, bbox: boxBounds || null,
+    });
+    aiFilter = { op: cut.op, value: cut.value, count: cut.count,
+                 label: `${top ? "top" : "worst"} ${cut.percent}% by IoU` };
+  } else if (isFinite(cmd.minIou)) {
+    aiFilter = { op: ">=", value: cmd.minIou, label: `IoU at or above ${cmd.minIou}` };
+  } else if (isFinite(cmd.maxIou)) {
+    aiFilter = { op: "<=", value: cmd.maxIou, label: `IoU at or below ${cmd.maxIou}` };
+  }
+
+  // an IoU cut only colours in score mode; switch so the answer is visible
+  if (aiFilter && mode === "diff") return setMode("score");
+  renderLegend();
+  fillPickers();
+  applyMapStyle();
+}
+
+/* Everything currently hiding buildings, in one line with one way out. A
+   filter the user cannot see the origin of, or escape, is a map that looks
+   broken — and the AI can set both kinds, so one button clears both. */
+function activeFilters() {
+  const parts = [];
+  if (aiFilter) {
+    parts.push(aiFilter.label +
+      (aiFilter.count != null ? ` · ${aiFilter.count.toLocaleString()}` : ""));
+  }
+  if (hidden.size) {
+    const shown = classes().filter(cls => !hidden.has(cls.id));
+    parts.push(shown.length
+      ? "only " + shown.map(cls => cls.label.toLowerCase()).join(", ")
+      : "nothing shown");
+  }
+  return parts;
+}
+
+function renderAiFilter() {
+  const el = $("aiFilter");
+  if (!el) return;
+  const parts = activeFilters();
+  el.hidden = !parts.length;
+  if (!parts.length) return;
+  el.textContent = "";
+  const label = document.createElement("span");
+  label.textContent = parts.join(" · ");
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.textContent = "Clear";
+  clear.onclick = clearFilters;
+  el.append(label, clear);
+}
+
+function clearFilters() {
+  aiFilter = null;
+  hidden = new Set();
+  renderLegend();
+  applyMapStyle();
+}
+
+/* Says which buildings the next answer covers, and keeps the two scope buttons
+   in step with the Area section — either one can have changed the scope. */
+function updateAiScope() {
+  const scope = $("aiScope");
+  if (!scope) return;
+  scope.textContent = boxBounds
+    ? `drawn area · ${total().toLocaleString()}`
+    : `whole city · ${total().toLocaleString()}`;
+  scope.classList.toggle("box", !!boxBounds);
+  $("aiCity").style.display = boxBounds ? "" : "none";
+  $("aiDraw").textContent = boxBounds ? "Redraw" : "Draw an area";
+  // an answer about the previous area is not an answer about this one
+  if (aiStamp !== scopeStamp && $("aiOut").textContent && !aiBusy) {
+    $("aiOut").textContent = "";
+    $("aiOut").className = "";
+  }
+}
+
+function wireAI() {
+  $("aiChips").innerHTML = AI_SUGGESTIONS
+    .map(q => `<button type="button">${q}</button>`).join("");
+  for (const chip of $("aiChips").children) {
+    chip.onclick = () => { $("aiQ").value = chip.textContent; askAI(chip.textContent); };
+  }
+  $("aiAsk").onclick = () => askAI($("aiQ").value);
+  $("aiQ").onkeydown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      askAI($("aiQ").value);
+    }
+  };
+  $("aiBtn").onclick = () => {
+    const panel = $("aiPanel");
+    panel.hidden = !panel.hidden;
+    $("aiBtn").classList.toggle("on", !panel.hidden);
+    if (!panel.hidden) { updateAiScope(); $("aiQ").focus(); }
+  };
+  // drawing from here leaves the panel open, so the answer and the box stay together
+  $("aiDraw").onclick = () => armBox();
+  $("aiCity").onclick = () => setCityScope();
+  updateAiScope();
 }
 
 function setCityScope() {
