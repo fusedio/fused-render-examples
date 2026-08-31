@@ -76,12 +76,19 @@ Around that:
   well under a second).
 - **Click a building** for its address, size, and a line chart of its IoU
   across all eight releases (bottom-right).
+- **Ask AI (bottom-left)** — a toggleable panel that answers questions about the
+  scores in plain English, via `fused.ai`. It is handed the eight per-release
+  summary rows the panel is already showing — never the 546k buildings behind
+  them — so a question costs about 1.1k tokens. It **follows the area scope**:
+  draw a box (from the panel or the Area section) and the next answer covers only
+  those buildings; the panel's header says which. Answers stream in, and one
+  about a previous area is cleared rather than left to look current.
 
 ## Files
 
 | File | Role |
 |---|---|
-| `index.html` | the app — MapLibre + PMTiles + d3, all vendored under `vendor/` |
+| `index.html` | the app — MapLibre + PMTiles + d3, all vendored under `vendor/`; the Ask AI panel calls `fused.ai`, so this view is local-only and does not export |
 | `prepare.py` | build orchestrator + detached worker; `main(action="status"/"start")` |
 | `tiler.py` | DuckDB `ST_AsMVT` → PMTiles archives |
 | `pmtiles_writer.py` | minimal clustered PMTiles v3 writer |

@@ -104,6 +104,38 @@
     box-shadow: inset 0 0 0 1px var(--accent); font-weight: 500; }
   #scopeNote { margin-top: 7px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
 
+  /* ask AI — bottom-left of the map, tracking the sidebar the way #map does */
+  #aiWrap { position: absolute; left: 334px; bottom: 14px; z-index: 18;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 7px;
+    transition: left .28s ease; }
+  body.side-collapsed #aiWrap { left: 14px; }
+  #aiPanel { width: 330px; background: var(--panel); border: 1px solid var(--hair);
+    border-radius: 8px; box-shadow: 0 6px 20px rgba(11,11,11,.13); padding: 13px 14px;
+    max-height: calc(100vh - 130px); overflow-y: auto; animation: panelIn .16s ease; }
+  #aiPanel h3 { font-size: 9.5px; font-weight: 600; letter-spacing: .1em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 9px; }
+  #aiScope { float: right; letter-spacing: 0; text-transform: none; font-weight: 400;
+    font-size: 10px; }
+  #aiScope.box { color: var(--accent); }
+  #aiChips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
+  #aiChips button { font-size: 10.5px; color: var(--sub); background: var(--sunk);
+    border: 1px solid var(--hair); border-radius: 999px; padding: 3px 9px;
+    text-align: left; }
+  #aiChips button:hover { color: var(--ink); border-color: var(--rule); }
+  #aiQ { width: 100%; resize: vertical; font: inherit; font-size: 11.5px;
+    color: var(--ink); background: var(--panel); border: 1px solid var(--hair);
+    border-radius: 5px; padding: 6px 7px; line-height: 1.45; }
+  #aiQ:focus { outline: none; border-color: var(--accent); }
+  #aiQ::placeholder { color: var(--muted); }
+  #aiRow { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+  #aiAsk { padding: 6px 14px; border-radius: 5px; background: var(--accent);
+    color: #fff; font-size: 11.5px; font-weight: 500; }
+  #aiAsk:disabled { background: var(--rule); cursor: default; }
+  #aiRow .sbtn { padding: 6px 10px; }
+  #aiOut { margin-top: 10px; font-size: 11.5px; line-height: 1.6; color: var(--sub);
+    white-space: pre-wrap; }
+  #aiOut.err { color: var(--q0); }
+
   /* trend */
   #trend svg { display: block; overflow: visible; }
   #trendKey { display: flex; gap: 13px; margin-top: 5px; font-size: 10px; color: var(--sub); }
@@ -269,6 +301,23 @@
     </div>
   </div>
 </aside>
+
+<!-- Ask AI rides the bottom-left of the map, clear of the legend and the
+     detail card that already share the right column. -->
+<div id="aiWrap">
+  <div id="aiPanel" hidden>
+    <h3>Ask AI <span id="aiScope"></span></h3>
+    <div id="aiChips"></div>
+    <textarea id="aiQ" rows="2" placeholder="Ask about these releases…"></textarea>
+    <div id="aiRow">
+      <button id="aiAsk">Ask</button>
+      <button class="sbtn" id="aiDraw">Draw an area</button>
+      <button class="sbtn" id="aiCity">Whole city</button>
+    </div>
+    <div id="aiOut"></div>
+  </div>
+  <button class="mbtn" id="aiBtn">Ask AI</button>
+</div>
 
 <button id="sideOpen" title="Show controls" aria-label="Show controls">
   <span class="bars">&#9776;</span>Controls</button>
@@ -464,6 +513,7 @@ async function start() {
   wireOnlyBad();
   wirePanelButton();
   wireSideToggle();
+  wireAI();
   initMap();
   await refresh();
 }
@@ -592,6 +642,7 @@ function updateScopeNote() {
   $("scopeNote").innerHTML = boxBounds
     ? `<b>${total().toLocaleString()}</b> buildings inside the box.`
     : `All <b>${total().toLocaleString()}</b> buildings in Philadelphia.`;
+  updateAiScope();
 }
 
 /* -------------------------------- right -------------------------------- */
@@ -1141,25 +1192,31 @@ function drawDetailChart(entries) {
 
 /* ------------------------------ area scope ------------------------------ */
 
+/* Arming lives out here because two places start a draw: the Area section and
+   the Ask AI panel's own button. */
+let boxArmed = false;
+
+function armBox() {
+  boxArmed = true;
+  $("scopeBox").classList.add("on");
+  $("scopeCity").classList.remove("on");
+  showHint("Drag a box on the map · Esc to cancel");
+  map.getCanvas().style.cursor = "crosshair";
+  map.dragPan.disable();
+}
+
 function wireBox() {
   const marquee = $("marquee");
-  let armed = false, drawing = false, sx = 0, sy = 0;
+  let drawing = false, sx = 0, sy = 0;
 
   $("scopeCity").onclick = () => setCityScope();
-  $("scopeBox").onclick = () => {
-    armed = true;
-    $("scopeBox").classList.add("on");
-    $("scopeCity").classList.remove("on");
-    showHint("Drag a box on the map · Esc to cancel");
-    map.getCanvas().style.cursor = "crosshair";
-    map.dragPan.disable();
-  };
+  $("scopeBox").onclick = armBox;
   window.addEventListener("keydown", e => {
-    if (e.key === "Escape" && (armed || boxBounds)) { armed = false; setCityScope(); }
+    if (e.key === "Escape" && (boxArmed || boxBounds)) { boxArmed = false; setCityScope(); }
   });
 
   map.getContainer().addEventListener("pointerdown", event => {
-    if (!armed) return;
+    if (!boxArmed) return;
     drawing = true; sx = event.clientX; sy = event.clientY;
     marquee.style.display = "block";
     place(event);
@@ -1168,7 +1225,7 @@ function wireBox() {
   window.addEventListener("pointermove", event => { if (drawing) place(event); });
   window.addEventListener("pointerup", async event => {
     if (!drawing) return;
-    drawing = false; armed = false;
+    drawing = false; boxArmed = false;
     marquee.style.display = "none";
     map.getCanvas().style.cursor = "";
     map.dragPan.enable();
@@ -1188,6 +1245,138 @@ function wireBox() {
     marquee.style.width = Math.abs(event.clientX - sx) + "px";
     marquee.style.height = Math.abs(event.clientY - sy) + "px";
   }
+}
+
+/* -------------------------------- ask AI -------------------------------- */
+
+/* The model is handed the same per-release rows the panel is showing — eight
+   summaries, never the 546k buildings behind them — so it stays well inside a
+   prompt and follows the drawn area for free. */
+function aiContext() {
+  const releases = RELEASES.map((release, index) => {
+    const s = statsFor(index);
+    const b = s.bands;
+    const row = {
+      release,
+      matched_pct: +(s.match_rate * 100).toFixed(2),
+      mean_iou: +s.mean_iou.toFixed(4),
+      median_iou: +s.median_iou.toFixed(4),
+      close: b.excellent, partial: b.good, poor: b.fair + b.weak, absent: b.missing,
+    };
+    // only the whole-city summaries carry Overture's own count
+    if (s.overture_buildings) row.overture_footprints = s.overture_buildings;
+    return row;
+  });
+  return {
+    city: "Philadelphia",
+    scope: boxBounds ? "the drawn area only" : "the whole city",
+    reference_buildings: total(),
+    bands: "close = IoU >= 0.75, partial = 0.50-0.75, poor = below 0.50, " +
+           "absent = no Overture footprint at all",
+    releases,
+  };
+}
+
+const AI_SYSTEM =
+  "You read a building-footprint scorecard. Each row is one Overture Maps release " +
+  "scored against Philadelphia's official footprint layer; IoU is per-building " +
+  "intersection-over-union, averaged over the buildings Overture actually has. " +
+  "Answer only from the JSON given.";
+
+/* These ride the USER turn, not the system prompt. On the Claude path a system
+   prompt does not govern formatting — asking there for plain prose still came
+   back as markdown tables and headings, which the panel renders as literal
+   asterisks because the answer is written with textContent. Asked after the
+   question, they hold. */
+const AI_RULES =
+  "Answer in at most three sentences of plain prose. Do not use markdown: no " +
+  "headings, no tables, no bullet points, no asterisks, no bold. Identify a " +
+  "release by the exact id in the data, and never convert one to a calendar date " +
+  "or state when it was published. If the data cannot answer, say only that.";
+
+const AI_SUGGESTIONS = [
+  "Which release improved the most?",
+  "Has anything changed since mid-2025?",
+  "How many buildings is Overture still missing?",
+];
+
+let aiBusy = false;
+let aiStamp = 0;                        // the scope the shown answer was about
+
+async function askAI(question) {
+  question = (question || "").trim();
+  if (!question || aiBusy) return;
+  aiBusy = true;                        // AI calls have no stale-cancel of their own
+  aiStamp = scopeStamp;
+  $("aiAsk").disabled = true;
+  const out = $("aiOut");
+  out.className = "";
+  out.textContent = "Thinking…";
+  let streamed = false;
+  try {
+    const reply = await fused.ai(
+      `Data (JSON):\n${JSON.stringify(aiContext())}\n\n` +
+      `Question: ${question}\n\n${AI_RULES}`, {
+        systemPrompt: AI_SYSTEM,
+        effort: "low",
+        onChunk: (text) => {
+          if (!streamed) { out.textContent = ""; streamed = true; }
+          out.textContent += text;
+        },
+      });
+    if (!streamed) out.textContent = reply.text;
+  } catch (error) {
+    out.className = "err";
+    out.textContent = error.type === "ai_unavailable"
+      ? "Ask AI needs the Claude Code CLI on this machine."
+      : `${error.type || "error"}: ${error.message}`;
+  } finally {
+    aiBusy = false;
+    $("aiAsk").disabled = false;
+  }
+}
+
+/* Says which buildings the next answer covers, and keeps the two scope buttons
+   in step with the Area section — either one can have changed the scope. */
+function updateAiScope() {
+  const scope = $("aiScope");
+  if (!scope) return;
+  scope.textContent = boxBounds
+    ? `drawn area · ${total().toLocaleString()}`
+    : `whole city · ${total().toLocaleString()}`;
+  scope.classList.toggle("box", !!boxBounds);
+  $("aiCity").style.display = boxBounds ? "" : "none";
+  $("aiDraw").textContent = boxBounds ? "Redraw" : "Draw an area";
+  // an answer about the previous area is not an answer about this one
+  if (aiStamp !== scopeStamp && $("aiOut").textContent && !aiBusy) {
+    $("aiOut").textContent = "";
+    $("aiOut").className = "";
+  }
+}
+
+function wireAI() {
+  $("aiChips").innerHTML = AI_SUGGESTIONS
+    .map(q => `<button type="button">${q}</button>`).join("");
+  for (const chip of $("aiChips").children) {
+    chip.onclick = () => { $("aiQ").value = chip.textContent; askAI(chip.textContent); };
+  }
+  $("aiAsk").onclick = () => askAI($("aiQ").value);
+  $("aiQ").onkeydown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      askAI($("aiQ").value);
+    }
+  };
+  $("aiBtn").onclick = () => {
+    const panel = $("aiPanel");
+    panel.hidden = !panel.hidden;
+    $("aiBtn").classList.toggle("on", !panel.hidden);
+    if (!panel.hidden) { updateAiScope(); $("aiQ").focus(); }
+  };
+  // drawing from here leaves the panel open, so the answer and the box stay together
+  $("aiDraw").onclick = () => armBox();
+  $("aiCity").onclick = () => setCityScope();
+  updateAiScope();
 }
 
 function setCityScope() {
