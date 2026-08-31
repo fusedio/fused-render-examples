@@ -4,8 +4,17 @@ main(action="area", bbox=[w, s, e, n]) -> per-release stats for the buildings
     whose footprint bbox intersects the drawn box.
 main(action="detail", fid=123) -> one building's per-release scores.
 main(action="compare", a=0, b=6) -> how agreement changed between two releases.
+main(action="method") -> where the data came from and how it was scored.
 """
-from common import BANDS, RELEASES, cache_path, connect_plain
+from common import (
+    BANDS,
+    MIRROR,
+    PHILLY_BOUNDS,
+    PHILLY_GEOJSON_URL,
+    RELEASES,
+    cache_path,
+    connect_plain,
+)
 
 
 def main(action: str = "area", bbox=None, fid: int = 0, a: int = 0, b: int = 0):
@@ -16,7 +25,62 @@ def main(action: str = "area", bbox=None, fid: int = 0, a: int = 0, b: int = 0):
     if action == "compare":
         box = [float(v) for v in bbox] if bbox else None
         return compare(int(a), int(b), box)
+    if action == "method":
+        return method()
     raise ValueError(f"unknown action {action!r}")
+
+
+def method():
+    """How the scores were produced, for the Ask AI panel to answer questions
+    about the method rather than only about the numbers. Built from the same
+    constants the pipeline runs on, so it cannot drift away from what the
+    build actually did."""
+    floors = dict(BANDS)
+    return {
+        "reference_layer": {
+            "name": "LI_BUILDING_FOOTPRINTS",
+            "publisher": "City of Philadelphia",
+            "obtained_from": "ArcGIS Hub bulk GeoJSON download, " +
+                             PHILLY_GEOJSON_URL.split("?")[0],
+            "role": "treated as ground truth; every score is one of its buildings",
+        },
+        "overture_source": {
+            "obtained_from": f"{MIRROR}/overture/<release>/theme=buildings/"
+                             "type=building/, Fused's mirror of the Overture releases",
+            "why_the_mirror": "the official Overture bucket keeps only the two most "
+                              "recent releases, so the older ones are only on the mirror",
+            "releases_scored": list(RELEASES),
+            "clipped_to_bbox": list(PHILLY_BOUNDS),
+        },
+        "matching": [
+            "Both layers are reprojected to EPSG:2272 (Pennsylvania South, US feet) "
+            "so areas are measured in real units rather than in degrees.",
+            "A DuckDB spatial join pairs each city building with every Overture "
+            "footprint whose geometry intersects it.",
+            "Each pair is scored IoU = shared area / (city area + Overture area - "
+            "shared area). 1.0 is an identical footprint, 0 is no overlap.",
+            "A city building keeps only its single best-scoring Overture match.",
+            "IoU 0 means no Overture footprint overlaps that building at all.",
+            "This is repeated independently for every release, so a building has "
+            "one score per release.",
+        ],
+        "band_thresholds": {
+            "close": f"IoU >= {floors['excellent']}",
+            "partial": f"IoU {floors['good']} to {floors['excellent']}",
+            "poor": f"IoU above 0 but below {floors['good']}",
+            "absent": "no overlapping Overture footprint",
+        },
+        "reading_the_numbers": [
+            "mean_iou and median_iou are averaged over MATCHED buildings only "
+            "(IoU > 0); buildings Overture is missing are excluded from them and "
+            "counted under absent instead.",
+            "matched_pct is the share of city buildings with any overlapping "
+            "Overture footprint.",
+            "overture_footprints counts Overture buildings in the whole bounding "
+            "box, which extends past the city limits, so it is expected to exceed "
+            "the number of reference buildings.",
+        ],
+    }
 
 
 # Change smaller than this is treated as the same footprint, not an edit.

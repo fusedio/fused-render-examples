@@ -514,6 +514,7 @@ async function start() {
   wirePanelButton();
   wireSideToggle();
   wireAI();
+  loadAiMethod();                       // not awaited; only the AI panel needs it
   initMap();
   await refresh();
 }
@@ -1252,6 +1253,20 @@ function wireBox() {
 /* The model is handed the same per-release rows the panel is showing — eight
    summaries, never the 546k buildings behind them — so it stays well inside a
    prompt and follows the drawn area for free. */
+/* Where the data came from and how it was scored — fetched once, from the same
+   constants the pipeline runs on. Without it the model can only talk about the
+   numbers, and questions like "how are buildings matched?" or "where do the
+   city footprints come from?" get refused rather than answered. */
+let aiMethod = null;
+
+async function loadAiMethod() {
+  try {
+    aiMethod = await runPy("./stats.py", { action: "method" });
+  } catch (error) {
+    aiMethod = null;                    // numbers still answer; method questions won't
+  }
+}
+
 function aiContext() {
   const releases = RELEASES.map((release, index) => {
     const s = statsFor(index);
@@ -1271,17 +1286,17 @@ function aiContext() {
     city: "Philadelphia",
     scope: boxBounds ? "the drawn area only" : "the whole city",
     reference_buildings: total(),
-    bands: "close = IoU >= 0.75, partial = 0.50-0.75, poor = below 0.50, " +
-           "absent = no Overture footprint at all",
+    method: aiMethod,
     releases,
   };
 }
 
 const AI_SYSTEM =
-  "You read a building-footprint scorecard. Each row is one Overture Maps release " +
-  "scored against Philadelphia's official footprint layer; IoU is per-building " +
-  "intersection-over-union, averaged over the buildings Overture actually has. " +
-  "Answer only from the JSON given.";
+  "You explain a building-footprint scorecard to the person looking at it. The " +
+  "JSON has two halves: `releases`, one row of scores per Overture Maps release, " +
+  "and `method`, where the data came from and how it was scored. Answer questions " +
+  "about either — the figures, and equally how the matching was done, what IoU " +
+  "means, or where a layer was sourced. Use only what the JSON contains.";
 
 /* These ride the USER turn, not the system prompt. On the Claude path a system
    prompt does not govern formatting — asking there for plain prose still came
@@ -1292,11 +1307,13 @@ const AI_RULES =
   "Answer in at most three sentences of plain prose. Do not use markdown: no " +
   "headings, no tables, no bullet points, no asterisks, no bold. Identify a " +
   "release by the exact id in the data, and never convert one to a calendar date " +
-  "or state when it was published. If the data cannot answer, say only that.";
+  "or state when it was published. Method questions are in scope: answer them " +
+  "from the method section. If neither section covers it, say only that.";
 
 const AI_SUGGESTIONS = [
   "Which release improved the most?",
-  "Has anything changed since mid-2025?",
+  "How are buildings matched?",
+  "Where do the city footprints come from?",
   "How many buildings is Overture still missing?",
 ];
 

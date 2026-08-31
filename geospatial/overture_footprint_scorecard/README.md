@@ -77,7 +77,7 @@ Around that:
 - **Click a building** for its address, size, and a line chart of its IoU
   across all eight releases (bottom-right).
 - **Ask AI (bottom-left)** — a toggleable panel that answers questions about the
-  scores in plain English, via `fused.ai`. It is handed the eight per-release
+  scores and the method in plain English, via `fused.ai`. It is handed the eight per-release
   summary rows the panel is already showing — never the 546k buildings behind
   them — so a question costs about 1.1k tokens. It **follows the area scope**:
   draw a box (from the panel or the Area section) and the next answer covers only
