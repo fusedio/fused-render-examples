@@ -191,11 +191,19 @@
   .actions .selected { font-weight: 600; }
   .spacer { flex: 1; }
   .action-info {
-    flex: 1; min-width: 220px; display: flex; gap: 6px; align-items: baseline;
-    color: var(--muted); font-size: 11.5px; line-height: 1.4;
+    position: relative; color: var(--muted); font-size: 15px; line-height: 1;
+    cursor: help; outline: none;
   }
-  .action-info i { font-style: normal; color: var(--fill); }
-  .action-info strong { color: var(--text-2); font-weight: 600; }
+  .action-info:hover, .action-info:focus-visible { color: var(--fill); }
+  .action-info .tip {
+    position: absolute; bottom: calc(100% + 10px); right: -8px; width: 280px;
+    padding: 9px 11px; border-radius: 6px; border: 1px solid var(--ring);
+    background: var(--surface); color: var(--text-2); box-shadow: 0 6px 20px rgba(0,0,0,.25);
+    font-size: 11.5px; line-height: 1.45; text-align: left;
+    opacity: 0; visibility: hidden; transition: opacity .12s; pointer-events: none; z-index: 5;
+  }
+  .action-info:hover .tip, .action-info:focus-visible .tip { opacity: 1; visibility: visible; }
+  .action-info .tip strong { color: var(--text); font-weight: 600; }
   button.btn {
     appearance: none; font: inherit; padding: 6px 13px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--baseline); background: transparent; color: var(--text);
@@ -637,8 +645,9 @@
       </div>
       <div class="actions">
         <span class="selected">${selEntries.length} selected · ${bytes(selBytes)}</span>
-        <span class="action-info"><i aria-hidden="true">ⓘ</i>
-          <span><strong>Move to Trash</strong> is reversible until you empty the Trash.
+        <span class="spacer"></span>
+        <span class="action-info" tabindex="0" aria-describedby="actionInfoTip">ⓘ
+          <span class="tip" id="actionInfoTip" role="tooltip"><strong>Move to Trash</strong> is reversible until you empty the Trash.
           <strong>Delete permanently</strong> frees space now and can't be undone.
           Only the locations listed here can ever be touched.</span></span>
         <button class="btn primary" data-clean="trash" ${selEntries.length ? "" : "disabled"}>Move to Trash</button>
