@@ -190,6 +190,12 @@
   }
   .actions .selected { font-weight: 600; }
   .spacer { flex: 1; }
+  .action-info {
+    flex: 1; min-width: 220px; display: flex; gap: 6px; align-items: baseline;
+    color: var(--muted); font-size: 11.5px; line-height: 1.4;
+  }
+  .action-info i { font-style: normal; color: var(--fill); }
+  .action-info strong { color: var(--text-2); font-weight: 600; }
   button.btn {
     appearance: none; font: inherit; padding: 6px 13px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--baseline); background: transparent; color: var(--text);
@@ -617,11 +623,6 @@
 
     panel.innerHTML = `
       ${lastResult ? resultBanner(lastResult) : ""}
-      <div class="banner">
-        <strong>Move to Trash</strong> is reversible — the space comes back when you empty the Trash.
-        <strong>Delete permanently</strong> frees it immediately and cannot be undone.
-        Only the locations listed here can ever be touched.
-      </div>
       <div class="card">
         <h2>Cache locations</h2>
         <p class="hint">${data.cached ? "Sizes from cache, " + ago(data.age) + " · " : ""}
@@ -636,7 +637,10 @@
       </div>
       <div class="actions">
         <span class="selected">${selEntries.length} selected · ${bytes(selBytes)}</span>
-        <span class="spacer"></span>
+        <span class="action-info"><i aria-hidden="true">ⓘ</i>
+          <span><strong>Move to Trash</strong> is reversible until you empty the Trash.
+          <strong>Delete permanently</strong> frees space now and can't be undone.
+          Only the locations listed here can ever be touched.</span></span>
         <button class="btn primary" data-clean="trash" ${selEntries.length ? "" : "disabled"}>Move to Trash</button>
         <button class="btn danger" data-clean="delete" ${selEntries.length ? "" : "disabled"}>Delete permanently</button>
       </div>`;
