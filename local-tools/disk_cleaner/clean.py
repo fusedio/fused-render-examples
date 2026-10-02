@@ -93,6 +93,52 @@ def _remove(path: str, to_trash: bool):
         shutil.rmtree(path)
 
 
+def _delete_counting(path: str, progress, errors: list) -> tuple:
+    """Permanently delete the directory `path`, reporting bytes as each file
+    goes rather than once at the end — one child of a cache (uv's
+    `archive-v0`) can hold most of its 30 GB. Stops between `path`'s own
+    children when the job is cancelled, so a cancelled sub-entry is never
+    left half-deleted. Returns (bytes freed, finished)."""
+    freed = 0
+    with os.scandir(path) as it:
+        children = list(it)
+    for de in children:
+        if progress.stopped():
+            return freed, False
+        progress.begin("%s/%s" % (os.path.basename(path), de.name))
+        try:
+            if de.is_symlink() or not de.is_dir(follow_symlinks=False):
+                size = de.stat(follow_symlinks=False).st_size
+                os.unlink(de.path)
+                freed += size
+                progress.add(size)
+                continue
+            for root, dirs, files in os.walk(de.path, topdown=False):
+                for name in files + [d for d in dirs if os.path.islink(os.path.join(root, d))]:
+                    fp = os.path.join(root, name)
+                    try:
+                        size = os.lstat(fp).st_size
+                        os.unlink(fp)
+                        freed += size
+                        progress.add(size)
+                    except OSError as err:
+                        if len(errors) < 200:
+                            errors.append("%s: %s" % (fp, err.strerror or str(err)))
+                for name in dirs:
+                    dp = os.path.join(root, name)
+                    if not os.path.islink(dp):
+                        try:
+                            os.rmdir(dp)
+                        except OSError:
+                            pass  # not empty: a file above failed and was reported
+            os.rmdir(de.path)
+        except OSError as err:
+            if len(errors) < 200:
+                errors.append("%s: %s" % (de.path, err.strerror or str(err)))
+    os.rmdir(path)
+    return freed, True
+
+
 def _clean_dir_contents(abs_path: str, to_trash: bool, deadline: float, progress=None) -> dict:
     freed = 0
     removed = 0
@@ -113,6 +159,16 @@ def _clean_dir_contents(abs_path: str, to_trash: bool, deadline: float, progress
         if progress:
             progress.begin(de.name)
         try:
+            if progress and not to_trash and de.is_dir(follow_symlinks=False) \
+                    and not de.is_symlink():
+                size, finished = _delete_counting(de.path, progress, errors)
+                freed += size
+                if not finished:
+                    remaining = len(children) - i
+                    break
+                removed += 1
+                progress.removed()
+                continue
             if de.is_symlink() or not de.is_dir(follow_symlinks=False):
                 size = de.stat(follow_symlinks=False).st_size
             else:
@@ -121,7 +177,8 @@ def _clean_dir_contents(abs_path: str, to_trash: bool, deadline: float, progress
             freed += size
             removed += 1
             if progress:
-                progress.removed(size)
+                progress.add(size)
+                progress.removed()
         except OSError as err:
             errors.append("%s: %s" % (de.name, err.strerror or str(err)))
 

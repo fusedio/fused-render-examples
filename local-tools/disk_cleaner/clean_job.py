@@ -165,9 +165,12 @@ class _Progress:
         with self.lock:
             self.job["detail"] = "%s · %s" % (self.where, item)
 
-    def removed(self, size):
+    def add(self, size):
         with self.lock:
             self.job["freed"] += size
+
+    def removed(self):
+        with self.lock:
             self.job["removed"] += 1
 
     def stopped(self):
