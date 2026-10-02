@@ -93,7 +93,7 @@ def _remove(path: str, to_trash: bool):
         shutil.rmtree(path)
 
 
-def _clean_dir_contents(abs_path: str, to_trash: bool, deadline: float) -> dict:
+def _clean_dir_contents(abs_path: str, to_trash: bool, deadline: float, progress=None) -> dict:
     freed = 0
     removed = 0
     remaining = 0
@@ -105,9 +105,13 @@ def _clean_dir_contents(abs_path: str, to_trash: bool, deadline: float) -> dict:
         # Deleting a multi-gigabyte cache can outlast the executor's 60 s
         # timeout, so the work is chunked: stop on the budget and report what
         # is left, and the page calls back until `remaining` reaches zero.
-        if time.monotonic() > deadline:
+        # `progress` (the background job in clean_job.py) can also stop the
+        # loop between items when the user cancels.
+        if time.monotonic() > deadline or (progress and progress.stopped()):
             remaining = len(children) - i
             break
+        if progress:
+            progress.begin(de.name)
         try:
             if de.is_symlink() or not de.is_dir(follow_symlinks=False):
                 size = de.stat(follow_symlinks=False).st_size
@@ -116,26 +120,31 @@ def _clean_dir_contents(abs_path: str, to_trash: bool, deadline: float) -> dict:
             _remove(de.path, to_trash)
             freed += size
             removed += 1
+            if progress:
+                progress.removed(size)
         except OSError as err:
             errors.append("%s: %s" % (de.name, err.strerror or str(err)))
 
     return {"freed": freed, "removed": removed, "remaining": remaining, "errors": errors}
 
 
-def _clean_entry(entry: dict, to_trash: bool, deadline: float) -> dict:
+def _clean_entry(entry: dict, to_trash: bool, deadline: float, progress=None) -> dict:
     abs_path = catalog.resolve_entry(entry)
     if abs_path is None:
         raise RuntimeError("%s has no path on this OS" % entry["id"])
     _guard(abs_path)
 
-    stats = _clean_dir_contents(abs_path, to_trash, deadline)
+    if progress:
+        progress.entry(entry["name"])
+    stats = _clean_dir_contents(abs_path, to_trash, deadline, progress)
     if entry["id"] == "trash" and catalog.OS == "Linux":
         # Emptying the Trash also means dropping its .trashinfo sidecars (and
         # any not-yet-purged "expunged" entries) — only clearing files/ would
         # leave orphaned metadata behind for the file manager to trip over.
         for extra in (TRASH_INFO, os.path.join(XDG_TRASH, "expunged")):
             if extra and os.path.isdir(extra) and time.monotonic() <= deadline:
-                more = _clean_dir_contents(extra, to_trash=False, deadline=deadline)
+                more = _clean_dir_contents(extra, to_trash=False, deadline=deadline,
+                                           progress=progress)
                 stats["removed"] += more["removed"]
                 stats["remaining"] += more["remaining"]
                 stats["errors"] += more["errors"]
@@ -155,7 +164,7 @@ def _report_path(entry: dict) -> str:
     return catalog.entry_path(entry) or entry["id"]
 
 
-def main(ids: str = "", mode: str = "trash", confirm: bool = False, budget: float = 40.0):
+def validate(ids: str, mode: str, confirm: bool) -> list:
     if not confirm:
         raise RuntimeError("clean.py refuses to run without confirm=true")
     if mode not in ("trash", "delete"):
@@ -171,15 +180,17 @@ def main(ids: str = "", mode: str = "trash", confirm: bool = False, budget: floa
     unsupported = [i for i in wanted if catalog.entry_path(catalog.CATALOG_BY_ID[i]) is None]
     if unsupported:
         raise RuntimeError("not available on this OS: %s" % ", ".join(unsupported))
+    return wanted
 
-    deadline = time.monotonic() + budget
+
+def run(wanted: list, mode: str, deadline: float, progress=None) -> dict:
     results = []
     for cid in wanted:
         entry = catalog.CATALOG_BY_ID[cid]
         # The Trash cannot be moved to the Trash — emptying it is always final.
         to_trash = mode == "trash" and cid != "trash"
         try:
-            results.append(_clean_entry(entry, to_trash, deadline))
+            results.append(_clean_entry(entry, to_trash, deadline, progress))
         except (OSError, RuntimeError) as err:
             results.append({
                 "id": cid, "name": entry["name"], "path": _report_path(entry),
@@ -202,3 +213,8 @@ def main(ids: str = "", mode: str = "trash", confirm: bool = False, budget: floa
         "remaining": sum(r["remaining"] for r in results),
         "errors": [e for r in results for e in r["errors"]],
     }
+
+
+def main(ids: str = "", mode: str = "trash", confirm: bool = False, budget: float = 40.0):
+    wanted = validate(ids, mode, confirm)
+    return run(wanted, mode, time.monotonic() + budget)
