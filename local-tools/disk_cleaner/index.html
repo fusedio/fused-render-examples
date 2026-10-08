@@ -2,6 +2,8 @@
 <html data-fused-theme="shell">
 <head>
 <meta charset="utf-8" />
+<meta name="fused-app" />
+<meta name="fused-api-version" content="1" />
 <title>Disk Cleaner</title>
 <style>
   :root {
@@ -188,6 +190,20 @@
   }
   .actions .selected { font-weight: 600; }
   .spacer { flex: 1; }
+  .action-info {
+    position: relative; color: var(--muted); font-size: 15px; line-height: 1;
+    cursor: help; outline: none;
+  }
+  .action-info:hover, .action-info:focus-visible { color: var(--fill); }
+  .action-info .tip {
+    position: absolute; bottom: calc(100% + 10px); right: -8px; width: 280px;
+    padding: 9px 11px; border-radius: 6px; border: 1px solid var(--ring);
+    background: var(--surface); color: var(--text-2); box-shadow: 0 6px 20px rgba(0,0,0,.25);
+    font-size: 11.5px; line-height: 1.45; text-align: left;
+    opacity: 0; visibility: hidden; transition: opacity .12s; pointer-events: none; z-index: 5;
+  }
+  .action-info:hover .tip, .action-info:focus-visible .tip { opacity: 1; visibility: visible; }
+  .action-info .tip strong { color: var(--text); font-weight: 600; }
   button.btn {
     appearance: none; font: inherit; padding: 6px 13px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--baseline); background: transparent; color: var(--text);
@@ -246,7 +262,11 @@
     display: block; height: 100%; background: var(--fill); border-radius: 4px;
     transition: width .25s ease; width: 0%;
   }
-  .progress-detail { color: var(--text-2); font-size: 12px; }
+  .progress-detail {
+    color: var(--text-2); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .progress-hint { color: var(--text-2); font-size: 12px; margin: 12px 0 16px; }
 </style>
 </head>
 <body>
@@ -265,6 +285,11 @@
     <h3 id="progressTitle"></h3>
     <div class="progress-track"><span class="progress-fill" id="progressFill"></span></div>
     <div class="progress-detail" id="progressDetail"></div>
+    <p class="progress-hint">Runs in the background — you can leave this page. Progress stays in the activity panel.</p>
+    <div class="modal-actions">
+      <button class="btn" id="progressCancel">Stop</button>
+      <button class="btn primary" id="progressHide">Keep running in background</button>
+    </div>
   </div>
 </div>
 <main>
@@ -347,11 +372,13 @@
     });
   }
 
-  // A determinate progress popover for the multi-pass clean loop below —
-  // sits over the (still-visible) cleanup list instead of replacing it with
-  // a "Pass N…" status line, and has no buttons since the action is already
-  // confirmed and can't be safely interrupted mid-delete.
+  // A determinate progress popover for the background clean job — sits over
+  // the (still-visible) cleanup list. "Keep running" only hides it; "Stop"
+  // asks the worker to stop between items.
   function showProgress(title) {
+    const stop = document.getElementById("progressCancel");
+    stop.disabled = false;
+    stop.textContent = "Stop";
     document.getElementById("progressTitle").textContent = title;
     document.getElementById("progressFill").style.width = "0%";
     document.getElementById("progressDetail").textContent = "";
@@ -604,11 +631,6 @@
 
     panel.innerHTML = `
       ${lastResult ? resultBanner(lastResult) : ""}
-      <div class="banner">
-        <strong>Move to Trash</strong> is reversible — the space comes back when you empty the Trash.
-        <strong>Delete permanently</strong> frees it immediately and cannot be undone.
-        Only the locations listed here can ever be touched.
-      </div>
       <div class="card">
         <h2>Cache locations</h2>
         <p class="hint">${data.cached ? "Sizes from cache, " + ago(data.age) + " · " : ""}
@@ -624,6 +646,10 @@
       <div class="actions">
         <span class="selected">${selEntries.length} selected · ${bytes(selBytes)}</span>
         <span class="spacer"></span>
+        <span class="action-info" tabindex="0" aria-describedby="actionInfoTip">ⓘ
+          <span class="tip" id="actionInfoTip" role="tooltip"><strong>Move to Trash</strong> is reversible until you empty the Trash.
+          <strong>Delete permanently</strong> frees space now and can't be undone.
+          Only the locations listed here can ever be touched.</span></span>
         <button class="btn primary" data-clean="trash" ${selEntries.length ? "" : "disabled"}>Move to Trash</button>
         <button class="btn danger" data-clean="delete" ${selEntries.length ? "" : "disabled"}>Delete permanently</button>
       </div>`;
@@ -648,6 +674,7 @@
     if (!cleanData || force) {
       panel.innerHTML = loadingCard("Measuring cache locations…");
       cleanData = await fused.runPython("./caches.py", {});
+      takePendingResult();
       buildCleanDom(cleanData);
     } else {
       patchCleanSelection(cleanData);
@@ -665,7 +692,7 @@
       <strong>${res.mode === "trash" ? "Moved to Trash" : "Deleted"}: ${bytes(res.freed)}</strong>
       across ${res.removed} item(s).
       ${res.mode === "trash" ? "Empty the Trash to actually reclaim the space." : ""}
-      ${res.remaining ? `<br>${res.remaining} item(s) were left behind after 30 passes — run it again.` : ""}
+      ${res.remaining ? `<br>Stopped with ${res.remaining} item(s) left — run it again to finish.` : ""}
       <table class="data">
         <tr><th>Location</th><th class="num">Freed</th><th class="num">Items</th></tr>
         ${res.results.map(r => `<tr><td>${esc(r.name)}</td>
@@ -673,29 +700,83 @@
       </table>${errs}</div>`;
   }
 
-  // Fold one pass of clean.py into the running totals, per location.
-  function mergeResults(acc, res) {
-    if (!acc) return res;
-    const byId = {};
-    acc.results.forEach(r => { byId[r.id] = { ...r }; });
-    res.results.forEach(r => {
-      const prev = byId[r.id];
-      byId[r.id] = prev ? {
-        ...r,
-        freed: prev.freed + r.freed,
-        removed: prev.removed + r.removed,
-        errors: prev.errors.concat(r.errors),
-      } : { ...r };
+  // ---- background clean job ----------------------------------------------
+  // clean_job.py runs the delete in a detached worker, so it survives the
+  // 60 s runPython limit and this page being closed. The page only polls the
+  // worker's status file and mirrors it into the popover and fused.trackJob;
+  // the worker reports to the activity panel itself under the same job id, so
+  // the row keeps moving while the page is gone.
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const jobStatus = () => fused.runPython("./clean_job.py", { action: "status" }, { key: "clean-job" });
+  let watching = null;     // id of the job this page is polling
+  let stopClicked = false;
+  let pendingResult = null; // finished job whose banner hasn't been shown yet
+
+  document.getElementById("progressHide").addEventListener("click", hideProgress);
+  document.getElementById("progressCancel").addEventListener("click", e => {
+    stopClicked = true;
+    e.target.disabled = true;
+    e.target.textContent = "Stopping…";
+  });
+
+  async function watchJob(job) {
+    if (watching === job.id) return;
+    watching = job.id;
+    stopClicked = false;
+    const track = fused.trackJob({
+      id: job.id, title: job.title, kind: "task", unit: "bytes", cancellable: true,
     });
-    const results = Object.values(byId);
-    return {
-      mode: res.mode,
-      results,
-      freed: results.reduce((a, r) => a + r.freed, 0),
-      removed: results.reduce((a, r) => a + r.removed, 0),
-      remaining: res.remaining,
-      errors: results.flatMap(r => r.errors),
-    };
+    showProgress(job.mode === "trash" ? "Moving to Trash…" : "Deleting…");
+    let stopSent = false, failures = 0;
+    for (;;) {
+      const total = job.total ? Math.max(job.total, job.freed) : 0;
+      updateProgress(total ? job.freed / total * 100 : 0,
+        `${bytes(job.freed)}${total ? " of " + bytes(total) : ""} freed · ${job.detail || ""}`);
+      if (job.state !== "running") break;
+      track.update({ done: job.freed, total: total || undefined, detail: job.detail });
+      if (!stopSent && (stopClicked || track.cancelRequested)) {
+        stopSent = true;
+        fused.runPython("./clean_job.py", { action: "cancel" }, { key: null }).catch(() => {});
+      }
+      await sleep(1000);
+      try {
+        job = await jobStatus();
+        failures = 0;
+      } catch (err) {
+        // The worker keeps running and reporting on its own; just stop
+        // watching after a run of failed status reads.
+        if (++failures >= 5) {
+          watching = null;
+          hideProgress();
+          panel.insertAdjacentHTML("afterbegin",
+            `<div class="banner error"><strong>Lost track of the cleanup</strong> — ${esc(err.message)}.
+             It is still running; follow it in the activity panel.</div>`);
+          return;
+        }
+      }
+    }
+    if (job.state === "done") track.finish(job.detail);
+    else if (job.state === "cancelled") track.cancelled();
+    else track.fail(job.detail || "cleanup failed");
+    watching = null;
+    hideProgress();
+    pendingResult = job;
+    if (P.tab() === "clean") {
+      cleanData = null;          // sizes changed on disk — force a fresh fetch
+      await renderClean(true);   // full rebuild now, with the result banner
+      fused.params.set("sel", ""); // cleanData is warm again, so this only patches
+    }
+  }
+
+  // Called on a full Cleanup rebuild: turn a finished job into the banner once.
+  function takePendingResult() {
+    const job = pendingResult;
+    if (!job) return;
+    pendingResult = null;
+    fused.runPython("./clean_job.py", { action: "ack" }, { key: null }).catch(() => {});
+    if (job.result) lastResult = job.result;
+    else panel.insertAdjacentHTML("afterbegin",
+      `<div class="banner error"><strong>Cleanup failed</strong> — ${esc(job.detail || "unknown error")}</div>`);
   }
 
   async function doClean(mode) {
@@ -715,38 +796,18 @@
     );
     if (!ok) return;
 
-    const title = mode === "trash" ? "Moving to Trash…" : "Deleting…";
-    showProgress(title);
-
-    // clean.py works to a time budget and reports what it did not get to, so a
-    // huge cache is emptied over several passes instead of hitting the 60 s
-    // executor timeout. key: null — a pass must never be cancelled by the next.
-    // Progress is measured in bytes freed against the total selected up
-    // front — approximate (a pass can free less than its share), but close
-    // enough to move steadily rather than sit at one number for a full pass.
-    let acc = null;
-    for (let pass = 1; pass <= 30; pass++) {
-      const freedSoFar = acc ? acc.freed : 0;
-      updateProgress(freedSoFar / total * 100,
-        `${bytes(freedSoFar)} of ${bytes(total)} freed · pass ${pass}`);
-      let res;
-      try {
-        res = await fused.runPython("./clean.py",
-          { ids: ids.join(","), mode, confirm: "true" }, { key: null });
-      } catch (err) {
-        hideProgress();
-        panel.innerHTML = `<div class="banner error"><strong>${esc(err.type || "error")}</strong> — ${esc(err.message)}</div>`;
-        return;
-      }
-      acc = mergeResults(acc, res);
-      if (!res.remaining) break;
+    let job;
+    try {
+      job = await fused.runPython("./clean_job.py", {
+        action: "start", ids: chosen.map(e => e.id).join(","), mode, confirm: "true",
+        total, origin: location.origin,
+      }, { key: null });
+    } catch (err) {
+      panel.insertAdjacentHTML("afterbegin",
+        `<div class="banner error"><strong>${esc(err.type || "error")}</strong> — ${esc(err.message)}</div>`);
+      return;
     }
-    updateProgress(100, `${bytes(acc.freed)} of ${bytes(total)} freed`);
-    hideProgress();
-    lastResult = acc;
-    cleanData = null;          // sizes changed on disk — force a fresh fetch
-    await renderClean(true);   // full rebuild now, with the result banner
-    fused.params.set("sel", ""); // cleanData is warm again, so this only patches
+    watchJob(job);
   }
 
   // ---- routing -----------------------------------------------------------
@@ -805,6 +866,30 @@
   // no redraw — nothing here hands a colour to JS.
   fused.params.onChange(draw);
   draw();
+
+  function isPreview() {
+    if (new URLSearchParams(location.search).get("_preview") === "1") return true;
+    try {
+      let w = window;
+      while (w.parent && w.parent !== w) {
+        w = w.parent;
+        if (new URLSearchParams(w.location.search).get("_preview") === "1") return true;
+      }
+    } catch (e) { /* cross-origin ancestor: the climb ends here */ }
+    return false;
+  }
+
+  // Re-attach to a cleanup started before this page was (re)opened: follow it
+  // if it's still running, or show its result banner if nobody has yet.
+  if (!isPreview()) {
+    jobStatus().then(job => {
+      if (job.state === "running") return watchJob(job);
+      if (job.state !== "none" && !job.acked) {
+        pendingResult = job;
+        if (P.tab() === "clean") { cleanData = null; renderClean(true); }
+      }
+    }).catch(() => {});
+  }
 </script>
 </body>
 </html>
